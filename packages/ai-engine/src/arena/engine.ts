@@ -1,6 +1,6 @@
 import type { ArenaStore } from './store.js'
 import type { ArenaStrategist } from './strategist.js'
-import { applyArenaDecision, computeArenaEquity, type ArenaLedgerEntry } from './ledger.js'
+import { applyArenaDecision, computeArenaEquity, isArenaGuardRejection, type ArenaLedgerEntry } from './ledger.js'
 import { buildMarketBriefing } from './market-briefing.js'
 import {
   buildPostCloseReflection,
@@ -530,7 +530,20 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       decision,
       slippage,
       strategyParams: agent.strategyParams,
+      // #40：守衛觸發 log 帶 agent＋round＋slot，方便週一對帳
+      guardContext: { agentId: agent.id, roundDate, slot },
     })
+
+    // #40：總量守衛擋單落盤（rejected 原因已寫入 trade 表＋decision log，此處再記 server log 供週一對帳）
+    const guardRejected = ledger.rejected.filter((r) => isArenaGuardRejection(r.reason))
+    if (guardRejected.length > 0) {
+      const detail = guardRejected
+        .map((r) => `${r.action} ${r.symbol ?? ''}${r.shares ? ` x${r.shares}` : ''}（${r.reason}）`)
+        .join('；')
+      console.warn(
+        `[ArenaLedger#40] agent#${agent.id} round=${roundDate} slot=${slot ?? timeLabel} 總量守衛擋下 ${guardRejected.length} 筆：${detail}`,
+      )
+    }
 
     const execTexts: string[] = []
     for (const e of ledger.entries) {
@@ -572,10 +585,18 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
     }
     trades += ledger.entries.filter((e) => e.action === 'BUY' || e.action === 'SELL').length
 
-    st.cash = ledger.cash
+    // #40：成交對帳最終防線（ledger 已保證 cash ≥ 0，此處僅防禦＋log，不回填歷史）
+    let settledCash = ledger.cash
+    if (settledCash < 0) {
+      console.warn(
+        `[ArenaLedger#40] agent#${agent.id} round=${roundDate} slot=${slot ?? timeLabel} 對帳異常：cash=${settledCash}（已箝制為 0，請對帳）`,
+      )
+      settledCash = 0
+    }
+    st.cash = settledCash
     st.holdings = ledger.holdings
     await store.replaceHoldings(agent.id, ledger.holdings, roundDate)
-    await store.advanceRound(agent.id, roundDate, ledger.cash)
+    await store.advanceRound(agent.id, roundDate, settledCash)
 
     const logContent = [execTexts.join('\n'), ...ledger.rejected.map((r) => `☓ ${entryText(r)}`)].filter(Boolean).join('\n')
     await store.insertDecisionLog({

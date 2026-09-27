@@ -80,6 +80,23 @@ export interface ApplyArenaDecisionParams {
   slippage?: number
   /** 細部策略參數（可省略；省略即不啟用停損/現金緩衝/下單上限稽核）。 */
   strategyParams?: Partial<ArenaStrategyParams>
+  /**
+   * #40 對帳識別：守衛觸發時的 log 帶上 agent＋round＋slot，方便週一對帳。
+   * 省略則 log 不帶識別（純 ledger 單測情境）。
+   */
+  guardContext?: { agentId?: number; roundDate?: string; slot?: number | null }
+}
+
+/**
+ * #40 總量守衛擋單原因（engine 對帳 log 以此前綴／全字比對識別，勿散落字串比對）。
+ * 語氣沿用既有 rejected 風格（參照「現金不足」「未持有該標的」）。
+ */
+export const ARENA_GUARD_CUMULATIVE_PREFIX = '現金不足（同輪累計買入含費用'
+export const ARENA_GUARD_NEGATIVE_PROCEEDS_REASON = '賣出所得不足以支付費用'
+
+export function isArenaGuardRejection(reason: string | undefined): boolean {
+  if (!reason) return false
+  return reason.startsWith(ARENA_GUARD_CUMULATIVE_PREFIX) || reason === ARENA_GUARD_NEGATIVE_PROCEEDS_REASON
 }
 
 export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedgerResult {
@@ -93,6 +110,22 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
 
   const round2 = (n: number) => Math.round(n * 100) / 100
 
+  // ── #40 總量守衛：同輪買單累計預扣 ──────────────────────────────
+  // roundStartCash：本輪起始現金；reservedBuy：本輪已成交買單累計預扣
+  // （含手續費／滑價邊際，execPrice 已內含 slippage）；roundSellProceeds：
+  // 本輪賣出（含自動停損）累計所得。超額買單整筆擋掉並記 rejected。
+  // 歷史負現金不追溯：起始現金若已為負，守衛只擋新買單，不回填舊帳。
+  const roundStartCash = round2(cash)
+  let reservedBuy = 0
+  let roundSellProceeds = 0
+  const guardTag = (): string => {
+    const c = params.guardContext
+    const who = c?.agentId !== undefined ? `agent#${c.agentId}` : 'agent#?'
+    const when = c?.roundDate ?? '?'
+    const slot = c?.slot === null || c?.slot === undefined ? '-' : String(c.slot)
+    return `[ArenaLedger#40] ${who} round=${when} slot=${slot}`
+  }
+
   /** 強制停損：個股現價自成本跌幅達 stopLossPct% → 自動減碼一半。 */
   if (sp?.stopLossPct && sp.stopLossPct > 0) {
     for (const h of [...holdingsAfter]) {
@@ -105,7 +138,15 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
         const fee = round2(Math.max(ARENA_FEE_MIN, notional * ARENA_FEE_RATE))
         const tax = round2(notional * ARENA_SELL_TAX_RATE)
         const proceeds = round2(notional - fee - tax)
+        if (proceeds < 0) {
+          // #40：手續費倒掛的停損賣出會吃掉現金 → 跳過（擋）並記 rejected＋log
+          const reason = ARENA_GUARD_NEGATIVE_PROCEEDS_REASON
+          rejected.push({ action: 'SELL', symbol: h.symbol, symbolName: h.symbolName, shares, reason })
+          console.warn(`${guardTag()} 自動停損跳過 SELL ${h.symbol} x${shares}：${reason}（所得 ${proceeds}）`)
+          continue
+        }
         cashAfter = round2(cashAfter + proceeds)
+        roundSellProceeds = round2(roundSellProceeds + proceeds)
         mergeHolding(holdingsAfter, h.symbol, h.symbolName, -shares, execPrice)
         entries.push({
           action: 'SELL',
@@ -150,6 +191,15 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
       const fee = round2(Math.max(ARENA_FEE_MIN, notional * ARENA_FEE_RATE))
       const cost = round2(notional + fee)
 
+      // #40 總量守衛：同輪累計預扣（含手續費／滑價邊際），超額整筆擋掉並記 rejected
+      const availableThisRound = round2(roundStartCash + roundSellProceeds)
+      if (round2(reservedBuy + cost) > availableThisRound) {
+        const reason = `${ARENA_GUARD_CUMULATIVE_PREFIX} ${round2(reservedBuy + cost)} 超過本輪可用 ${availableThisRound}）`
+        rejected.push({ action: action.action, symbol: action.symbol, shares, reason })
+        console.warn(`${guardTag()} 總量守衛擋單 BUY ${action.symbol} x${shares}：${reason}`)
+        continue
+      }
+
       const projectedHoldings = holdingsAfter.map((h) => ({ ...h }))
       mergeHolding(projectedHoldings, action.symbol, name, shares, execPrice)
       const closesAbs = { ...closes }
@@ -184,6 +234,7 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
       }
 
       cashAfter = round2(cashAfter - cost)
+      reservedBuy = round2(reservedBuy + cost)
       mergeHolding(holdingsAfter, action.symbol, name, shares, execPrice)
       tradeCount++
       entries.push({
@@ -213,8 +264,16 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
       const fee = round2(Math.max(ARENA_FEE_MIN, notional * ARENA_FEE_RATE))
       const tax = round2(notional * ARENA_SELL_TAX_RATE)
       const proceeds = round2(notional - fee - tax)
+      if (proceeds < 0) {
+        // #40：手續費倒掛的賣出會吃掉現金 → 擋掉並記 rejected＋log
+        const reason = ARENA_GUARD_NEGATIVE_PROCEEDS_REASON
+        rejected.push({ action: action.action, symbol: action.symbol, shares, reason })
+        console.warn(`${guardTag()} 總量守衛擋單 SELL ${action.symbol} x${shares}：${reason}（所得 ${proceeds}）`)
+        continue
+      }
 
       cashAfter = round2(cashAfter + proceeds)
+      roundSellProceeds = round2(roundSellProceeds + proceeds)
       mergeHolding(holdingsAfter, action.symbol, name, -shares, execPrice)
       tradeCount++
       entries.push({
@@ -235,6 +294,15 @@ export function applyArenaDecision(params: ApplyArenaDecisionParams): ArenaLedge
     entries.push({ action: 'HOLD', reason: '無達成任何交易，維持現狀' })
   }
 
-  const equity = computeArenaEquity(cashAfter, holdingsAfter, closes)
-  return { entries, rejected, cash: round2(cashAfter), holdings: holdingsAfter, equity }
+  // ── #40 成交對帳：cash 恆 ≥ 0 ───────────────────────────────────
+  // 正常情況下逐筆＋總量守衛已保證不為負；此為最終防線（有違即箝制＋log，
+  // 不回填歷史、不竄改已成交分錄，僅確保寫回 DB 的 cash 不為負）。
+  let settledCash = round2(cashAfter)
+  if (settledCash < 0) {
+    console.warn(`${guardTag()} 成交對帳異常：cashAfter=${settledCash}（已箝制為 0，請對帳；歷史負現金不追溯）`)
+    settledCash = 0
+  }
+
+  const equity = computeArenaEquity(settledCash, holdingsAfter, closes)
+  return { entries, rejected, cash: settledCash, holdings: holdingsAfter, equity }
 }
