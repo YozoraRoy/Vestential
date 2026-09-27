@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
         summary: null,
         items: null,
         socialResults: null,
+        stage: null,
       },
     })
   }

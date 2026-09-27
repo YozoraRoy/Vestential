@@ -25,6 +25,14 @@ const MAX_CANDIDATES = 60
 const RECENT_DAYS = 2
 const MAX_CONTENT_CHARS = 4000
 
+// ─── Issue #39：各抓取來源明確 timeout ──────────────────────────────
+// 定罪（9/26 Azure docker log）：run mf_1790436657772 在 stage=pipeline 內
+// 25 分鐘零輸出後被看門狗中止。LLM 每次呼叫有 180s abort、article 抓取有
+// 10s timeout＋失敗 log，皆不可能靜默 25 分鐘；唯一能靜默無限 hang 的是
+// fetchCnyesNews 內無 signal 的裸 fetch（TCP 半開即無限等待），且
+// Promise.allSettled 會被它拖住整個抓取段。故各來源一律帶明確 timeout。
+// UDN 10s／Yahoo 6s 為既有值；cnyes 與 UDN 對齊取 10s（與線上已驗證值一致）。
+
 /** 把 LLM 例外轉成可寫入日誌的結構（個別欄位截斷避免塞爆 detail 欄位）。 */
 function formatErrorDetail(e: unknown): Record<string, unknown> {
   const err = (e ?? {}) as { message?: string; code?: string; stack?: string; status?: unknown }
@@ -675,6 +683,75 @@ export interface MarketFocusPipelineResult {
   newCount: number
 }
 
+// ─── Issue #39：pipeline 分段上限＋stage 細化＋心跳 ──────────────────
+// 背景：9/26 run 36252199092 跑 25m15s 死在籠統的 stage=pipeline（count=null），
+// 下次卡住必須能直接指出段名。每段取「正常耗時 3~6 倍 headroom」為上限：
+// 正常 run pipeline 全程約 3~4 分鐘（9/26 三筆成功 run 實測：05:47→05:51、
+// 10:37→10:40、20:29→20:32）；五段上限總和 90+240+180+480+240=1230s=20.5min，
+// 仍低於 25 分鐘總看門狗（JOB_TIMEOUT_MS 不動），留 4.5min 給 email/社群/回填。
+export type MarketFocusStage = 'fetch' | 'filter' | 'crawl' | 'summaries' | 'summary'
+
+/** 各段上限（ms）：fetch 90s（3 來源並行、各 ≤15s，正常 <20s）／filter 240s
+ *  （1 次 LLM 含 180s abort＋429 退避，正常 60~150s）／crawl 180s（≤12 篇並行、
+ *  各 ≤~30s＝10s×2＋robots 5s，正常 <60s）／summaries 480s（≤6 批序列、各 ~60s
+ *  ＋8s 錯峰，正常 60~180s）／summary 240s（1 次 LLM＋前後 20s 錯峰，正常 60~120s）。 */
+export const MARKET_FOCUS_STAGE_TIMEOUTS_MS: Record<MarketFocusStage, number> = {
+  fetch: 90_000,
+  filter: 240_000,
+  crawl: 180_000,
+  summaries: 480_000,
+  summary: 240_000,
+}
+
+/** 單段超時錯誤：message 必帶段名，供 job error／告警直接指出卡住段。 */
+export class MarketFocusStageTimeoutError extends Error {
+  readonly stage: MarketFocusStage
+  readonly timeoutMs: number
+  constructor(stage: MarketFocusStage, timeoutMs: number) {
+    super(`[MarketFocus][stage=${stage}] timeout after ${Math.round(timeoutMs / 1000)}s（超過該段上限）`)
+    this.name = 'MarketFocusStageTimeoutError'
+    this.stage = stage
+    this.timeoutMs = timeoutMs
+  }
+}
+
+/** 段切換監聽：runMarketFocusPipeline 每進一段即回報，供 job 更新 job.stage。 */
+export type MarketFocusStageListener = (stage: MarketFocusStage) => void
+
+/**
+ * 包一段 pipeline 執行：進段即印心跳（含上限秒數）＋通知 listener；
+ * 完成印耗時；超時拋 MarketFocusStageTimeoutError（帶段名）。
+ * 任一段 hanging 都會在該段上限內失敗，絕不等到 25 分鐘總看門狗。
+ */
+export async function runPipelineStage<T>(
+  stage: MarketFocusStage,
+  fn: () => Promise<T>,
+  opts?: { timeoutMs?: number; onStage?: MarketFocusStageListener },
+): Promise<T> {
+  const timeoutMs = opts?.timeoutMs ?? MARKET_FOCUS_STAGE_TIMEOUTS_MS[stage]
+  opts?.onStage?.(stage)
+  const started = Date.now()
+  console.log(`[MarketFocus][stage=${stage}] start（上限 ${Math.round(timeoutMs / 1000)}s）`)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new MarketFocusStageTimeoutError(stage, timeoutMs)), timeoutMs)
+      }),
+    ])
+    console.log(`[MarketFocus][stage=${stage}] done in ${((Date.now() - started) / 1000).toFixed(1)}s`)
+    return result
+  } catch (e) {
+    if (e instanceof MarketFocusStageTimeoutError) {
+      console.error(`[MarketFocus][stage=${stage}] FAILED after ${((Date.now() - started) / 1000).toFixed(1)}s: ${e.message}`)
+    }
+    throw e
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /** 抓取候選新聞 (多來源聚合池) → 保留近 2 天且依發布時間新到舊排序 → AI 過濾 → 並行爬全文 → AI 逐則摘要與當日總覽 → 寫入 DB。回傳儲存後的清單。 */
 export async function refreshMarketFocus(): Promise<MarketFocusItem[]> {
   const { enriched } = await runMarketFocusPipeline(false)
@@ -797,25 +874,28 @@ export async function backfillMissingReasons(): Promise<number> {
   }
 }
 
-/** 完整版市場焦點刷新：回傳新聞清單、總覽與是否真正產生新版版次 (hasNewEdition)。 */
-export async function refreshMarketFocusDetailed(): Promise<MarketFocusPipelineResult> {
-  return runMarketFocusPipeline(false)
+/** 完整版市場焦點刷新：回傳新聞清單、總覽與是否真正產生新版版次 (hasNewEdition)。
+ *  onStage：每進一段（fetch/filter/crawl/summaries/summary）即回報，供 job 更新 stage。 */
+export async function refreshMarketFocusDetailed(onStage?: MarketFocusStageListener): Promise<MarketFocusPipelineResult> {
+  return runMarketFocusPipeline(false, onStage)
 }
 
 /**
  * 市場焦點乾跑（後台預覽用）：跑完整生成流程但不寫 DB。
  * 回傳精選新聞清單＋每日總覽，供 /admin 預覽後再決定是否發布。
  */
-export async function previewMarketFocus(): Promise<{
+export async function previewMarketFocus(onStage?: MarketFocusStageListener): Promise<{
   items: MarketFocusItem[]
   summary: string
 }> {
-  const { enriched, summary } = await runMarketFocusPipeline(true)
+  const { enriched, summary } = await runMarketFocusPipeline(true, onStage)
   return { items: enriched, summary }
 }
 
-async function runMarketFocusPipeline(dryRun: boolean): Promise<MarketFocusPipelineResult> {
-  const candidates = await fetchMultiSourceCandidates()
+async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStageListener): Promise<MarketFocusPipelineResult> {
+  // Issue #39 抓取段：上限 90s。曾因此段內無 signal 的 cnyes 裸 fetch
+  // 靜默 hang 住 25 分鐘（9/26 定罪），現已補 15s timeout＋本段上限雙保險。
+  const candidates = await runPipelineStage('fetch', () => fetchMultiSourceCandidates(), { onStage })
 
   const now = Date.now()
   const cutoff = now - RECENT_DAYS * 24 * 60 * 60 * 1000
@@ -825,10 +905,17 @@ async function runMarketFocusPipeline(dryRun: boolean): Promise<MarketFocusPipel
     .sort((a, b) => b.t - a.t)
     .map((x) => x.c)
 
-  const items = (await filterNewsByAI(recent))
-    .map((it) => ({ ...it, published_at: it.published_at ? toIsoDate(it.published_at) : '' }))
-    .sort((a, b) => b.published_at.localeCompare(a.published_at))
-    .slice(0, 12)
+  const items = await runPipelineStage(
+    'filter',
+    () =>
+      filterNewsByAI(recent).then((filtered) =>
+        filtered
+          .map((it) => ({ ...it, published_at: it.published_at ? toIsoDate(it.published_at) : '' }))
+          .sort((a, b) => b.published_at.localeCompare(a.published_at))
+          .slice(0, 12),
+      ),
+    { onStage },
+  )
 
   // 檢查資料庫中現存的焦點新聞（近 3 天）
   const existing = await getMarketFocus(20, 3).catch(() => [])
@@ -857,7 +944,13 @@ async function runMarketFocusPipeline(dryRun: boolean): Promise<MarketFocusPipel
     }
   }
 
-  const crawled = await Promise.allSettled(items.map((it) => fetchArticleContent(it.url)))
+  // Issue #39 爬文段：上限 180s。單篇 10s timeout×2 次重試＋robots 5s，
+  // 12 篇並行最壞 ~60s；任一篇 hanging 都在此段上限內失敗並指出段名。
+  const crawled = await runPipelineStage(
+    'crawl',
+    () => Promise.allSettled(items.map((it) => fetchArticleContent(it.url))),
+    { onStage },
+  )
   const enriched: MarketFocusItem[] = items.map((it, i) => ({
     ...it,
     content: crawled[i].status === 'fulfilled' ? crawled[i].value.content : null,
@@ -869,8 +962,15 @@ async function runMarketFocusPipeline(dryRun: boolean): Promise<MarketFocusPipel
 
   // 為每則新聞生成說人話 AI 重點摘要（含影響欄位；摘要見全文後可修正篩選階段的初判）
   // Issue #32：摘要前與 filter 呼叫錯峰（序列＋間隔；爬全文 HTTP 已自然墊時間，仍補一次間隔）
-  if (enriched.length > 0) await sleep(getChainPaceMs())
-  const articleResults = await generateArticleSummaries(enriched)
+  // Issue #39 摘要段：上限 480s。≤6 批序列、各約 60s＋8s 錯峰；錯峰 sleep 計入本段內。
+  const articleResults = await runPipelineStage(
+    'summaries',
+    async () => {
+      if (enriched.length > 0) await sleep(getChainPaceMs())
+      return generateArticleSummaries(enriched)
+    },
+    { onStage },
+  )
   for (let i = 0; i < enriched.length; i++) {
     const r = articleResults[i]
     if (r?.summary) enriched[i].summary = r.summary
@@ -883,9 +983,17 @@ async function runMarketFocusPipeline(dryRun: boolean): Promise<MarketFocusPipel
 
   // Issue #32：總覽前後錯峰（9/23 事故點：summary max_tokens=1000 撞 OTPM 分鐘窗；
   // 前間隔把總覽推離摘要尾批，後間隔把接續的社群鏈讓進下一個分鐘窗）
-  await sleep(getSummaryPaceMs())
-  const summary = await generateDailySummary(enriched)
-  await sleep(getSummaryPaceMs())
+  // Issue #39 總覽段：上限 240s。前後 20s 錯峰計入本段內。
+  const summary = await runPipelineStage(
+    'summary',
+    async () => {
+      await sleep(getSummaryPaceMs())
+      const s = await generateDailySummary(enriched)
+      await sleep(getSummaryPaceMs())
+      return s
+    },
+    { onStage },
+  )
   if (!dryRun) {
     await saveMarketFocus(enriched)
     await saveMarketFocusMeta({ summary, generatedAt: new Date().toISOString() })
