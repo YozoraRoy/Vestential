@@ -39,7 +39,13 @@ Stop-Process -Id <pid> -Force
 npm run dev
 ```
 
-- 起好後等 log 出現 `Ready`，再用 `Get-NetTCPConnection -LocalPort 3000` 確認只有 3000 在聽。
+- 用輪詢等 `Ready`（不要固定睡 20~30 秒）：每 2 秒讀一次 log，出現 `Ready in` 立即往下走；60 秒沒出現判失敗（重起或降級，不無限等）：
+```powershell
+$deadline = (Get-Date).AddSeconds(60)
+do { Start-Sleep -Seconds 2; $ready = Select-String -Path "$env:TEMP\opencode\devout.log" -Pattern "Ready in" -Quiet } until ($ready -or (Get-Date) -gt $deadline)
+if (-not $ready) { throw "dev server 未在 60 秒內 Ready" }
+```
+- 再用 `Get-NetTCPConnection -LocalPort 3000` 確認只有 3000 在聽。
 - **不要同時起第二台**（port 3000 被佔時 Next 會自動改跑 3001，造成「卡住」錯覺）。
 
 ### 4. 由 subagent（QA）起 server 時：必須用「完全 detach」方式
@@ -86,6 +92,7 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 - **developer**：`edit: allow`；以 ACCEPTANCE 為完成定義；完工必跑 `npm run typecheck`＋`npm run lint`＋build；**不 commit／不 push**（收尾由 dev-loop 主 agent 統一處理）。
 - **qa-verifier**：`edit: deny`；依 Issue ACCEPTANCE 逐項驗證，產 PASS/FAIL matrix 貼 issue comment；dev server 預設由主 agent 事先起好（`dev-loop.md`「QA 派單 SOP」），QA 僅在 prompt 首行顯式授權時才准用 §4 detach 三要素自起；curl／Invoke-WebRequest／Invoke-RestMethod 一律帶顯式短 timeout（`curl --max-time 10`、`-TimeoutSec 10～15`），無 timeout 參數的驗證步驟視為不合格。
 - **dev-loop 收尾（主 agent）**：QA 全 PASS → commit（message 含 `Closes #<N>`）→ `git push origin main`（觸發 deploy.yml）→ 觀測部署 → 生產驗證通過後 `gh issue close <N>`。
+- **deploy 延後驗**：push 成功即算 P3 完成，不用盲睡等部署；把 deploy run id 寫進 Issue comment 追蹤，下次互動時再驗 P4（`gh run view <id>` 一眼判定）。想同步等也行：用 `gh run watch` 帶 timeout 取代固定 `Start-Sleep 360`。
 - 途中遇到「待確認」擋路：停下來問使用者，不擅自改範圍。
 
 ### QA 分級（PM 判定，主 agent／使用者只能升級不能降級）
@@ -95,7 +102,7 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 | 等級 | 適用 | P2 | P4 |
 | :--- | :--- | :--- | :--- |
 | `full`（預設） | 一般功能／修 bug | 完整 runtime 驗收（dev server＋matrix） | 照常 |
-| `quick` | 純文案／i18n／單檔小修且有測試覆蓋／設定預設值 | 靜態＋smoke：typecheck＋lint＋diff 核對＋相關單測重跑，不需 dev server | 照常（生產 curl 便宜） |
+| `quick` | 純文案／i18n／單檔小修且有測試覆蓋／設定預設值／純展示改動（單頁 UI、靜態可驗） | 靜態＋smoke：typecheck＋lint＋diff 核對＋相關單測重跑，不需 dev server | 照常（生產 curl 便宜） |
 | `skip` | docs／註解／不影響 runtime 的檔案 | 跳過（P1 self-check 即放行） | 照常 |
 
 - **紅線**：涉 DB migration／授權／quota／金流／排程邏輯，一律 `full`，PM 不得標 quick／skip。
