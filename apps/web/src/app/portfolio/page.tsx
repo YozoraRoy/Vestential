@@ -7,6 +7,7 @@ import { TrendingUp, Zap, RefreshCw, Sparkles, History, ChevronDown, ChevronUp, 
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
+import { computePortfolioReviewStats, filterPortfolioReviewByMonth, PORTFOLIO_MIN_REVIEW_COUNT } from '@/lib/portfolio-review'
 import type { DividendYieldReason } from '@/lib/portfolio'
 import { estimateDividendYtd, type DividendYtdEntry } from '@/lib/portfolio-dividends'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
@@ -511,7 +512,8 @@ export default function PortfolioPage() {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch('/api/portfolio/records?limit=20')
+      // #43：拉到 200 筆，讓「全部」檔統計與覆盤有完整母體（列表照常全列）。
+      const res = await fetch('/api/portfolio/records?limit=200')
       const data = await parseJsonSafe(res, safeMsg)
       if (data.success) setHistory(data.records)
     } catch (e) {
@@ -1171,6 +1173,66 @@ export default function PortfolioPage() {
 
   const strategyName = (id: string | null) => STRATEGIES.find(s => s.id === id)?.nameZh ?? id ?? ''
   const currency = market === 'tw' ? 'NT$' : '$'
+
+  // #43：歷史區整體覆盤（月／全部兩檔；統計走前端純算免費，覆盤才打 API 扣共用 quota）。
+  const thisMonth = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }, [])
+  const [reviewScope, setReviewScope] = useState<'month' | 'all'>('all')
+  const [reviewText, setReviewText] = useState<string | null>(null)
+  const [reviewing, setReviewing] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  // 統計與覆盤 API 共用同一純函式（lib/portfolio-review），保證與明細加總一致。
+  const reviewRecords = useMemo(
+    () => filterPortfolioReviewByMonth(history, reviewScope === 'month' ? thisMonth : 'all'),
+    [history, reviewScope, thisMonth],
+  )
+  const reviewStats = useMemo(() => computePortfolioReviewStats(reviewRecords), [reviewRecords])
+  const fmtSigned = (n: number | null) =>
+    n == null || !Number.isFinite(n)
+      ? '—'
+      : `${n >= 0 ? '+' : ''}${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+  const handleReview = async () => {
+    if (reviewing) return
+    if (authMode !== 'user') {
+      router.replace(`/login?redirect=${encodeURIComponent('/portfolio')}`)
+      return
+    }
+    setReviewing(true)
+    setReviewError(null)
+    try {
+      const res = await fetch('/api/portfolio/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month: reviewScope === 'month' ? thisMonth : 'all' }),
+      })
+      if (res.status === 401) {
+        router.replace(`/login?redirect=${encodeURIComponent('/portfolio')}`)
+        return
+      }
+      const data = await parseJsonSafe(res, safeMsg)
+      if (!res.ok) {
+        // 未滿 5 筆由 code 轉三語提示（server 只回中文，UI 以 i18n 鍵顯示）。
+        if (data?.code === 'TOO_FEW_ENTRIES') {
+          setReviewError(
+            ui.reviewNeedMore
+              .replace('{count}', String(data?.count ?? reviewRecords.length))
+              .replace('{min}', String(data?.minRequired ?? PORTFOLIO_MIN_REVIEW_COUNT)),
+          )
+        } else {
+          setReviewError(data?.error || ui.reviewFailed)
+        }
+        return
+      }
+      setReviewText(data.review ?? null)
+      window.dispatchEvent(new Event('quota-updated'))
+    } catch (e: unknown) {
+      setReviewError(e instanceof Error ? e.message : ui.reviewFailed)
+    } finally {
+      setReviewing(false)
+    }
+  }
 
   const stats = useMemo(() => {
     const byMarket: Record<Market, { count: number; pnl: number }> = {
@@ -1943,6 +2005,80 @@ export default function PortfolioPage() {
               <p className="text-[11px] text-amber-400/90 mb-3">{divReasonText}</p>
             )}
           </>
+        )}
+        {/* #43：歷史區整體覆盤（統計免費純算；覆盤扣與 journal 共用 quota；
+            文案與 journal 單筆紀律覆盤區隔：此處看持倉歷史、彼處看交易日誌）。 */}
+        {listTab === 'positions' && history.length > 0 && (
+          <section className="bg-[var(--bg-card)] rounded-xl border border-white/5 p-4 mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+                {ui.reviewTitle}
+              </h3>
+              <div className="flex rounded-lg overflow-hidden border border-white/10">
+                {(['month', 'all'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => { setReviewScope(s); setReviewText(null); setReviewError(null) }}
+                    className={`px-3 py-1 text-xs transition ${reviewScope === s ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                  >
+                    {s === 'month' ? `${ui.reviewScopeMonth}（${thisMonth}）` : ui.reviewScopeAll}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.reviewDesc}</p>
+            <p className="text-xs text-[var(--text-secondary)] mb-3">{ui.reviewStatsFreeNote} {ui.reviewQuotaNote}</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div className="rounded-xl bg-white/5 p-3">
+                <div className="text-xs text-[var(--text-secondary)]">{ui.reviewStatCount}</div>
+                <div className="text-xl font-bold mt-1">{reviewStats.count}</div>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3">
+                <div className="text-xs text-[var(--text-secondary)]">{ui.reviewStatWinRate}</div>
+                <div className="text-xl font-bold mt-1">{reviewStats.winRate == null ? '—' : `${reviewStats.winRate.toFixed(1)}%`}</div>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3">
+                <div className="text-xs text-[var(--text-secondary)]">{ui.reviewStatAvgPnl}</div>
+                <div className="text-xl font-bold mt-1">{fmtSigned(reviewStats.avgPnl)}</div>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3">
+                <div className="text-xs text-[var(--text-secondary)]">{ui.reviewStatMaxLoss}</div>
+                <div className="text-xl font-bold mt-1">
+                  {reviewStats.maxLossEntry ? `#${reviewStats.maxLossEntry.id} ${fmtSigned(reviewStats.maxLossEntry.pnl)}` : ui.reviewNoMaxLoss}
+                </div>
+                {reviewStats.maxLossEntry && (
+                  <div className="text-xs text-[var(--text-secondary)] mt-1">{reviewStats.maxLossEntry.symbol}｜{(reviewStats.maxLossEntry.createdAt || '').replace('T', ' ').slice(0, 10)}</div>
+                )}
+              </div>
+            </div>
+            {authMode === 'user' ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleReview}
+                  disabled={reviewing}
+                  className="px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+                >
+                  {reviewing ? ui.btnReviewing : ui.btnReview}
+                </button>
+                <a href="/journal" className="text-xs text-[var(--accent)] hover:underline">{ui.reviewJournalLink}</a>
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--text-secondary)]">
+                {ui.guestAiLoginRequired}{' '}
+                <a href="/login?redirect=/portfolio" className="text-[var(--accent)] hover:underline">{ui.guestLogin}</a>
+              </p>
+            )}
+            {reviewError && <p className="text-sm text-red-400 mt-3">{reviewError}</p>}
+            {reviewText ? (
+              <div className="mt-3 text-sm whitespace-pre-wrap leading-relaxed">{reviewText}</div>
+            ) : (
+              !reviewError && <p className="text-xs text-[var(--text-secondary)] mt-3">{ui.reviewEmpty}</p>
+            )}
+            <p className="text-xs text-[var(--text-secondary)] mt-3">{ui.reviewDisclaimer}</p>
+          </section>
         )}
         {listTab === 'risk' ? (
           <PortfolioRiskPanel

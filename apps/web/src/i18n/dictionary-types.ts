@@ -762,6 +762,25 @@ export interface Dict {
     helpRefYield: string
     helpDividend: string
     helpNet: string
+    reviewScopeMonth: string
+    reviewScopeAll: string
+    reviewStatsTitle: string
+    reviewStatCount: string
+    reviewStatWinRate: string
+    reviewStatAvgPnl: string
+    reviewStatMaxLoss: string
+    reviewNoMaxLoss: string
+    reviewStatsFreeNote: string
+    reviewTitle: string
+    reviewDesc: string
+    reviewQuotaNote: string
+    reviewJournalLink: string
+    btnReview: string
+    btnReviewing: string
+    reviewNeedMore: string
+    reviewEmpty: string
+    reviewFailed: string
+    reviewDisclaimer: string
   }
   cycleEntry: {
     metaTitle: string
