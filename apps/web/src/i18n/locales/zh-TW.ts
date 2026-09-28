@@ -93,8 +93,6 @@ export const zhTW: Dict = {
     agentDesc: 'AI Agent 各持 50 萬進行價值投資模擬競賽，即時觀測決策、持倉與績效排行。',
     inDevelopment: '開發中',
     coreFeaturesTitle: '核心功能',
-    ctaAnalyze: '開始 AI 分析',
-    ctaOddLot: '看零股情報',
     ctaUse: '立即使用',
     disclaimerShort: '投資有風險,本平台資訊僅供參考,不構成投資建議。',
   },

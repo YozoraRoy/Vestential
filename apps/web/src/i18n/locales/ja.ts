@@ -93,8 +93,6 @@ export const ja: Dict = {
     agentDesc: 'AI エージェントが 50 万円ずつの資金で価値投資シミュレーション対戦。判断・ポジション・パフォーマンス順位をリアルタイム観察できます。',
     inDevelopment: '開発中',
     coreFeaturesTitle: 'コア機能',
-    ctaAnalyze: 'AI分析を開始',
-    ctaOddLot: '単元未満株を見る',
     ctaUse: '今すぐ使う',
     disclaimerShort: '投資にはリスクが伴います。本サービスの情報は参考用であり、投資助言を構成するものではありません。',
   },

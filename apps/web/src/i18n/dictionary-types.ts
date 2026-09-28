@@ -69,8 +69,6 @@ export interface Dict {
     agentDesc: string
     inDevelopment: string
     coreFeaturesTitle: string
-    ctaAnalyze: string
-    ctaOddLot: string
     ctaUse: string
     disclaimerShort: string
   }

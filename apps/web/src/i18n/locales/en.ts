@@ -93,8 +93,6 @@ export const en: Dict = {
     agentDesc: 'AI agents compete in value-investing simulation with NT$500K each. Watch decisions, positions, and performance rankings live.',
     inDevelopment: 'In Development',
     coreFeaturesTitle: 'Core Features',
-    ctaAnalyze: 'Start AI Analysis',
-    ctaOddLot: 'View Odd-Lot Data',
     ctaUse: 'Use now',
     disclaimerShort: 'Investing involves risks. The information on this platform is for reference only and does not constitute investment advice.',
   },

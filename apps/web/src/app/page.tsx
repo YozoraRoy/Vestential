@@ -161,23 +161,20 @@ export default async function Home() {
         <p className="max-w-2xl mx-auto text-base text-[var(--text-secondary)] leading-relaxed">
           {dict.home.heroSubtitle}
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-3 mt-7">
-          <Link
-            href={localizePath(locale, '/analyze')}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[var(--accent)] text-white font-semibold hover:opacity-90 hover:-translate-y-0.5 transition-all shadow-[0_8px_24px_rgba(79,140,255,0.25)]"
-          >
-            <Sparkles className="w-4 h-4" />
-            {dict.home.ctaAnalyze}
-            <ArrowRight className="w-4 h-4" />
-          </Link>
-          <Link
-            href={localizePath(locale, '/odd-lot')}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/15 text-[var(--text-primary)] font-medium hover:border-[var(--accent)]/60 hover:text-[var(--accent)] hover:-translate-y-0.5 transition-all"
-          >
-            <PieChart className="w-4 h-4" />
-            {dict.home.ctaOddLot}
-          </Link>
-        </div>
+        <figure
+          aria-label="Investment quotes"
+          className="mt-7 mx-auto max-w-2xl bg-[var(--bg-secondary)]/60 rounded-2xl px-6 py-5 border border-white/5 text-center"
+        >
+          <blockquote className="text-[var(--text-primary)] text-base md:text-lg leading-relaxed mb-2">
+            <span className="text-[var(--accent)] text-xl leading-none mr-1 align-top" aria-hidden="true">{'\u201C'}</span>
+            {main ?? q.en}
+            <span className="text-[var(--accent)] text-xl leading-none ml-1 align-bottom" aria-hidden="true">{'\u201D'}</span>
+          </blockquote>
+          {showEnglish && (
+            <p className="text-sm italic text-[var(--text-secondary)] mb-2">{q.en}</p>
+          )}
+          <figcaption className="text-sm text-[var(--text-secondary)]">— {q.author}</figcaption>
+        </figure>
       </section>
 
       {/* ② Core features */}
@@ -267,23 +264,10 @@ export default async function Home() {
         )}
       </section>
 
-      {/* ④ Quote band */}
-      <section aria-label="Investment quotes" className="mb-4">
-        <figure className="bg-[var(--bg-secondary)]/60 rounded-2xl px-6 py-5 border border-white/5 text-center">
-          <blockquote className="text-[var(--text-primary)] text-base md:text-lg leading-relaxed mb-2">
-            <span className="text-[var(--accent)] text-xl leading-none mr-1 align-top" aria-hidden="true">{'\u201C'}</span>
-            {main ?? q.en}
-            <span className="text-[var(--accent)] text-xl leading-none ml-1 align-bottom" aria-hidden="true">{'\u201D'}</span>
-          </blockquote>
-          {showEnglish && (
-            <p className="text-sm italic text-[var(--text-secondary)] mb-2">{q.en}</p>
-          )}
-          <figcaption className="text-sm text-[var(--text-secondary)]">— {q.author}</figcaption>
-        </figure>
-        <p className="mt-4 text-center text-xs text-[var(--text-secondary)]">
-          {dict.home.disclaimerShort}
-        </p>
-      </section>
+      {/* ④ Disclaimer */}
+      <p className="mb-4 text-center text-xs text-[var(--text-secondary)]">
+        {dict.home.disclaimerShort}
+      </p>
 
       <script
         type="application/ld+json"
