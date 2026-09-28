@@ -58,6 +58,11 @@ agent: build
    取消 task、重派。**重派前先清理殘留 server**（`Stop-Process`＋port 復查，
    見 `AGENTS.md` §1–§2），再回到步驟 1 重走。
 
+### QA 派單留痕（監控：派了沒、有沒有回來）
+- **派單當下**：主 agent 立刻在 Issue 貼一行 `QA dispatched（task id＋時間＋預算）`——沒有這行＝沒派，一查 Issue timeline 就知道。
+- **QA 回來**：matrix comment 必須回應派單行（同一 task id）；有派單行、30 分鐘沒 matrix＝卡住／失聯，走超時處置。
+- 主 agent 每階段的一行狀態必須含 task id 或 issue#comment，不寫自由發揮。
+
 ## 降級驗收（QA 超時／失聯時）
 
 - QA 超時／失聯時，主 agent 不無限等待，改以**靜態驗收**即放行進入後續階段：
