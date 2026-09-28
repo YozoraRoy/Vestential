@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer'
 import type { MarketFocusItem, MarketFocusMeta } from '@stock/database'
 import { getMarketFocus, getMarketFocusMeta, listActiveMarketFocusSubscribers, getAgentSetting, setAgentSetting } from '@stock/database'
+import { getTaiwanDateStr } from '@/lib/auth'
 
 export const FALLBACK_SUMMARY_PREFIX = '當日市場焦點：'
 
@@ -334,10 +335,19 @@ export async function sendMarketFocusSummary(forcedEditionKey?: string, force = 
   }
 
   const editionKey = forcedEditionKey || meta.generated_at
-  if (!force && editionKey) {
-    const lastSent = await getAgentSetting('email.last_sent_edition').catch(() => null)
-    if (lastSent === editionKey) {
-      console.log(`[Notify] editionKey ${editionKey} 已寄送過電子報，略過重複寄送（防洗版保護）`)
+  const todayStr = getTaiwanDateStr()
+  if (!force) {
+    if (editionKey) {
+      const lastSent = await getAgentSetting('email.last_sent_edition').catch(() => null)
+      if (lastSent === editionKey) {
+        console.log(`[Notify] editionKey ${editionKey} 已寄送過電子報，略過重複寄送（防洗版保護）`)
+        return false
+      }
+    }
+    // 每日一封：同日已有寄送紀錄時，第二～四版不再寄；DB 讀不到保守放行（寧多寄不漏寄）
+    const lastSentDate = await getAgentSetting('email.last_sent_date').catch(() => null)
+    if (lastSentDate === todayStr) {
+      console.log(`[Notify] 今日(${todayStr})電子報已寄送，略過重複寄送`)
       return false
     }
   }
@@ -382,6 +392,18 @@ export async function sendMarketFocusSummary(forcedEditionKey?: string, force = 
       label: '最後寄送之電子報版本',
     }).catch((e) => {
       console.warn('[Notify] 記錄 email.last_sent_edition 失敗:', e)
+    })
+  }
+
+  // 每日標記：只有成功（adminOk）才記日期，SMTP 失敗不寫、失敗同日可補寄
+  if (adminOk) {
+    await setAgentSetting({
+      key: 'email.last_sent_date',
+      value: todayStr,
+      category: 'email',
+      label: '電子報最後寄送日期',
+    }).catch((e) => {
+      console.warn('[Notify] 記錄 email.last_sent_date 失敗:', e)
     })
   }
 
