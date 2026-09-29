@@ -9,7 +9,7 @@ export {
   saveClaimCode, findGuestByClaimCode, reassignGuestRecords,
   getHistoricalGifts, ensureSeedData,
   logPlacementEvent, getPlacementEventStats,
-  getUserById, getUserIdentities, findOrCreateUser, getUsageCount, consumeAnalysisQuota,
+  getUserById, getUserIdentities, findOrCreateUser, getUsageCount, consumeAnalysisQuota, refundAnalysisQuota,
   getRecognitionUsage, consumeRecognitionQuota, refundRecognitionQuota,
   searchStocksByName, fuzzySearchStocksByName, damerauLevenshtein,
   deleteAnalysisRecord,

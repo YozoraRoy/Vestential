@@ -4233,6 +4233,35 @@ export async function refundRecognitionQuota(userId: number, date: string): Prom
 }
 
 /**
+ * AI 分析失敗或例外（技術性失敗，非使用者責任）時補回一單位額度，
+ * 照抄 refundRecognitionQuota（count-1 where count>0，Azure＋SQLite 雙寫），
+ * 寫表 api_usage。續跑/resume 本不扣故不退，避免重複退。
+ */
+export async function refundAnalysisQuota(userId: number, date: string): Promise<void> {
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return
+    try {
+      await pool.request()
+        .input('uid', sql.Int, userId)
+        .input('d', sql.NVarChar(10), date)
+        .query('UPDATE api_usage SET count = count - 1 WHERE user_id = @uid AND usage_date = @d AND count > 0')
+    } catch (e) {
+      console.error('[AzureSQL] refundAnalysisQuota error:', e)
+    }
+    return
+  }
+
+  const db = getSqliteDb()
+  if (!db) return
+  try {
+    db.prepare('UPDATE api_usage SET count = count - 1 WHERE user_id = ? AND usage_date = ? AND count > 0').run(userId, date)
+  } catch (e) {
+    console.error('[SQLite] refundAnalysisQuota error:', e)
+  }
+}
+
+/**
  * 依中文（或部分）股票名稱查詢候選代號；TWSE 零股交易表優先（涵蓋上市上櫃/ETF），
  * 找不到再於股東會紀念品表找。同時支援本機 SQLite 與線上 AzureSQL。
  * 回傳一組 { stock_id, stock_name }（stock_id 依市場為純數字代號，如 "2330"、"0050"）。

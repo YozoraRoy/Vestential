@@ -32,6 +32,11 @@ export interface StreamRunContext {
     onProgress: ProgressCallback,
     onAgentComplete: AgentCompleteCallback,
   ) => Promise<AnalyzeRunResult>
+  /**
+   * B2 配額失敗退還：新跑（/api/analyze）傳入，失敗分支呼叫退款；
+   * 續跑/resume 不傳（本不扣故不退，避免重複退）。
+   */
+  onFailure?: () => Promise<void> | void
 }
 
 export async function runAnalysisStream(ctx: StreamRunContext): Promise<void> {
@@ -127,6 +132,14 @@ export async function runAnalysisStream(ctx: StreamRunContext): Promise<void> {
         fundamentals: result.state.fundamentalsReport,
       },
     })
+    // B2：中途失敗屬技術性失敗，退還本次扣除的配額（呼叫端以 refundOnce 防重複退）。
+    if (ctx.onFailure) {
+      try {
+        await ctx.onFailure()
+      } catch (e) {
+        console.error('[API/Analyze] onFailure refund failed:', e)
+      }
+    }
     return
   }
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { BarChart3, Brain, Search as SearchIcon, Clock, History, FileText, ChevronRight, Target, RefreshCw, Trash2, Zap, AlertTriangle } from 'lucide-react'
 import { AGENT_KEYS, type AnalysisLanguage } from '@stock/core'
 import { SearchBar } from '@/components/search-bar'
@@ -34,13 +34,13 @@ interface AnalysisRecord {
 }
 
 function AnalyzeContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const symbolParam = searchParams.get('symbol') || searchParams.get('stock_id') || ''
   const { locale: language, setLocale: setLanguage, dict } = useI18n()
   const ui = dict.analyzePage
 
   const [authChecking, setAuthChecking] = useState(true)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [analysis, setAnalysis] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -61,34 +61,28 @@ function AnalyzeContent() {
   const abortRef = useRef<AbortController | null>(null)
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // 驗證登入狀態：未登入者直接導向登入頁面
+  // C 軟閘門：未登入停留本頁（歷史清單＋全文對匿名開放），跑分析動作才導登入。
+  // 僅記錄登入／管理員狀態，不做硬 redirect。
   useEffect(() => {
     let cancelled = false
     fetch('/api/auth/me')
       .then(res => (res.ok ? res.json() : null))
       .then(data => {
         if (cancelled) return
-        if (!data?.success || !data?.user) {
-          const currentPath = typeof window !== 'undefined'
-            ? window.location.pathname + window.location.search
-            : '/analyze'
-          router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
-          return
-        }
-        setIsAdmin(!!data.user.isAdmin)
+        setIsLoggedIn(!!data?.success && !!data?.user)
+        setIsAdmin(!!data?.user?.isAdmin)
         setAuthChecking(false)
       })
       .catch(() => {
         if (cancelled) return
-        const currentPath = typeof window !== 'undefined'
-          ? window.location.pathname + window.location.search
-          : '/analyze'
-        router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
+        setIsLoggedIn(false)
+        setIsAdmin(false)
+        setAuthChecking(false)
       })
     return () => {
       cancelled = true
     }
-  }, [router])
+  }, [])
 
   const getRecordTokens = (record: AnalysisRecord): number | null => {
     if (record.model_usage) {
@@ -149,20 +143,19 @@ function AnalyzeContent() {
     }
   }, [symbolParam])
 
+  // C：歷史紀錄脫鉤 auth，未登入也可讀取（GET /api/analysis-records 已公開，API 不動）。
   useEffect(() => {
-    if (authChecking) return
     fetchHistory(symbolParam)
-  }, [fetchHistory, symbolParam, authChecking])
+  }, [fetchHistory, symbolParam])
 
   // 舊深連結防禦：?symbol=AAPL 等非台股格式顯示同款台股格式錯誤，不自動分析。
   useEffect(() => {
-    if (authChecking) return
     if (symbolParam && !isTaiwanSymbol(symbolParam)) {
       setError(dict.analyzePage.invalidTaiwanSymbol)
     } else {
       setError(prev => (prev === dict.analyzePage.invalidTaiwanSymbol ? null : prev))
     }
-  }, [symbolParam, authChecking, dict])
+  }, [symbolParam, dict])
 
   // LLM 重試倒數計時器
   useEffect(() => {
@@ -247,6 +240,12 @@ function AnalyzeContent() {
       return
     }
     symbol = normalizedSymbol
+    // C：跑分析動作才要求登入（未登入導向登入頁，保留 symbol 供登入後回跳）。
+    if (!isLoggedIn) {
+      const redirectUrl = `/login?redirect=${encodeURIComponent(`/analyze?symbol=${encodeURIComponent(symbol)}`)}`
+      window.location.href = redirectUrl
+      return
+    }
     setLoading(true)
     setAnalysis(null)
     setError(null)
@@ -260,6 +259,10 @@ function AnalyzeContent() {
 
     const controller = new AbortController()
     abortRef.current = controller
+    // B2 best-effort：中斷時後端以 req.signal 斷線偵測退還配額；此處刷新額度顯示。
+    controller.signal.addEventListener('abort', () => {
+      window.dispatchEvent(new Event('quota-updated'))
+    }, { once: true })
 
     try {
       const res = await fetch('/api/analyze', {
@@ -360,7 +363,7 @@ function AnalyzeContent() {
       if (retryTimerRef.current) clearInterval(retryTimerRef.current)
       abortRef.current = null
     }
-  }, [fetchHistory, language, enabledAgents, ui, dict, consumeAnalysisStream])
+  }, [fetchHistory, language, enabledAgents, ui, dict, consumeAnalysisStream, isLoggedIn])
 
   // 斷點續跑：呼叫 /api/analyze/resume，SSE 推送與首次分析相同
   const handleResume = useCallback(async (id: number) => {

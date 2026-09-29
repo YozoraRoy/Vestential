@@ -11,7 +11,7 @@ type TtsStatus = 'idle' | 'playing' | 'paused'
 /** 中文口音選擇：自動（瀏覽器預設）／台灣國語／香港粵語。 */
 type TtsAccent = 'auto' | 'tw' | 'hk'
 
-const SPEECH_RATES = [0.75, 1, 1.25, 1.5] as const
+const SPEECH_RATES = [1, 1.5, 2, 2.5, 3] as const
 
 /** locale → utterance.lang 對應；中文口音由 voice 選擇覆寫。 */
 function localeToLang(locale: string): string {
@@ -268,7 +268,7 @@ export function MarketFocusTtsBar({ summary, locale, t: tProp }: MarketFocusTtsB
           value={rate}
           onChange={(e) => handleRate(Number(e.target.value))}
           aria-label={t.ttsSpeed}
-          className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]/60"
+          className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent)]/60 [&>option]:bg-[var(--bg-secondary)] [&>option]:text-[var(--text-primary)]"
         >
           {SPEECH_RATES.map((r) => (
             <option key={r} value={r}>

@@ -1,5 +1,5 @@
 import { TradingEngine } from '@stock/ai-engine'
-import { saveAnalysisJob, consumeAnalysisQuota } from '@stock/database'
+import { saveAnalysisJob, consumeAnalysisQuota, refundAnalysisQuota } from '@stock/database'
 import { yahooFinanceProvider } from '@stock/market-data'
 import {
   DEFAULT_ANALYSIS_LANGUAGE,
@@ -111,7 +111,28 @@ export async function POST(req: Request) {
 
     // Quota 扣除時機：僅首次執行扣額度（續跑走 /api/analyze/resume，不重扣）。
     // #44：分級額度（一般每日 1 次／管理員每日 3 次；客訴文案寫清分級）。
-    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), getDailyAnalysisLimit(await isAdminUser(user)))
+    // B2：退款一律用同一組 (userId, quotaDate)；refundOnce 單次守衛防重複退。
+    const quotaUserId = user.id
+    const quotaDate = getTaiwanDateStr()
+    let quotaSettled = false
+    const refundOnce = async () => {
+      if (quotaSettled) return
+      quotaSettled = true
+      try {
+        await refundAnalysisQuota(quotaUserId, quotaDate)
+      } catch (e) {
+        console.error('[API/Analyze] refundAnalysisQuota failed:', e)
+      }
+    }
+    // 成功不退：標記已結算，避免後續 abort 誤退。
+    const markSettled = () => {
+      quotaSettled = true
+    }
+    // B2 best-effort：前端斷線 abort 時退還（發送失敗不保證；以後端 failedAgent＋engine catch 為準）。
+    req.signal.addEventListener('abort', () => {
+      void refundOnce()
+    }, { once: true })
+    const quota = await consumeAnalysisQuota(quotaUserId, quotaDate, getDailyAnalysisLimit(await isAdminUser(user)))
     if (!quota.allowed) {
       return new Response(
         JSON.stringify({
@@ -128,20 +149,30 @@ export async function POST(req: Request) {
     try {
       engine = getEngine()
     } catch (e: any) {
+      // B2：engine 初始化例外屬技術性失敗，退還配額。
+      await refundOnce()
       return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
 
     // 先建 job 再開始串流：失敗/中斷時可從 analysis_jobs 續跑
-    const jobId = await saveAnalysisJob({
-      userId: user.id,
-      ticker: normalized,
-      date: date ?? new Date().toISOString().split('T')[0],
-      enabledAgents,
-    })
+    // B2：建 job 失敗（DB 異常）亦退還配額；成功後失敗路徑由 onFailure／stream catch 覆蓋。
+    let jobId: number
+    try {
+      jobId = await saveAnalysisJob({
+        userId: user.id,
+        ticker: normalized,
+        date: date ?? new Date().toISOString().split('T')[0],
+        enabledAgents,
+      })
+    } catch (e: any) {
+      await refundOnce()
+      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
 
     const stream = new ReadableStream({
       async start(controller) {
         const send = (event: string, data: any) => {
+          if (event === 'result') markSettled()
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
         }
 
@@ -155,6 +186,8 @@ export async function POST(req: Request) {
             enabledAgents,
             jobId,
             send,
+            // B2：失敗分支（result.failedAgent）觸發退款；resume 不傳故不退。
+            onFailure: refundOnce,
             run: (onProgress, onAgentComplete) =>
               engine.analyze(
                 normalized,
@@ -164,6 +197,8 @@ export async function POST(req: Request) {
               ),
           })
         } catch (e: any) {
+          // B2：engine 例外（runAnalysisStream 拋錯）退還配額。
+          await refundOnce()
           send('error', { message: e.message })
         } finally {
           controller.close()
