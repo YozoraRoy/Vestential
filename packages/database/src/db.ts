@@ -6185,3 +6185,258 @@ export async function getLlmUsageReport(opts?: { from?: string; to?: string }): 
     total: { callCount: totalCalls, fallbackCalls: totalFallbackCalls, promptTokens: totalPrompt, completionTokens: totalCompletion, totalTokens },
   }
 }
+
+// ─── LLM Usage 日報表＋分鐘級 OTPM（#45；唯讀 llm_usage_logs） ────
+// 與 #4 區隔：#4 是逐次寫入（logLlmUsage）＋上方的區間聚合（getLlmUsageReport）。
+// 本節只讀表做「per-agent 每日 in/out」與「分鐘級 OTPM 估算」，不新增任何寫入路徑。
+
+/** Groq qwen OTPM 硬上限（9/23 事件）：分鐘級 bucket tokens 的對照基準。 */
+export const LLM_OTPM_LIMIT = 1000
+/** 單分鐘用量超過此值視為近上限：UI 標紅＋沿用 #24 reportServerError 告警。 */
+export const LLM_OTPM_ALERT_THRESHOLD = 800
+/** 日報表查詢區間上限（天，Asia/Taipei 日曆日）：超過直接 throw，由 API 轉 400。 */
+export const LLM_USAGE_DAILY_MAX_DAYS = 31
+/**
+ * 日／分鐘聚合的原始列讀取上限（防全表掃描）。
+ * 分鐘級固定單日、今日 LLM 呼叫量遠小於此值；日報 31 天區間同樣受此上限保護。
+ */
+export const LLM_USAGE_ROW_LIMIT = 20000
+
+const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
+const WALL_CLOCK_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?$/
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** 驗證 YYYY-MM-DD；不合法 throw（API 層轉 400）。 */
+function assertTaipeiDateStr(v: string, name: string): void {
+  if (!DATE_ONLY_RE.test(v)) throw new Error(`${name} 需為 YYYY-MM-DD 格式`)
+  const d = new Date(`${v}T00:00:00+08:00`)
+  if (Number.isNaN(d.getTime())) throw new Error(`${name} 不是合法日期`)
+}
+
+/** 台北今日（YYYY-MM-DD）。 */
+export function taipeiTodayStr(nowMs: number = Date.now()): string {
+  return new Date(nowMs + TAIPEI_OFFSET_MS).toISOString().slice(0, 10)
+}
+
+function taipeiPartsFromInstant(ms: number): { date: string; minute: string } {
+  const iso = new Date(ms + TAIPEI_OFFSET_MS).toISOString()
+  return { date: iso.slice(0, 10), minute: `${iso.slice(0, 10)} ${iso.slice(11, 16)}` }
+}
+
+/**
+ * 將 llm_usage_logs.created_at 換算為台北牆鐘的 { date, minute }。
+ * - SQLite TEXT 'YYYY-MM-DD HH:MM:SS'（datetime('now','localtime') 無時區）：
+ *   依既有慣例（getLlmUsageReport 直接拿台北日期字串比對）視為台北牆鐘，直接取分量。
+ * - Date 物件（Azure DATETIME2 經 mssql 回傳）或帶時區的 ISO 字串：視為瞬時，+08:00 換算。
+ */
+export function toTaipeiParts(ts: string | Date): { date: string; minute: string } {
+  if (typeof ts !== 'string') {
+    return taipeiPartsFromInstant(ts.getTime())
+  }
+  const s = ts.trim()
+  const wall = s.match(WALL_CLOCK_RE)
+  if (wall && !/[+-]\d{2}:?\d{2}$/.test(s) && !s.endsWith('Z')) {
+    return { date: wall[1], minute: `${wall[1]} ${wall[2]}` }
+  }
+  const ms = new Date(s).getTime()
+  if (Number.isNaN(ms)) throw new Error(`無法解析時間戳: ${s}`)
+  return taipeiPartsFromInstant(ms)
+}
+
+/** 台北日（YYYY-MM-DD）。 */
+export function taipeiDayOf(ts: string | Date): string {
+  return toTaipeiParts(ts).date
+}
+
+/** 台北分鐘（'YYYY-MM-DD HH:MM'）。 */
+export function taipeiMinuteOf(ts: string | Date): string {
+  return toTaipeiParts(ts).minute
+}
+
+/** 日／分鐘聚合用的原始列（僅讀取，不含個資）。 */
+export interface LlmUsageRawRow {
+  agent: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  created_at: string | Date
+}
+
+export interface LlmUsageDailyAgentRow {
+  agent: string
+  callCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+export interface LlmUsageDailyDay {
+  date: string
+  agents: LlmUsageDailyAgentRow[]
+  total: { callCount: number; promptTokens: number; completionTokens: number; totalTokens: number }
+}
+
+export interface LlmUsageDailyResult {
+  from: string
+  to: string
+  /** 區間內的每一天（含無資料的日子，total 全 0，方便 7 日趨勢直接畫）。 */
+  days: LlmUsageDailyDay[]
+  grandTotal: { callCount: number; promptTokens: number; completionTokens: number; totalTokens: number }
+}
+
+function emptyDayTotal(): { callCount: number; promptTokens: number; completionTokens: number; totalTokens: number } {
+  return { callCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+}
+
+/** 純函式：原始列 → per-agent 每日聚合（台北日界）。供單測與 getLlmUsageDailyReport 共用。 */
+export function groupLlmUsageByDay(rows: LlmUsageRawRow[], from: string, to: string): LlmUsageDailyDay[] {
+  const dayMap = new Map<string, Map<string, LlmUsageDailyAgentRow>>()
+  for (const r of rows) {
+    const date = taipeiDayOf(r.created_at)
+    if (date < from || date > to) continue
+    let agents = dayMap.get(date)
+    if (!agents) {
+      agents = new Map()
+      dayMap.set(date, agents)
+    }
+    let row = agents.get(r.agent)
+    if (!row) {
+      row = { agent: r.agent, callCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+      agents.set(r.agent, row)
+    }
+    row.callCount += 1
+    row.promptTokens += r.promptTokens || 0
+    row.completionTokens += r.completionTokens || 0
+    row.totalTokens += r.totalTokens || 0
+  }
+
+  // 區間內逐日補齊（台北日曆日），無資料的日子 total 全 0。
+  // 注意：起點為台北午夜瞬時，必須以 taipeiPartsFromInstant 還原日曆日；
+  // 直接對該 Date 取 getUTC* 會得到前一天（午夜+08:00 = UTC 前一日 16:00）。
+  const days: LlmUsageDailyDay[] = []
+  const startMs = new Date(`${from}T00:00:00+08:00`).getTime()
+  const endMs = new Date(`${to}T00:00:00+08:00`).getTime()
+  for (let ms = startMs; ms <= endMs; ms += 86_400_000) {
+    const date = taipeiPartsFromInstant(ms).date
+    const agents = Array.from((dayMap.get(date) ?? new Map()).values()).sort((a, b) => b.totalTokens - a.totalTokens)
+    const total = emptyDayTotal()
+    for (const a of agents) {
+      total.callCount += a.callCount
+      total.promptTokens += a.promptTokens
+      total.completionTokens += a.completionTokens
+      total.totalTokens += a.totalTokens
+    }
+    days.push({ date, agents, total })
+  }
+  return days
+}
+
+/**
+ * per-agent 每日 tokens（in／out）日報表。
+ * 只讀 llm_usage_logs（created_at＋token 欄）；區間上限 31 天、原始列上限 20000，
+ * 超過直接 throw（API 轉 400），避免全表掃描。
+ */
+export async function getLlmUsageDailyReport(opts: { from: string; to: string }): Promise<LlmUsageDailyResult> {
+  const from = opts.from.trim()
+  const to = opts.to.trim()
+  assertTaipeiDateStr(from, 'from')
+  assertTaipeiDateStr(to, 'to')
+  if (from > to) throw new Error('from 不可晚於 to')
+  const spanDays = Math.round(
+    (new Date(`${to}T00:00:00+08:00`).getTime() - new Date(`${from}T00:00:00+08:00`).getTime()) / 86_400_000,
+  ) + 1
+  if (spanDays > LLM_USAGE_DAILY_MAX_DAYS) {
+    throw new Error(`日報區間上限 ${LLM_USAGE_DAILY_MAX_DAYS} 天（本次 ${spanDays} 天），請縮小範圍`)
+  }
+
+  const rows = await dbQueryAll<LlmUsageRawRow>(
+    `SELECT agent, promptTokens, completionTokens, totalTokens, created_at
+     FROM llm_usage_logs
+     WHERE created_at >= @from AND created_at <= @to
+     ORDER BY created_at ASC
+     LIMIT ${LLM_USAGE_ROW_LIMIT}`,
+    { from: `${from} 00:00:00`, to: `${to} 23:59:59` },
+  )
+  const days = groupLlmUsageByDay(rows, from, to)
+  const grandTotal = emptyDayTotal()
+  for (const d of days) {
+    grandTotal.callCount += d.total.callCount
+    grandTotal.promptTokens += d.total.promptTokens
+    grandTotal.completionTokens += d.total.completionTokens
+    grandTotal.totalTokens += d.total.totalTokens
+  }
+  return { from, to, days, grandTotal }
+}
+
+export interface LlmUsageMinuteBucket {
+  /** 台北分鐘 'YYYY-MM-DD HH:MM'。 */
+  minute: string
+  totalTokens: number
+  callCount: number
+  /** 單分鐘用量＞800（近上限）：UI 標紅＋#24 告警。 */
+  overThreshold: boolean
+}
+
+export interface LlmUsageMinuteResult {
+  day: string
+  otpmLimit: number
+  alertThreshold: number
+  /** 分鐘級為估算值（log 時間戳還原，非帳單精確值）：UI 必須加註。 */
+  estimated: true
+  /** 僅含「有呼叫」的分鐘（全 0 分鐘省略，避免 1440 列噪音）。 */
+  buckets: LlmUsageMinuteBucket[]
+  peak: LlmUsageMinuteBucket | null
+  overMinutes: string[]
+}
+
+/** 純函式：原始列 → 每分鐘聚合（台北分鐘，僅保留有呼叫的分鐘）。 */
+export function groupLlmUsageByMinute(rows: LlmUsageRawRow[], day: string): LlmUsageMinuteBucket[] {
+  const minuteMap = new Map<string, LlmUsageMinuteBucket>()
+  for (const r of rows) {
+    const parts = toTaipeiParts(r.created_at)
+    if (parts.date !== day) continue
+    let b = minuteMap.get(parts.minute)
+    if (!b) {
+      b = { minute: parts.minute, totalTokens: 0, callCount: 0, overThreshold: false }
+      minuteMap.set(parts.minute, b)
+    }
+    b.totalTokens += r.totalTokens || 0
+    b.callCount += 1
+  }
+  const buckets = Array.from(minuteMap.values()).sort((a, b) => (a.minute < b.minute ? -1 : 1))
+  for (const b of buckets) {
+    b.overThreshold = b.totalTokens > LLM_OTPM_ALERT_THRESHOLD
+  }
+  return buckets
+}
+
+/**
+ * 分鐘級 OTPM 估算：以 llm_usage_logs 時間戳還原每分鐘用量，對照上限 1000。
+ * 固定單日查詢＋原始列上限 20000；回傳 estimated: true，UI 需註明非帳單精確值。
+ */
+export async function getLlmUsageMinuteReport(opts: { day: string }): Promise<LlmUsageMinuteResult> {
+  const day = opts.day.trim()
+  assertTaipeiDateStr(day, 'day')
+  const rows = await dbQueryAll<LlmUsageRawRow>(
+    `SELECT agent, promptTokens, completionTokens, totalTokens, created_at
+     FROM llm_usage_logs
+     WHERE created_at >= @from AND created_at <= @to
+     ORDER BY created_at ASC
+     LIMIT ${LLM_USAGE_ROW_LIMIT}`,
+    { from: `${day} 00:00:00`, to: `${day} 23:59:59` },
+  )
+  const buckets = groupLlmUsageByMinute(rows, day)
+  let peak: LlmUsageMinuteBucket | null = null
+  for (const b of buckets) {
+    if (!peak || b.totalTokens > peak.totalTokens) peak = b
+  }
+  return {
+    day,
+    otpmLimit: LLM_OTPM_LIMIT,
+    alertThreshold: LLM_OTPM_ALERT_THRESHOLD,
+    estimated: true,
+    buckets,
+    peak,
+    overMinutes: buckets.filter((b) => b.overThreshold).map((b) => b.minute),
+  }
+}
