@@ -6194,9 +6194,9 @@ export async function getLlmUsageReport(opts?: { from?: string; to?: string }): 
 // 與 #4 區隔：#4 是逐次寫入（logLlmUsage）＋上方的區間聚合（getLlmUsageReport）。
 // 本節只讀表做「per-agent 每日 in/out」與「分鐘級 OTPM 估算」，不新增任何寫入路徑。
 
-/** Groq qwen OTPM 硬上限（9/23 事件）：分鐘級 bucket tokens 的對照基準。 */
+/** Groq qwen OTPM 硬上限（9/23 事件）：分鐘級 bucket「輸出 tokens」的對照基準（#47 起為 output 口徑）。 */
 export const LLM_OTPM_LIMIT = 1000
-/** 單分鐘用量超過此值視為近上限：UI 標紅＋沿用 #24 reportServerError 告警。 */
+/** 單分鐘輸出超過此值視為近上限：UI 標紅＋沿用 #24 reportServerError 告警（#47 起只看 outputTokens）。 */
 export const LLM_OTPM_ALERT_THRESHOLD = 800
 /** 日報表查詢區間上限（天，Asia/Taipei 日曆日）：超過直接 throw，由 API 轉 400。 */
 export const LLM_USAGE_DAILY_MAX_DAYS = 31
@@ -6375,9 +6375,18 @@ export async function getLlmUsageDailyReport(opts: { from: string; to: string })
 export interface LlmUsageMinuteBucket {
   /** 台北分鐘 'YYYY-MM-DD HH:MM'。 */
   minute: string
+  /** 主口徑：輸出 tokens／分鐘（completionTokens 加總；Groq OTPM 對照用，#47 起告警只看此欄）。 */
+  outputTokens: number
+  /** 參考欄：輸入 tokens／分鐘（promptTokens 加總；僅對照顯示，不參與告警）。 */
+  promptTokens: number
+  /**
+   * 對照欄：總量 tokens／分鐘（prompt+completion；#47 前舊口徑，僅供 8180 誤報對照，
+   * 告警與 UI 主顯示不看此欄）。
+   * @deprecated #47 起改用 outputTokens；保留供歷史對照。
+   */
   totalTokens: number
   callCount: number
-  /** 單分鐘用量＞800（近上限）：UI 標紅＋#24 告警。 */
+  /** 單分鐘輸出＞800（近上限）：UI 標紅＋#24 告警（#47 起看 outputTokens）。 */
   overThreshold: boolean
 }
 
@@ -6393,7 +6402,7 @@ export interface LlmUsageMinuteResult {
   overMinutes: string[]
 }
 
-/** 純函式：原始列 → 每分鐘聚合（台北分鐘，僅保留有呼叫的分鐘）。 */
+/** 純函式：原始列 → 每分鐘聚合（台北分鐘，僅保留有呼叫的分鐘；#47 起主口徑為輸出 tokens）。 */
 export function groupLlmUsageByMinute(rows: LlmUsageRawRow[], day: string): LlmUsageMinuteBucket[] {
   const minuteMap = new Map<string, LlmUsageMinuteBucket>()
   for (const r of rows) {
@@ -6401,21 +6410,26 @@ export function groupLlmUsageByMinute(rows: LlmUsageRawRow[], day: string): LlmU
     if (parts.date !== day) continue
     let b = minuteMap.get(parts.minute)
     if (!b) {
-      b = { minute: parts.minute, totalTokens: 0, callCount: 0, overThreshold: false }
+      b = { minute: parts.minute, outputTokens: 0, promptTokens: 0, totalTokens: 0, callCount: 0, overThreshold: false }
       minuteMap.set(parts.minute, b)
     }
-    b.totalTokens += r.totalTokens || 0
+    const prompt = r.promptTokens || 0
+    const completion = r.completionTokens || 0
+    b.outputTokens += completion
+    b.promptTokens += prompt
+    // 對照欄：沿用 totalTokens（缺值時以 prompt+completion 回填，僅供舊口徑對照）。
+    b.totalTokens += r.totalTokens || prompt + completion
     b.callCount += 1
   }
   const buckets = Array.from(minuteMap.values()).sort((a, b) => (a.minute < b.minute ? -1 : 1))
   for (const b of buckets) {
-    b.overThreshold = b.totalTokens > LLM_OTPM_ALERT_THRESHOLD
+    b.overThreshold = b.outputTokens > LLM_OTPM_ALERT_THRESHOLD
   }
   return buckets
 }
 
 /**
- * 分鐘級 OTPM 估算：以 llm_usage_logs 時間戳還原每分鐘用量，對照上限 1000。
+ * 分鐘級 OTPM 估算：以 llm_usage_logs 時間戳還原每分鐘「輸出」用量，對照上限 1000。
  * 固定單日查詢＋原始列上限 20000；回傳 estimated: true，UI 需註明非帳單精確值。
  */
 export async function getLlmUsageMinuteReport(opts: { day: string }): Promise<LlmUsageMinuteResult> {
@@ -6432,7 +6446,7 @@ export async function getLlmUsageMinuteReport(opts: { day: string }): Promise<Ll
   const buckets = groupLlmUsageByMinute(rows, day)
   let peak: LlmUsageMinuteBucket | null = null
   for (const b of buckets) {
-    if (!peak || b.totalTokens > peak.totalTokens) peak = b
+    if (!peak || b.outputTokens > peak.outputTokens) peak = b
   }
   return {
     day,

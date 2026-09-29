@@ -125,12 +125,15 @@ describe('getLlmUsageDailyReport（per-agent 每日 in/out）', () => {
   })
 })
 
-describe('getLlmUsageMinuteReport（分鐘級 OTPM 估算）', () => {
-  it('還原尖峰形狀：同分鐘合併、peak 指向最高分鐘', async () => {
+describe('getLlmUsageMinuteReport（分鐘級 OTPM 估算，#47 輸出口徑）', () => {
+  it('還原尖峰形狀：同分鐘合併、peak 指向輸出最高分鐘', async () => {
     const report = await getLlmUsageMinuteReport({ day: '2026-09-20' })
     expect(report.estimated).toBe(true)
     expect(report.otpmLimit).toBe(1000)
     const b1000 = report.buckets.find((b) => b.minute === '2026-09-20 10:00')!
+    // 主口徑輸出 300+50=350；參考欄 prompt 600；對照欄總量 950
+    expect(b1000.outputTokens).toBe(350)
+    expect(b1000.promptTokens).toBe(600)
     expect(b1000.totalTokens).toBe(950)
     expect(b1000.callCount).toBe(2)
     expect(report.peak?.minute).toBe('2026-09-20 10:00')
@@ -138,9 +141,10 @@ describe('getLlmUsageMinuteReport（分鐘級 OTPM 估算）', () => {
     expect(report.buckets.length).toBe(3)
   })
 
-  it('單分鐘＞800 標 overThreshold（UI 標紅＋告警）', async () => {
+  it('告警只看輸出：總量＞800 但輸出小不標 overThreshold（#47 無誤報）', async () => {
     const report = await getLlmUsageMinuteReport({ day: '2026-09-20' })
-    expect(report.overMinutes).toEqual(['2026-09-20 10:00'])
+    // 10:00 總量 950（舊口徑會誤報），輸出 350 不超標
+    expect(report.overMinutes).toEqual([])
     const quiet = await getLlmUsageMinuteReport({ day: '2026-09-21' })
     expect(quiet.overMinutes).toEqual([])
     expect(quiet.peak?.overThreshold).toBe(false)
@@ -164,6 +168,8 @@ describe('純函式 groupLlmUsageByDay / groupLlmUsageByMinute', () => {
       [{ agent: 'x', promptTokens: 400, completionTokens: 400, totalTokens: 800, created_at: '2026-09-20 12:00:00' }],
       '2026-09-20',
     )
+    // #47：輸出 400 不超標（＞800 才算，看 outputTokens）
     expect(buckets[0].overThreshold).toBe(false)
+    expect(buckets[0].outputTokens).toBe(400)
   })
 })

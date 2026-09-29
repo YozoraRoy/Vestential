@@ -49,6 +49,11 @@ interface DailyReport {
 
 interface MinuteBucket {
   minute: string
+  /** 主口徑：輸出 tokens／分鐘（#47 起告警與主顯示看此欄）。 */
+  outputTokens: number
+  /** 參考欄：輸入 tokens／分鐘（僅對照）。 */
+  promptTokens: number
+  /** 對照欄：總量（舊口徑，僅供對照）。 */
   totalTokens: number
   callCount: number
   overThreshold: boolean
@@ -425,10 +430,11 @@ export function LlmUsageClient() {
         )}
       </Card>
 
-      <Card title="分鐘級 OTPM（估算）">
+      <Card title="分鐘級 OTPM（輸出 tokens／分鐘，估算）">
         <p className="mb-3 text-xs text-[var(--text-secondary)]">
-          以 llm_usage_logs 時間戳還原每分鐘用量，對照 Groq qwen OTPM 上限 1000。分鐘級數字為估算值、非帳單精確值，驗收以形狀／趨勢為準。
-          只列出有呼叫的分鐘。單分鐘用量＞800 標紅，並沿用 #24 告警通道發信（30 分鐘內同內容去重；無 cron，於本頁載入時觸發）。
+          以 llm_usage_logs 時間戳還原每分鐘「輸出 tokens」（completion 加總）用量，對照 Groq qwen OTPM 上限 1000（OTPM 只計輸出）。
+          分鐘級數字為估算值、非帳單精確值，驗收以形狀／趨勢為準。只列出有呼叫的分鐘，各列另附輸入（prompt）與合計（總量）供參考，不參與告警。
+          單分鐘輸出＞800 標紅，並沿用 #24 告警通道發信（30 分鐘內同內容去重；無 cron，於本頁載入時觸發）。
         </p>
         <div className="mb-3 flex items-center gap-2 text-sm">
           <label className="text-[var(--text-secondary)]">日期</label>
@@ -449,32 +455,35 @@ export function LlmUsageClient() {
           <>
             {(minute.overMinutes.length > 0) && (
               <div className="mb-3 px-3 py-2 rounded-lg text-sm bg-[var(--accent-red)]/10 text-[var(--accent-red)] border border-[var(--accent-red)]/30">
-                單分鐘用量超過 {minute.alertThreshold}（近上限 {minute.otpmLimit}）：{minute.overMinutes.join('、')}
+                單分鐘輸出超過 {minute.alertThreshold}（近上限 {minute.otpmLimit}）：{minute.overMinutes.join('、')}
                 。已透過 #24 告警通道發信（30 分鐘內同內容去重）。
               </div>
             )}
             <div className="mb-3 text-sm text-[var(--text-secondary)]">
-              尖峰：
+              尖峰（輸出）：
               <span className={minute.peak && minute.peak.overThreshold ? 'text-[var(--accent-red)] font-bold' : 'text-[var(--text-primary)] font-medium'}>
-                {minute.peak?.minute}（{minute.peak?.totalTokens.toLocaleString('zh-TW')} tokens／分鐘，上限 {minute.otpmLimit}）
+                {minute.peak?.minute}（{minute.peak?.outputTokens.toLocaleString('zh-TW')} 輸出 tokens／分鐘，上限 {minute.otpmLimit}）
               </span>
               ；共 {minute.buckets.length} 個有呼叫的分鐘
               {minuteTruncated && `（僅顯示前 ${MINUTE_RENDER_LIMIT} 列）`}。
             </div>
             <div className="max-h-96 overflow-y-auto space-y-1.5 pr-1">
               {minuteShown.map((b) => (
-                <div key={b.minute} className="flex items-center gap-3 text-sm">
+                <div key={b.minute} className="flex items-center gap-3 text-sm" title={`輸入 ${b.promptTokens.toLocaleString('zh-TW')} · 合計 ${b.totalTokens.toLocaleString('zh-TW')}（參考）`}>
                   <span className={`w-32 shrink-0 ${b.overThreshold ? 'text-[var(--accent-red)] font-medium' : 'text-[var(--text-secondary)]'}`}>
                     {b.minute.slice(11)}
                   </span>
                   <div className="h-3.5 flex-1 rounded bg-white/5 overflow-hidden">
                     <div
                       className={`h-full rounded ${b.overThreshold ? 'bg-[var(--accent-red)]' : 'bg-[var(--accent)]/60'}`}
-                      style={{ width: `${Math.min(100, (b.totalTokens / minute.otpmLimit) * 100)}%` }}
+                      style={{ width: `${Math.min(100, (b.outputTokens / minute.otpmLimit) * 100)}%` }}
                     />
                   </div>
                   <span className={`w-24 shrink-0 text-right ${b.overThreshold ? 'text-[var(--accent-red)] font-bold' : 'text-[var(--text-primary)]'}`}>
-                    {b.totalTokens.toLocaleString('zh-TW')}
+                    {b.outputTokens.toLocaleString('zh-TW')}
+                  </span>
+                  <span className="w-40 shrink-0 text-right text-xs text-[var(--text-secondary)]">
+                    輸入 {b.promptTokens.toLocaleString('zh-TW')} · 合計 {b.totalTokens.toLocaleString('zh-TW')}
                   </span>
                 </div>
               ))}

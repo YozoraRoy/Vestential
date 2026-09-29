@@ -44,17 +44,17 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // #45 分鐘級 OTPM 估算：單日每分鐘用量 vs 上限（UI 需註明估算值）。
+    // #47 分鐘級 OTPM 估算：單日每分鐘「輸出」用量 vs 上限（UI 需註明估算值；告警只看 output）。
     if (view === 'minute') {
       const day = searchParams.get('day') ?? taipeiTodayStr()
       const report = await getLlmUsageMinuteReport({ day })
-      // 單分鐘＞800：沿用 #24 reportServerError 通道告警（30 分鐘同 key 去重）。
+      // 單分鐘輸出＞800：沿用 #24 reportServerError 通道告警（30 分鐘同 key 去重）。
       // 無 cron 排程，告警於後台用量頁載入分鐘視角時觸發（fire-and-forget）。
       if (report.overMinutes.length > 0 && report.peak) {
         void reportServerError({
           route: 'GET /api/admin/llm-usage (OTPM near-limit)',
           status: 429,
-          error: `OTPM near limit on ${report.day}: peak ${report.peak.totalTokens} tokens/min at ${report.peak.minute} (limit ${report.otpmLimit}, threshold ${report.alertThreshold}); over-threshold minutes: ${report.overMinutes.join(', ')}`,
+          error: `OTPM near limit on ${report.day}: peak ${report.peak.outputTokens} output tokens/min at ${report.peak.minute} (limit ${report.otpmLimit}, threshold ${report.alertThreshold}); over-threshold minutes: ${report.overMinutes.join(', ')}`,
         })
       }
       return NextResponse.json({ success: true, view: 'minute', ...report })
