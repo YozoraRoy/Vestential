@@ -148,6 +148,12 @@ export const en: Dict = {
     newsDirNegative: 'Bearish',
     newsDirNeutral: 'Neutral',
     newsBacktestSymbol: 'Backtest {symbol}',
+    windTitle: 'Trump Wind Signal',
+    windBullish: 'Bullish',
+    windBearish: 'Bearish',
+    windNeutral: 'Wait & see',
+    windRelatedTitle: 'Related news',
+    windDisclaimer: 'Based on one person\u2019s remarks; policies may flip. This is an event-risk hint, not investment advice.',
   },
   about: {
     metaTitle: 'About Vestential — Investment Information for Working Professionals',

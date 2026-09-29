@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { getDict, getLocale } from '@/i18n/server'
 import { localizePath } from '@/i18n/paths'
 import { buildAlternates } from '@/i18n/metadata'
-import { getMarketFocus, getMarketFocusMeta } from '@stock/database'
+import { getMarketFocus, getMarketFocusMeta, getMarketFocusWind } from '@stock/database'
 import { SectionHeading } from '@/components/section-heading'
 import { NewsCard } from '@/components/news-card'
 import { MarketFocusSubscribe } from '@/components/market-focus-subscribe'
@@ -41,7 +41,26 @@ function formatDateTime(s: string, locale: string): string {
 export default async function MarketFocusPage() {
   const dict = await getDict()
   const locale = await getLocale()
-  const [focus, meta] = await Promise.all([getMarketFocus(20, 2), getMarketFocusMeta()])
+  // Issue #49：總覽 meta 讀取多帶 wind 欄（同一頁並行讀取，不新增 endpoint）
+  const [focus, meta, wind] = await Promise.all([getMarketFocus(20, 2), getMarketFocusMeta(), getMarketFocusWind().catch(() => null)])
+
+  // 風向燈只在 direction != none 時渲染；無新聞的日子頁面零變化
+  const showWind = !!wind && wind.direction !== 'none' && !!wind.note
+  let windUrls: string[] = []
+  if (showWind && wind.related_urls) {
+    try {
+      const parsed: unknown = JSON.parse(wind.related_urls)
+      if (Array.isArray(parsed)) windUrls = parsed.filter((u): u is string => typeof u === 'string').slice(0, 8)
+    } catch {
+      windUrls = []
+    }
+  }
+  const windLamp =
+    wind?.direction === 'bullish'
+      ? { dot: 'bg-[var(--accent-green)]', label: dict.marketFocus.windBullish }
+      : wind?.direction === 'bearish'
+        ? { dot: 'bg-[var(--accent-red)]', label: dict.marketFocus.windBearish }
+        : { dot: 'bg-amber-400', label: dict.marketFocus.windNeutral }
 
   const graph: object[] = [
     {
@@ -103,6 +122,38 @@ export default async function MarketFocusPage() {
               <h2 id="market-summary" className="text-base font-semibold text-[var(--text-primary)]">{dict.marketFocus.summaryTitle}</h2>
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-[var(--text-secondary)]">AI</span>
             </div>
+            {/* Issue #49 川普風向燈小卡：只在 direction != none 時渲染，置於總覽文字上方 */}
+            {showWind ? (
+              <div aria-label={dict.marketFocus.windTitle} className="mb-4 rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span aria-hidden="true" className={`inline-block w-2.5 h-2.5 rounded-full ${windLamp.dot}`} />
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{dict.marketFocus.windTitle} · {windLamp.label}</span>
+                </div>
+                <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-primary)]">{wind.note}</p>
+                {windUrls.length > 0 ? (
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                    {dict.marketFocus.windRelatedTitle}：
+                    {windUrls.map((u, i) => (
+                      <span key={u}>
+                        {i > 0 ? '｜' : ''}
+                        <a href={u} target="_blank" rel="noopener noreferrer" className="text-[var(--accent)] hover:underline">
+                          {(() => {
+                            try {
+                              return new URL(u).hostname.replace(/^www\./, '')
+                            } catch {
+                              return `新聞${i + 1}`
+                            }
+                          })()}
+                        </a>
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
+                <p className="mt-1.5 text-[11px] text-[var(--text-secondary)]">
+                  {wind.generated_at ? `${dict.marketFocus.updatedLabel}${formatDateTime(wind.generated_at, locale)} · ` : ''}{dict.marketFocus.windDisclaimer}
+                </p>
+              </div>
+            ) : null}
             <MarketFocusTtsBar summary={meta.summary} locale={locale} t={dict.marketFocus} />
             <p className="text-sm leading-relaxed text-[var(--text-primary)] whitespace-pre-wrap mt-3">{meta.summary}</p>
             {meta.generated_at && (

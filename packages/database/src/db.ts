@@ -235,6 +235,16 @@ function getSqliteDb(): Database.Database | null {
         generated_at TEXT,
         created_at TEXT DEFAULT (datetime('now', 'localtime'))
       );
+      -- Issue #49 川普風向燈（只新增表，不動現有表）
+      CREATE TABLE IF NOT EXISTS market_focus_wind (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        direction TEXT NOT NULL DEFAULT 'none',
+        note TEXT,
+        related_urls TEXT,
+        generated_at TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_market_focus_wind_generated ON market_focus_wind(generated_at);
       CREATE TABLE IF NOT EXISTS market_focus_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         source TEXT NOT NULL,
@@ -895,6 +905,20 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_mf_logs_created ON market_focus_logs(created_at);
         CREATE INDEX idx_mf_logs_source ON market_focus_logs(source);
+      END
+
+      -- Issue #49 川普風向燈：只新增表，不動現有表
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'market_focus_wind')
+      BEGIN
+        CREATE TABLE market_focus_wind (
+          id           INT IDENTITY(1,1) PRIMARY KEY,
+          direction    NVARCHAR(20) NOT NULL DEFAULT 'none',
+          note         NVARCHAR(500),
+          related_urls NVARCHAR(MAX),
+          generated_at NVARCHAR(100),
+          created_at   DATETIME DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_market_focus_wind_generated ON market_focus_wind(generated_at);
       END
     `)
 
@@ -3503,6 +3527,8 @@ export interface MarketFocusItem {
   /** 文中提及的台股代號（逗號分隔，如 2330,2317），供新聞卡連回回測。 */
   related_symbols?: string | null
   created_at?: string
+  /** Issue #49：候選池標籤（'trump' 為川普政策新聞），記憶體內傳遞用，不落 DB（save/get 皆忽略）。 */
+  tag?: string | null
 }
 
 export interface MarketFocusMeta {
@@ -3589,6 +3615,50 @@ export async function saveMarketFocusMeta(meta: { summary: string; generatedAt: 
 export async function getMarketFocusMeta(): Promise<MarketFocusMeta | null> {
   const rows = await dbQueryAll<MarketFocusMeta>(
     'SELECT id, summary, generated_at FROM market_focus_meta ORDER BY id DESC LIMIT 1',
+  )
+  return rows[0] ?? null
+}
+
+// ─── Market Focus 川普風向燈（market_focus_wind，Issue #49）─────────
+// 每日事件風險提示（偏多 / 偏空 / 觀望＋一句話），與當日總覽同一次 LLM
+// 呼叫產出後落此表；僅保留最新一輪（維持單一列，與 market_focus_meta 同慣例）。
+// 無相關新聞的日子 direction='none'，前台不渲染燈卡（頁面零變化）。
+
+/** 風向燈方向：bullish 偏多／bearish 偏空／neutral 觀望／none 無相關新聞（不顯示）。 */
+export type MarketFocusWindDirection = 'bullish' | 'bearish' | 'neutral' | 'none'
+
+export interface MarketFocusWind {
+  id?: number
+  direction: MarketFocusWindDirection | string | null
+  note: string | null
+  /** 相關新聞 URL 的 JSON 陣列字串（最多 8 則）。 */
+  related_urls: string | null
+  generated_at: string | null
+}
+
+/** 覆寫當日川普風向燈（僅保留最新一輪，維持單一列）。 */
+export async function saveMarketFocusWind(wind: {
+  direction: string
+  note: string | null
+  relatedUrls: string | null
+  generatedAt: string
+}): Promise<void> {
+  await dbExecute('DELETE FROM market_focus_wind')
+  await dbExecute(
+    'INSERT INTO market_focus_wind (direction, note, related_urls, generated_at) VALUES (@direction, @note, @related_urls, @generated_at)',
+    {
+      direction: wind.direction.slice(0, 20),
+      note: wind.note ? wind.note.slice(0, 500) : null,
+      related_urls: wind.relatedUrls ? wind.relatedUrls.slice(0, 20000) : null,
+      generated_at: wind.generatedAt.slice(0, 100),
+    },
+  )
+}
+
+/** 讀取最新川普風向燈；無紀錄回傳 null（前台視為不渲染）。 */
+export async function getMarketFocusWind(): Promise<MarketFocusWind | null> {
+  const rows = await dbQueryAll<MarketFocusWind>(
+    'SELECT id, direction, note, related_urls, generated_at FROM market_focus_wind ORDER BY id DESC LIMIT 1',
   )
   return rows[0] ?? null
 }

@@ -148,6 +148,12 @@ export const zhTW: Dict = {
     newsDirNegative: '偏空',
     newsDirNeutral: '中性',
     newsBacktestSymbol: '回測 {symbol}',
+    windTitle: '川普風向燈',
+    windBullish: '偏多',
+    windBearish: '偏空',
+    windNeutral: '觀望',
+    windRelatedTitle: '相關新聞',
+    windDisclaimer: '單一人物發言、政策易髮夾彎，此為事件風險提示，非投資建議。',
   },
   about: {
     metaTitle: '關於 Vestential — 上班族與小資族的投資資訊參考平台',

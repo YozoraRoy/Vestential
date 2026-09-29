@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   logMarketFocusEvent: vi.fn(),
   saveMarketFocus: vi.fn(),
   saveMarketFocusMeta: vi.fn(),
+  saveMarketFocusWind: vi.fn(),
+  getMarketFocusWind: vi.fn(),
   attachLlmUsageRecorder: vi.fn(),
 }))
 
@@ -36,6 +38,8 @@ vi.mock('@stock/database', () => ({
   saveMarketFocusMeta: mocks.saveMarketFocusMeta,
   getMarketFocus: mocks.getMarketFocus,
   getMarketFocusMeta: mocks.getMarketFocusMeta,
+  saveMarketFocusWind: mocks.saveMarketFocusWind,
+  getMarketFocusWind: mocks.getMarketFocusWind,
   logMarketFocusEvent: mocks.logMarketFocusEvent,
 }))
 vi.mock('@/lib/llm-usage', () => ({ attachLlmUsageRecorder: mocks.attachLlmUsageRecorder }))

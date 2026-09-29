@@ -4,6 +4,8 @@ import { loadConfig } from '@stock/core'
 import { getAgentSetting } from '@stock/database'
 import type { MarketFocusItem } from '@stock/database'
 import { saveMarketFocus, saveMarketFocusMeta, getMarketFocus, getMarketFocusMeta, logMarketFocusEvent } from '@stock/database'
+import { saveMarketFocusWind, getMarketFocusWind } from '@stock/database'
+import type { MarketFocusWindDirection } from '@stock/database'
 import { attachLlmUsageRecorder } from '@/lib/llm-usage'
 
 // ─── 候選新聞來源設定 (多來源聚合池) ─────────────────────────────
@@ -169,12 +171,56 @@ async function fetchYahooStockNews(): Promise<NewsCandidate[]> {
   }
 }
 
-/** 多來源新聞聚合候選池：聚合 鉅亨網 + 經濟日報 + Yahoo 股市 (含中央社/非凡等)，並去重與清洗。 */
+// ─── Issue #49 川普風向燈：美國政策新聞獨立池 ───────────────────────
+// Google News RSS 英文搜尋（robots 已放行 news.google.com 域名）。
+// 進池前先做英文關鍵字過濾；獨立上限 TRUMP_NEWS_MAX 則並打 tag='trump'，
+// 先截斷再併入總池，不擠掉台股新聞。美媒擋爬蟲致正文缺失時沿用既有
+// 無正文 fallback（標題＋理由兜底），不擋主流程；失敗回 []（當天無燈）。
+const TRUMP_RSS_QUERIES = [
+  'Trump tariff',
+  'Trump Federal Reserve',
+  'White House semiconductor',
+  'Taiwan trade Trump',
+]
+const TRUMP_NEWS_MAX = 8
+const TRUMP_KEYWORD_RE = /trump|tariff|federal reserve|\bfed\b|white house|semiconductor|taiwan/i
+
+/** 川普／美國政策新聞英文池：上限 8 則、tag='trump'；失敗回 []（當天無燈，不擋主流程）。 */
+export async function fetchTrumpNews(): Promise<NewsCandidate[]> {
+  const out: NewsCandidate[] = []
+  const seen = new Set<string>()
+  for (const q of TRUMP_RSS_QUERIES) {
+    try {
+      const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`
+      const res = await fetch(url, {
+        headers: { 'user-agent': USER_AGENT },
+        signal: AbortSignal.timeout(10_000),
+        cache: 'no-store',
+      })
+      if (!res.ok) continue
+      for (const c of parseRssXml(await res.text(), 'Google News')) {
+        if (!TRUMP_KEYWORD_RE.test(`${c.title} ${c.url}`)) continue
+        const key = c.url.split('?')[0].split('#')[0]
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        out.push({ ...c, tag: 'trump' })
+        if (out.length >= TRUMP_NEWS_MAX) return out
+      }
+    } catch (e) {
+      console.warn(`[MarketFocus] Trump RSS fetch error (${q}):`, e)
+    }
+  }
+  return out
+}
+
+/** 多來源新聞聚合候選池：聚合 鉅亨網 + 經濟日報 + Yahoo 股市 (含中央社/非凡等)＋川普政策英文池，並去重與清洗。
+ *  Issue #49：Trump 池先截斷至獨立上限 8 則再併入，台股池維持原 MAX_CANDIDATES 預算（不被擠掉）。 */
 export async function fetchMultiSourceCandidates(): Promise<NewsCandidate[]> {
-  const [cnyes, udn, yahoo] = await Promise.allSettled([
+  const [cnyes, udn, yahoo, trump] = await Promise.allSettled([
     fetchCnyesNews(),
     fetchUdnNews(),
     fetchYahooStockNews(),
+    fetchTrumpNews(),
   ])
 
   const all: NewsCandidate[] = [
@@ -197,6 +243,19 @@ export async function fetchMultiSourceCandidates(): Promise<NewsCandidate[]> {
     seenTitles.add(titleKey)
     unique.push(item)
     if (unique.length >= MAX_CANDIDATES) break
+  }
+
+  // Trump 池獨立截斷後併入（去重後最多再添 8 則，不擠掉上方台股預算）
+  if (trump.status === 'fulfilled') {
+    for (const item of trump.value.slice(0, TRUMP_NEWS_MAX)) {
+      if (!item.url || !item.title) continue
+      const cleanUrl = item.url.split('?')[0].split('#')[0]
+      const titleKey = item.title.replace(/\s+/g, '').slice(0, 16)
+      if (seenUrls.has(cleanUrl) || seenTitles.has(titleKey)) continue
+      seenUrls.add(cleanUrl)
+      seenTitles.add(titleKey)
+      unique.push({ ...item, tag: 'trump' })
+    }
   }
 
   return unique
@@ -343,14 +402,50 @@ export const SUMMARY_SYSTEM_PROMPT = `你是 Vestential 的市場焦點主筆。
    - 避免假坦白鉤子（「說真的」、「老實說」）。
 4. 自然收尾，禁止罐頭總結：分析寫完即可自然結束，嚴禁在文末使用「總結來說」、「總的來說」、「綜上所述」、「機會在於...風險在於...」等套版公式。
 5. 在地化與專業性：使用繁體中文台灣金融語境，全形標點（，。！？），數字及英文代碼前後保留半形空格，不用中國用語（如接地氣、質素、打法等）。
-6. 聚焦價值核心：關注基本面動能、實質營收獲利、總經數據（就業/通膨/利率）與資金流向，精準傳達重點。
-7. 只輸出 JSON，不要任何其他文字：{"summary":"..."}`
+ 6. 聚焦價值核心：關注基本面動能、實質營收獲利、總經數據（就業/通膨/利率）與資金流向，精準傳達重點。
+7. 只輸出 JSON，不要任何其他文字：{"summary":"...","trump_wind":{"direction":"...","note":"..."}}。
+   其中 trump_wind 為「川普風向燈」（Issue #49：與總覽同一次 LLM 呼叫多回一欄，零新增呼叫）：
+   - 根據本次精選新聞中標 [美國政策] 的川普／美國政策新聞，給出事件風險提示（不是預測）；
+     direction 四選一：bullish（偏多）/ bearish（偏空）/ neutral（觀望）/ none（無相關新聞）；
+   - note 為 30 字內繁體中文一句話（英文標題須轉寫為中文理由，不可殘留英文）；
+   - 無相關新聞時 direction 填 none、note 填空字串。`
 
-/** 每日總覽安全預算上限（總覽約 200~300 字，450 token 即可容納，避免佔滿 Groq OTPM=1000 限額）。 */
-const DAILY_SUMMARY_SAFE_MAX_TOKENS = 450
+/** 每日總覽安全預算上限（Issue #49：總覽＋風向燈一欄約需 550 token，仍遠低於 OTPM 1000 硬上限）。 */
+const DAILY_SUMMARY_SAFE_MAX_TOKENS = 550
+
+// ─── Issue #49 川普風向燈（與當日總覽同一次 LLM 呼叫，零新增呼叫） ──
+export const TRUMP_WIND_DIRECTIONS = ['bullish', 'bearish', 'neutral', 'none'] as const
+
+/** 風向燈結果：方向＋30 字內繁中一句話。none 表示無相關新聞（前台不渲染）。 */
+export interface TrumpWind {
+  direction: MarketFocusWindDirection
+  note: string
+}
+
+/** 無燈（無相關新聞／LLM 失敗兜底）：頁面零變化。 */
+export const NO_TRUMP_WIND: TrumpWind = { direction: 'none', note: '' }
+
+/** 當日總覽結果：總覽本文＋風向燈（同一次 LLM 呼叫產出）。TTS／email／社群只讀 summary，不受影響。 */
+export interface DailySummaryResult {
+  summary: string
+  wind: TrumpWind
+  /** 本次精選中 tag='trump' 的新聞 URL（最多 8 則），供風向燈 related_urls 落庫、前台燈卡錨點。 */
+  trumpRelatedUrls: string[]
+}
+
+/** 將 LLM 回傳的風向燈欄位清洗為可存 DB 的結構；方向非四選一律視為 none。 */
+export function sanitizeTrumpWind(raw: unknown): TrumpWind {
+  const r = (raw ?? {}) as { direction?: unknown; note?: unknown }
+  const dir = typeof r.direction === 'string' ? r.direction.trim().toLowerCase() : ''
+  const ok = (TRUMP_WIND_DIRECTIONS as readonly string[]).includes(dir)
+  if (!ok || dir === 'none') return { ...NO_TRUMP_WIND }
+  const note = typeof r.note === 'string' ? r.note.trim().slice(0, 30) : ''
+  if (!note) return { ...NO_TRUMP_WIND }
+  return { direction: dir as TrumpWind['direction'], note }
+}
 
 /** 依精選新聞生成當日市場總覽;失敗時以新聞標題兜底。 */
-export async function generateDailySummary(items: MarketFocusItem[]): Promise<string> {
+export async function generateDailySummary(items: MarketFocusItem[]): Promise<DailySummaryResult> {
   let threw = false
   try {
     const config = loadConfig()
@@ -362,16 +457,26 @@ export async function generateDailySummary(items: MarketFocusItem[]): Promise<st
     attachLlmUsageRecorder(llm, 'market-focus.summary')
     const promptOverride = (await getAgentSetting('market_focus.summary_prompt')) ?? ''
     const system = promptOverride ? `${SUMMARY_SYSTEM_PROMPT}\n\n【後台覆寫指示】\n${promptOverride}` : SUMMARY_SYSTEM_PROMPT
-    const list = items.map((it, i) => `${i + 1}. [${it.source}] ${it.title}${it.reason ? `（選取理由：${it.reason}）` : ''}`).join('\n')
-    const raw = await llm.generate(system, `以下是今日精選新聞：\n${list}\n\n請撰寫當日市場總覽。`)
+    const list = items
+      .map((it, i) => `${i + 1}. [${it.source}${it.tag === 'trump' ? '|美國政策' : ''}] ${it.title}${it.reason ? `（選取理由：${it.reason}）` : ''}`)
+      .join('\n')
+    const raw = await llm.generate(system, `以下是今日精選新聞：\n${list}\n\n請撰寫當日市場總覽（含川普風向燈一欄）。`)
     let rawText = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
     // Gemini 等模型常在 JSON 物件後附加說明文字：只取 { ... } 本體再 parse
     const first = rawText.indexOf('{')
     const last = rawText.lastIndexOf('}')
     if (first !== -1 && last > first) rawText = rawText.slice(first, last + 1)
-    const parsed = JSON.parse(rawText) as { summary?: string }
+    const parsed = JSON.parse(rawText) as { summary?: string; trump_wind?: unknown }
     const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim() : ''
-    if (summary) return summary
+    if (summary) {
+      // 風向燈相關新聞錨點：取本次精選中 tag='trump' 的 URL（最多 8 則），供前台燈卡連結
+      const withSource = items.filter((it) => it.tag === 'trump' && it.source_url).map((it) => it.source_url as string)
+      const trumpRelatedUrls = (withSource.length > 0
+        ? withSource
+        : items.filter((it) => it.tag === 'trump' && it.url).map((it) => it.url)
+      ).slice(0, TRUMP_NEWS_MAX)
+      return { summary, wind: sanitizeTrumpWind(parsed?.trump_wind), trumpRelatedUrls }
+    }
   } catch (e) {
     threw = true
     console.error('[MarketFocus] daily summary failed, falling back to headlines:', e)
@@ -391,7 +496,7 @@ export async function generateDailySummary(items: MarketFocusItem[]): Promise<st
       message: '每日總覽 LLM 回傳空值或 JSON 缺 summary 欄位，以新聞標題拼接呈現',
     })
   }
-  return `當日市場焦點：${items.map((it) => it.title).join('；')}`
+  return { summary: `當日市場焦點：${items.map((it) => it.title).join('；')}`, wind: { ...NO_TRUMP_WIND }, trumpRelatedUrls: [] }
 }
 
 export interface NewsCandidate {
@@ -399,6 +504,8 @@ export interface NewsCandidate {
   url: string
   source: string
   publishedAt: string
+  /** Issue #49：候選池標籤（'trump' 為川普政策英文池），供遴選提示與風向燈錨點用。 */
+  tag?: string
 }
 
 /** 轉成可排序的 ISO 字串;無法解析時回傳空字串。 */
@@ -414,7 +521,7 @@ export const SYSTEM_PROMPT = `你是 Vestential(台灣股票投資資訊平台)�
 2. 領域平衡偏好：盡量兼顧「半導體/科技硬體」、「傳產/金融/綠能重電」、「總體經濟/利率政策」等不同面向，避免單一族群過度集中。
 3. 排除:短線明牌、個股炒作、小道消息、未證實的利多利空、娛樂/八卦,或與台灣投資無關的新聞。
 4. 每則給一句 30 字以內的繁體中文理由，說明它為何值得看。說人話，直陳核心基本面或實質影響，嚴禁「值得注意的是」、「不可否認」等空泛廢話。
-5. 同時為每則輸出新聞影響結構化欄位（Issue #19：供新聞卡呈現，同一 LLM 呼叫內完成，不新增 quota 消耗）：
+ 5. 同時為每則輸出新聞影響結構化欄位（Issue #19：供新聞卡呈現，同一 LLM 呼叫內完成，不新增 quota 消耗）：
    - impact_direction：三選一 positive（偏多）/ negative（偏空）/ neutral（中性）
    - scope：影響範圍，20 字內（如「台股大盤」「半導體族群」「個股」）
    - horizon：影響時程，15 字內（如「短線數日」「中期數季」）
@@ -422,11 +529,15 @@ export const SYSTEM_PROMPT = `你是 Vestential(台灣股票投資資訊平台)�
    - action：投資人可做的關注行動，30 字內、非投資建議（如「追蹤下季法說營收指引」）
    - related_symbols：標題提及的台股代號，4~6 碼數字、逗號分隔（如「2330,2317」）；無則空字串
 6. 只輸出 JSON，不要任何其他文字:
-{"selected":[{"index":0,"reason":"...","impact_direction":"neutral","scope":"...","horizon":"...","affected_sectors":"...","action":"...","related_symbols":""}]}`
+{"selected":[{"index":0,"reason":"...","impact_direction":"neutral","scope":"...","horizon":"...","affected_sectors":"...","action":"...","related_symbols":""}]}
+7. 美國政策新聞（Issue #49：候選清單中標 [美國政策]、多為英文標題者）只收「有具體政策內容」者
+   （稅率數字、生效日、點名標的、Fed 人事等）；無細節放話與重複轉述一律排除。
+   reason 與影響欄位一律輸出繁體中文（英文標題須轉寫為中文理由，不可殘留英文）；
+   影響欄位沿用 impact_direction，不新增欄位、不新增 LLM 呼叫。`
 
 function buildUserPrompt(candidates: NewsCandidate[]): string {
   const list = candidates
-    .map((c, i) => `${i}. [${c.source}] ${c.title}`)
+    .map((c, i) => `${i}. [${c.source}${c.tag === 'trump' ? '|美國政策' : ''}] ${c.title}`)
     .join('\n')
   return `以下是候選新聞(共 ${candidates.length} 則):\n${list}\n\n請選出符合原則的 10 則。`
 }
@@ -523,6 +634,8 @@ export async function filterNewsByAI(candidates: NewsCandidate[]): Promise<Marke
         source: c.source,
         published_at: c.publishedAt,
         reason: typeof s.reason === 'string' ? s.reason.trim() : null,
+        // Issue #49：tag 隨精選結果傳遞（記憶體內，供風向燈錨點用，不落 DB）
+        tag: c.tag ?? null,
         // Issue #19：影響欄位與遴選同一次 LLM 呼叫產出，不新增 quota 消耗
         ...sanitizeImpact(s),
       })
@@ -556,6 +669,7 @@ export async function filterNewsByAI(candidates: NewsCandidate[]): Promise<Marke
     source: c.source,
     published_at: c.publishedAt,
     reason: null,
+    tag: c.tag ?? null,
     ...EMPTY_IMPACT,
   }))
 }
@@ -681,6 +795,10 @@ export interface MarketFocusPipelineResult {
   summary: string
   hasNewEdition: boolean
   newCount: number
+  /** Issue #49：當日川普風向燈（與總覽同一次 LLM 呼叫產出；無新聞時 direction='none'）。 */
+  wind: TrumpWind
+  /** Issue #49：風向燈相關新聞 URL（最多 8 則）。 */
+  windRelatedUrls: string[]
 }
 
 // ─── Issue #39：pipeline 分段上限＋stage 細化＋心跳 ──────────────────
@@ -882,14 +1000,16 @@ export async function refreshMarketFocusDetailed(onStage?: MarketFocusStageListe
 
 /**
  * 市場焦點乾跑（後台預覽用）：跑完整生成流程但不寫 DB。
- * 回傳精選新聞清單＋每日總覽，供 /admin 預覽後再決定是否發布。
+ * 回傳精選新聞清單＋每日總覽（含風向燈），供 /admin 預覽後再決定是否發布。
  */
 export async function previewMarketFocus(onStage?: MarketFocusStageListener): Promise<{
   items: MarketFocusItem[]
   summary: string
+  wind: TrumpWind
+  windRelatedUrls: string[]
 }> {
-  const { enriched, summary } = await runMarketFocusPipeline(true, onStage)
-  return { items: enriched, summary }
+  const { enriched, summary, wind, windRelatedUrls } = await runMarketFocusPipeline(true, onStage)
+  return { items: enriched, summary, wind, windRelatedUrls }
 }
 
 async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStageListener): Promise<MarketFocusPipelineResult> {
@@ -935,12 +1055,26 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
     console.log(
       `[MarketFocus] 通過門檻的新聞皆已收錄過（新重大新聞: 0 則），保留上一版總覽，不產生新版次`,
     )
-    const existingMeta = await getMarketFocusMeta()
+    const [existingMeta, existingWind] = await Promise.all([getMarketFocusMeta(), getMarketFocusWind().catch(() => null)])
+    // Issue #49：沿用上一輪風向燈（無紀錄視為無燈，前台不渲染）
+    const wind: TrumpWind =
+      existingWind && existingWind.direction !== 'none'
+        ? sanitizeTrumpWind({ direction: existingWind.direction, note: existingWind.note })
+        : { ...NO_TRUMP_WIND }
+    let windRelatedUrls: string[] = []
+    try {
+      const parsed = existingWind?.related_urls ? JSON.parse(existingWind.related_urls) : []
+      if (Array.isArray(parsed)) windRelatedUrls = parsed.filter((u) => typeof u === 'string').slice(0, TRUMP_NEWS_MAX)
+    } catch {
+      windRelatedUrls = []
+    }
     return {
       enriched: existing.length > 0 ? existing : items,
       summary: existingMeta?.summary || '',
       hasNewEdition: false,
       newCount: 0,
+      wind,
+      windRelatedUrls,
     }
   }
 
@@ -984,7 +1118,8 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
   // Issue #32：總覽前後錯峰（9/23 事故點：summary max_tokens=1000 撞 OTPM 分鐘窗；
   // 前間隔把總覽推離摘要尾批，後間隔把接續的社群鏈讓進下一個分鐘窗）
   // Issue #39 總覽段：上限 240s。前後 20s 錯峰計入本段內。
-  const summary = await runPipelineStage(
+  // Issue #49：風向燈與總覽同一次 LLM 呼叫產出，落新表 market_focus_wind（不新增 stage、不動超時表）。
+  const dailyResult = await runPipelineStage(
     'summary',
     async () => {
       await sleep(getSummaryPaceMs())
@@ -994,9 +1129,23 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
     },
     { onStage },
   )
+  const generatedAt = new Date().toISOString()
   if (!dryRun) {
     await saveMarketFocus(enriched)
-    await saveMarketFocusMeta({ summary, generatedAt: new Date().toISOString() })
+    await saveMarketFocusMeta({ summary: dailyResult.summary, generatedAt })
+    await saveMarketFocusWind({
+      direction: dailyResult.wind.direction,
+      note: dailyResult.wind.note,
+      relatedUrls: dailyResult.trumpRelatedUrls.length > 0 ? JSON.stringify(dailyResult.trumpRelatedUrls) : null,
+      generatedAt,
+    })
   }
-  return { enriched, summary, hasNewEdition: true, newCount: newSignificantItems.length }
+  return {
+    enriched,
+    summary: dailyResult.summary,
+    hasNewEdition: true,
+    newCount: newSignificantItems.length,
+    wind: dailyResult.wind,
+    windRelatedUrls: dailyResult.trumpRelatedUrls,
+  }
 }

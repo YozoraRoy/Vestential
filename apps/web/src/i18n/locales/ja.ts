@@ -148,6 +148,12 @@ export const ja: Dict = {
     newsDirNegative: '弱気',
     newsDirNeutral: '中立',
     newsBacktestSymbol: '{symbol} を検証',
+    windTitle: 'トランプ風向シグナル',
+    windBullish: '強気',
+    windBearish: '弱気',
+    windNeutral: '様子見',
+    windRelatedTitle: '関連ニュース',
+    windDisclaimer: '単一人物の発言であり、政策は変わりやすい。これはイベントリスクの注意喚起であり、投資助言ではありません。',
   },
   about: {
     metaTitle: 'Vestential について — 会社員・小口投資家のための投資情報プラットフォーム',

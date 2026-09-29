@@ -14,6 +14,7 @@ export {
   searchStocksByName, fuzzySearchStocksByName, damerauLevenshtein,
   deleteAnalysisRecord,
   saveMarketFocus, getMarketFocus, saveMarketFocusMeta, getMarketFocusMeta,
+  saveMarketFocusWind, getMarketFocusWind,
   logMarketFocusEvent, getLatestMarketFocusLog, listMarketFocusLogs, cleanupMarketFocusLogs,
   cleanupSocialCardImages,
   saveCycleEntrySignals, getCycleEntrySignalsByEdition,
@@ -58,7 +59,7 @@ export {
   saveArenaTickJob, updateArenaTickJob, getArenaTickJobById, findRunningArenaTickJob, cleanupArenaTickJobs,
   upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate,
 } from './db.js'
-export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdate, AnalysisJobAgentState, AnalysisJobStatus, PortfolioRecord, PortfolioRecordInput, PortfolioRecordUpdate, PortfolioSyncedPricePatch, PortfolioSyncTarget, TradeJournalEntry, TradeJournalInput, TradeJournalDirection, TradeJournalUpdate, HistoricalGift, UserRow, UserIdentityRow, AuthProvider, IdentityInput, QuotaResult, MarketFocusItem, MarketFocusMeta, MarketFocusLogRow, MarketFocusLogInput,
+export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdate, AnalysisJobAgentState, AnalysisJobStatus, PortfolioRecord, PortfolioRecordInput, PortfolioRecordUpdate, PortfolioSyncedPricePatch, PortfolioSyncTarget, TradeJournalEntry, TradeJournalInput, TradeJournalDirection, TradeJournalUpdate, HistoricalGift, UserRow, UserIdentityRow, AuthProvider, IdentityInput, QuotaResult, MarketFocusItem, MarketFocusMeta, MarketFocusWind, MarketFocusWindDirection, MarketFocusLogRow, MarketFocusLogInput,
   ArenaSeasonRow, ArenaAgentRow, ArenaHoldingRow, ArenaTradeRow, ArenaSnapshotRow, ArenaAgentInput, ArenaLeaderboardRow,
   ArenaIntradayPriceRow, ArenaMarketBriefingRow, ArenaDecisionLogRow, ArenaDiscussionRow,
   SocialPostRow, SocialPostInput, SocialPostPlatform, SocialPostStatus,

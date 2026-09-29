@@ -124,6 +124,12 @@ export interface Dict {
     newsDirNegative: string
     newsDirNeutral: string
     newsBacktestSymbol: string
+    windTitle: string
+    windBullish: string
+    windBearish: string
+    windNeutral: string
+    windRelatedTitle: string
+    windDisclaimer: string
   }
   about: {
     metaTitle: string
