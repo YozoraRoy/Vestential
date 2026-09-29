@@ -5,7 +5,22 @@ import { NextResponse } from 'next/server'
 import { getUserById, getUserIdentities, type UserRow } from '@stock/database'
 
 export const COOKIE_NAME = 'stock_session'
+/**
+ * #44：每日 AI 分析額度改為分級制（一般 1 次／管理員 3 次）。
+ * DAILY_ANALYSIS_LIMIT 保留為管理員上限（舊引用相容；新程式一律走 getDailyAnalysisLimit）。
+ */
 export const DAILY_ANALYSIS_LIMIT = 3
+/** 一般使用者每日 AI 分析額度（#44 分級；客訴文案須寫清「一般 1／管理員 3」）。 */
+export const DAILY_ANALYSIS_LIMIT_REGULAR = 1
+
+/**
+ * #44：依身分回傳每日 AI 分析額度（isAdminUser → 3／一般 → 1）。
+ * 5 支分析 route（analyze、portfolio/analyze、risk/summary、portfolio/review、
+ * journal/review）＋ auth/me 皆走此函式，不再直接寫死 DAILY_ANALYSIS_LIMIT。
+ */
+export function getDailyAnalysisLimit(isAdmin: boolean): number {
+  return isAdmin ? DAILY_ANALYSIS_LIMIT : DAILY_ANALYSIS_LIMIT_REGULAR
+}
 export const DAILY_RECOGNITION_LIMIT = 10
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30 // 30 days
 

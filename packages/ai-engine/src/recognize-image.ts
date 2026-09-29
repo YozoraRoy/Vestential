@@ -13,7 +13,8 @@ export interface RecognizedPosition {
   shares: number
   cost: number
   currentPrice?: number
-  dividend: number
+  /** #44：已棄用（辨識不再輸出股息；保留相容，呼叫端一律視為 0 寫入）。 */
+  dividend?: number
 }
 
 export interface RecognizePortfolioImageResult {
@@ -192,7 +193,7 @@ export async function recognizePortfolioImage(imageDataUrl: string): Promise<Rec
   const systemPrompt = [
     '你是股票持有部位辨識專家，擅長從券商 App 截圖、對帳單或庫存表照片中準確讀出每檔股票的持有資料。',
     '請只依圖片內容回答，看不清楚就不要亂猜，寧可省略也不杜撰。',
-    '輸出必須是單一 JSON 物件：{ "positions": [ { "market": "tw"|"us", "symbol": "代號", "symbolName": "名稱", "shares": 股數(數字), "cost": 每股成本(數字), "currentPrice": 每股現價(數字), "dividend": 累計股息(數字, 無則 0) } ] }。',
+    '輸出必須是單一 JSON 物件：{ "positions": [ { "market": "tw"|"us", "symbol": "代號", "symbolName": "名稱", "shares": 股數(數字), "cost": 每股成本(數字), "currentPrice": 每股現價(數字) } ] }（#44：不再辨識股息欄）。',
     'market 判斷：股號為 4~6 位數字視為 tw，英文代號（如 AAPL）視為 us。',
   ].join('\n')
 
@@ -217,7 +218,7 @@ export async function recognizePortfolioImage(imageDataUrl: string): Promise<Rec
     if (method === 'ocr') {
       return [
         '請依下方 OCR 從圖片擷取的文字辨識每一檔股票，依照規定的 JSON 格式輸出，不要有任何額外文字或 markdown。',
-        'OCR 可能誤讀數字或破壞表格對齊，請依欄位語意（股號/名稱/股數/成本/現價/股息）合理判斷，不確定的欄位省略也不可亂填。',
+        'OCR 可能誤讀數字或破壞表格對齊，請依欄位語意（股號/名稱/股數/成本/現價）合理判斷，不確定的欄位省略也不可亂填。',
         '股數欄位通常是含千位分隔符的完整數字；OCR 常把 "," 誤讀成 "."（例如 "36.000" 其實是 36,000 股，請還原成 36000），不要照抄成小數。',
         '中文 ETF/基金名稱常被拆成單字（如 "元 大 台 湾 50"），若句中明顯是「名稱 + 股數」結構，請把字組合回正確名稱，即使字元順序稍有出入也不要漏掉該檔。',
         '===== OCR 文字 =====',
@@ -243,7 +244,7 @@ export async function recognizePortfolioImage(imageDataUrl: string): Promise<Rec
       '請依上述原因修正後，重新輸出「完整」的合法 JSON。注意：',
       '- market 只能是 "tw" 或 "us"。',
       '- shares / cost / currentPrice 必須是純數字，不要夾帶逗號、$ 或「股/元/張」等文字（例如 1000 而非 "1,000"）。',
-      '- shares 必須 ≥1，currentPrice 必須 >0；不確定的欄位（如 dividend）省略即可。',
+      '- shares 必須 ≥1，currentPrice 必須 >0；不確定的欄位省略即可。',
       '- 只輸出 JSON，不要 markdown 或任何備註。',
     ].join('\n')
   }

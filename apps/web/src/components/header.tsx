@@ -19,7 +19,9 @@ const navItems: { key: keyof Dict['nav']; href: string }[] = [
   { key: 'analyze', href: '/analyze' },
   { key: 'marketFocus', href: '/market-focus' },
   { key: 'agentArena', href: '/agent-arena' },
-  { key: 'journal', href: '/journal' },
+  // #44：導覽移除 journal 入口（桌機＋漢堡共用 navItems，一處刪除即兩處生效）。
+  // nav.journal i18n 鍵保留（rg 確認僅 header 取用；留鍵避免 Dict 破壞性變更，
+  // /journal 頁改用 journal 節文案，直連網址仍可進入，頁面不下線不遷移）。
 ]
 
 export interface HeaderUser {

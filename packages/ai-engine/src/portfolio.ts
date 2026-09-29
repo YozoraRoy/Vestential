@@ -82,7 +82,10 @@ export interface PortfolioAnalysisInput {
   /** 每股成本價。 */
   cost: number
   currentPrice: number
-  /** 累計已領股息總額。 */
+  /**
+   * #44：已棄用（股息輸入欄移除；呼叫端一律傳 0，DB 欄保留不刪）。
+   * prompt 不再列示股息，總報酬採裸價差。
+   */
   dividend: number
   costBasis: number
   marketValue: number
@@ -90,7 +93,9 @@ export interface PortfolioAnalysisInput {
   unrealizedPnlPct: number
   totalReturn: number
   totalReturnPct: number
-  /** 以成本計算的股息殖利率（%）。 */
+  /**
+   * #44：已棄用（固定 0；殖利率改由 TWSE 真源欄呈現，不由此計算）。
+   */
   yieldOnCost: number
   strategyId: string
   /** 由外部取得的基本面／報價補充文字（可選）。 */
@@ -131,12 +136,11 @@ function buildPositionSummary(input: PortfolioAnalysisInput, framework: Investme
     `持有股數：${input.shares} 股`,
     `每股成本：${formatMoney(input.cost, input.market)}`,
     `每股現價：${formatMoney(input.currentPrice, input.market)}`,
-    `累計股息：${formatMoney(input.dividend, input.market)}`,
     `總成本：${formatMoney(input.costBasis, input.market)}`,
     `目前市值：${formatMoney(input.marketValue, input.market)}`,
     `未實現損益：${formatMoney(input.unrealizedPnl, input.market)}（${input.unrealizedPnlPct.toFixed(2)}%）`,
-    `含股息總報酬：${formatMoney(input.totalReturn, input.market)}（${input.totalReturnPct.toFixed(2)}%）`,
-    `以成本計算之股息殖利率：${input.yieldOnCost.toFixed(2)}%`,
+    // #44：總報酬改裸價差（＝市值−成本，不含股息；股息欄已移除，不再列示）。
+    `總報酬（裸價差）：${formatMoney(input.totalReturn, input.market)}（${input.totalReturnPct.toFixed(2)}%）`,
     '',
     `套用投資法則：${framework.nameZh}（${framework.nameEn}）`,
     `法則原則：${framework.doctrine}`,

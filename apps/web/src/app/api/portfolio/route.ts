@@ -13,6 +13,7 @@ export async function POST(req: Request) {
     }
 
     const { market, symbol, shares, cost, currentPrice, dividend, symbolName } = parsed.data
+    // #44：股息欄已移除（parsed.data.dividend 恆為 0；DB 欄保留，寫入 0）。
     const pnl = computePnL(parsed.data as PortfolioInput)
 
     // user 有登入 → 存 user_id;否則以訪客 guest_uid 存（用戶資料與訪客資料完全隔離）。

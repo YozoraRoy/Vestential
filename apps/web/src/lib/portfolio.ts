@@ -21,6 +21,11 @@ export interface PortfolioInput {
   shares: number
   cost: number
   currentPrice: number
+  /**
+   * #44：股息輸入欄已移除。型別保留 required（DB 不刪欄、舊呼叫相容），但 validate
+   * 忽略 body.dividend 一律回 0、寫入一律 0；殖利率改由 TWSE 真源（當年／5 年平均）
+   * ＋ Yahoo 參考欄呈現。
+   */
   dividend: number
   symbolName?: string
 }
@@ -36,14 +41,14 @@ export function validatePortfolioInput(body: any): { ok: true; data: PortfolioIn
   const shares = toNum(body?.shares)
   const cost = toNum(body?.cost)
   const currentPrice = toNum(body?.currentPrice)
-  const dividend = toNum(body?.dividend) ?? 0
+  // #44：股息輸入欄已移除：body.dividend 一律忽略，固定回 0（DB 欄保留不刪）。
+  const dividend = 0
   const symbolName = typeof body?.symbolName === 'string' ? body.symbolName : undefined
 
   if (!market || !symbol) return { ok: false, error: 'market 與 symbol 為必填' }
   if (shares == null || !(shares > 0)) return { ok: false, error: '持有股數需大於 0' }
   if (cost == null || cost < 0) return { ok: false, error: '每股成本需 >= 0' }
   if (currentPrice == null || !(currentPrice > 0)) return { ok: false, error: '每股現價需大於 0' }
-  if (dividend == null || dividend < 0) return { ok: false, error: '股息總額需 >= 0' }
 
   return { ok: true, data: { market, symbol, shares, cost, currentPrice, dividend, symbolName } }
 }
@@ -53,7 +58,8 @@ export interface PnLInput {
   shares: number
   cost: number
   currentPrice: number
-  dividend: number
+  /** #44：已棄用（保留相容，計算一律忽略，視為 0）。 */
+  dividend?: number
 }
 
 export interface PnLResult {
@@ -66,11 +72,19 @@ export interface PnLResult {
   yieldOnCost: number
 }
 
+/**
+ * #44：totalReturn 改為裸價差（歷史一次性變動，舊數據口徑改變，詳見 docs/features-guide.md §1.1）。
+ * - 公式：totalReturn＝unrealizedPnl＝市值−成本（不再＋股息）；
+ *   totalReturnPct＝totalReturn／成本×100%。
+ * - 選邊：yieldOnCost 固定回 0（手填股息已移除，無分子可算；殖利率改由
+ *   TWSE 真源當年／5 年平均＋ Yahoo 參考欄呈現，本函式不碰）。
+ * - 稅費淨損益（computeNetPnL）計算不動（本就以裸值為基）。
+ */
 export function computePnL(input: PnLInput): PnLResult {
   const costBasis = input.shares * input.cost
   const marketValue = input.shares * input.currentPrice
   const unrealizedPnl = marketValue - costBasis
-  const totalReturn = unrealizedPnl + input.dividend
+  const totalReturn = unrealizedPnl
   return {
     costBasis,
     marketValue,
@@ -78,7 +92,7 @@ export function computePnL(input: PnLInput): PnLResult {
     unrealizedPnlPct: costBasis > 0 ? (unrealizedPnl / costBasis) * 100 : 0,
     totalReturn,
     totalReturnPct: costBasis > 0 ? (totalReturn / costBasis) * 100 : 0,
-    yieldOnCost: costBasis > 0 ? (input.dividend / costBasis) * 100 : 0,
+    yieldOnCost: 0,
   }
 }
 
@@ -219,7 +233,7 @@ function asYieldValue(v: unknown): number | null {
  * #34：殖利率參考多欄位 fallback：
  * dividendYield → trailingAnnualDividendYield → dividendRate / 現價推算。
  * 有值回 { value, reason: null }；仍無值回 { value: null, reason } 三態原因。
- * 絕不寫入 dividend 手填欄位（只讀 Yahoo，不碰 holdings.dividend）。
+ * #44：僅回傳 Yahoo 參考值，不寫入任何持倉欄位。
  */
 export async function fetchDividendYield(rawSymbol: string, market: Market): Promise<DividendYieldResult> {
   let symbol: string
@@ -262,7 +276,8 @@ export interface SyncableHolding {
   symbol: string
   shares: number
   cost: number
-  dividend: number
+  /** #44：已棄用（保留相容；同步寫回不再讀取，裸價差重算）。 */
+  dividend?: number
 }
 
 export interface SyncedHolding {
@@ -295,7 +310,7 @@ export interface PortfolioSyncResult {
  * 批量同步現價（逐檔 best-effort：單檔失敗不中斷整批）。
  * - 先批量報價（≤100/批），未命中再單檔 fallback（200ms 間隔）；
  * - includeYield 時才抓殖利率（並行 5，失敗→null），排程全掃傳 false 省配額；
- * - dividend 欄全程不碰（只讀傳入，不回寫）。
+ * - #44：手填股息欄已移除，同步全程不讀不寫 dividend（裸價差重算）。
  */
 export async function syncPortfolioPrices(
   holdings: SyncableHolding[],
@@ -352,7 +367,7 @@ export async function syncPortfolioPrices(
   }
 
   // 5) 殖利率參考（僅需要時；失敗→{ value: null, reason }，UI 顯示三語原因）。
-  // dividend 欄全程不碰（只讀傳入，不回寫）。
+  // #44：手填股息欄已移除（只讀傳入相容欄，不回寫）。
   const yieldMap = new Map<number, DividendYieldResult>()
   if (opts?.includeYield && priced.length > 0) {
     for (let i = 0; i < priced.length; i += PORTFOLIO_SYNC_FUND_CONCURRENCY) {
@@ -523,7 +538,8 @@ export interface EnrichablePosition {
   shares: number
   cost: number
   currentPrice?: number
-  dividend: number
+  /** #44：已棄用（辨識不再輸出股息；保留相容，寫入一律 0）。 */
+  dividend?: number
 }
 
 export interface EnrichmentSummary {

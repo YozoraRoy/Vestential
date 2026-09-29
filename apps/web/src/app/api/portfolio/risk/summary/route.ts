@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createQuickLLM } from '@stock/ai-engine'
 import { loadConfig } from '@stock/core'
 import { consumeAnalysisQuota, getPortfolioRecords } from '@stock/database'
-import { DAILY_ANALYSIS_LIMIT, getCurrentUserFromCookies, getTaiwanDateStr } from '../../../../../lib/auth'
+import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../../../lib/auth'
 import { loadRiskSnapshot } from '../../../../../lib/portfolio-risk-server'
 import { RISK_DISCLAIMER } from '../../../../../lib/portfolio-risk'
 import { reportServerError } from '../../../../../lib/server-alert'
@@ -13,7 +13,8 @@ function fmt(n: number, digits = 2): string {
 
 /**
  * POST /api/portfolio/risk/summary — AI 風險描述性總結。
- * - 需登入；與既有 analyze 共用每日 3 次 quota（consumeAnalysisQuota，不新增額度）。
+ * - 需登入；與既有 analyze 共用分級 quota（#44：一般每日 1 次／管理員每日 3 次，
+ *   consumeAnalysisQuota，不新增額度）。
  * - 情境試算本身零 LLM；此 route 只對已算好的數字做描述性總結。
  * - LLM 失敗 → 回 fallback:true，前端降級只顯示數字表。
  */
@@ -24,10 +25,11 @@ export async function POST() {
       return NextResponse.json({ error: 'login required' }, { status: 401 })
     }
 
-    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), DAILY_ANALYSIS_LIMIT)
+    // #44：分級額度（一般每日 1 次／管理員每日 3 次；客訴文案寫清分級）。
+    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), getDailyAnalysisLimit(await isAdminUser(user)))
     if (!quota.allowed) {
       return NextResponse.json(
-        { error: `今日 AI 分析額度已用完（${quota.used}/${quota.max}），請明天再試`, quota },
+        { error: `今日 AI 分析額度已用完（一般用戶每日 1 次／管理員每日 3 次；已用 ${quota.used}/${quota.max}），請明天再試`, quota },
         { status: 429 },
       )
     }

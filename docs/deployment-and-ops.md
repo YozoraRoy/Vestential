@@ -101,7 +101,7 @@
     - 行為：節日當天觸發 `/api/cron/festival` 全自動發賀圖＋貼文（去重 `festival:{id}:{date}`）；非節日回 skipped。另見 `docs/features-guide.md` §8.2。
 10. **持倉現價＋除息快取同步 (`sync-portfolio-prices.yml`)**：
     - 時間：每個交易日台灣時間 **16:00**（`0 8 * * 1-5` UTC；假日由 API 內 `isTwseTradingDay` 再擋一次）。
-    - 行為：呼叫 `POST /api/portfolio/sync`（`SYNC_TOKEN` 驗證）全掃持倉現價；**順帶更新當年除息快取**（TWSE `TWT48U` 每日 CSV → `twse_dividends` 表，缺檔才抓、同日不重抓；失敗不擋主流程＋告警沿用既有機制）。資料源與 YTD 估算規則見 `docs/features-guide.md` §1.8。
+    - 行為：呼叫 `POST /api/portfolio/sync`（`SYNC_TOKEN` 驗證）全掃持倉現價；**順帶更新當年除息快取**（TWSE `TWT48U` 每日 CSV → `twse_dividends` 表，缺檔才抓、同日不重抓）＋**5 年殖利率回填**（`ensureYieldHistoryBackfill`，每輪上限 30 天、斷點續抓；失敗不擋主流程＋告警沿用既有機制）。資料源與當年／5 年殖利率規則見 `docs/features-guide.md` §1.8。
 
 ---
 

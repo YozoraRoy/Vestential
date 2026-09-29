@@ -20,7 +20,7 @@ import {
   type DividendYieldReason,
   type SyncableHolding,
 } from '../../../../lib/portfolio'
-import { ensureTodayDividends } from '../../../../lib/twse-dividends'
+import { ensureTodayDividends, ensureYieldHistoryBackfill } from '../../../../lib/twse-dividends'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -42,7 +42,8 @@ function toHoldings(records: PortfolioRecord[]): SyncableHolding[] {
       symbol: r.symbol,
       shares: r.shares,
       cost: r.cost,
-      dividend: r.dividend ?? 0,
+      // #44：股息欄已移除（寫入一律 0；DB 欄保留，舊值不讀）。
+      dividend: 0,
     }))
 }
 
@@ -63,8 +64,9 @@ function byId(records: PortfolioRecord[]): Map<number, PortfolioRecord> {
  *
    * 回傳：{ success, scope, scanned, updated, failed[{symbol,reason}], yields{recordId:yield|null}, yieldReasons{recordId:reason}, syncedAt, rateLimited }
   * - 排程重跑冪等：直接蓋 current_price＋price_synced_at，以最後一次同步時間為準，不產生重複列；
-  * - dividend（手填股息）全程不碰；殖利率僅回傳參考值（yields），不寫庫；
+  * - #44：手填股息欄已移除（全程不讀不寫 dividend，總報酬以裸價差重算）；殖利率僅回傳參考值（yields），不寫庫；
   * - #35：排程／手動皆順帶更新當年除息快取（ensureTodayDividends，缺檔才抓；回傳 dividends{status,...}）；
+  * - #44：同步鈕／排程順帶觸發 5 年殖利率回填（ensureYieldHistoryBackfill，每輪封頂＋斷點續抓，best-effort）；
   * - Yahoo 限流：記 console log＋reportServerError（#24 通道 30 分鐘同 key 去重＝告警節流），其餘持倉照常完成。
  */
 export async function POST(req: Request) {
@@ -95,7 +97,8 @@ export async function POST(req: Request) {
             symbol: t.symbol,
             shares: t.shares,
             cost: t.cost,
-            dividend: t.dividend ?? 0,
+            // #44：股息欄已移除（寫入一律 0；DB 欄保留，舊值不讀）。
+            dividend: 0,
           })
         }
         if (page.length < PAGE) break
@@ -109,7 +112,8 @@ export async function POST(req: Request) {
       for (const u of result.updated) {
         const base = targetById.get(u.id)
         if (!base) continue
-        const pnl = computePnL({ market: base.market, shares: base.shares, cost: base.cost, currentPrice: u.price, dividend: base.dividend })
+        // #44：裸價差重算（不再讀舊 dividend 值）。
+        const pnl = computePnL({ market: base.market, shares: base.shares, cost: base.cost, currentPrice: u.price })
         const ok = await updatePortfolioSyncedPrice(u.id, {
           currentPrice: u.price,
           marketValue: pnl.marketValue,
@@ -127,7 +131,9 @@ export async function POST(req: Request) {
         void reportServerError({ route: 'POST /api/portfolio/sync (schedule)', status: 429, error: `Yahoo rate limited during scheduled sync (scanned ${targets.length})` })
       }
       // #35：排程順帶更新當年除息快取（缺檔才抓；best-effort，不擋現價同步主流程）。
+      // #44：順帶觸發 5 年殖利率回填（封頂＋斷點續抓，best-effort）。
       const dividends = await ensureTodayDividends(today)
+      const yieldBackfill = await ensureYieldHistoryBackfill(today)
       return NextResponse.json({
         success: true,
         scope: 'schedule',
@@ -139,6 +145,7 @@ export async function POST(req: Request) {
         syncedAt: result.syncedAt,
         rateLimited: result.rateLimited,
         dividends,
+        yieldBackfill,
       })
     }
 
@@ -174,7 +181,8 @@ export async function POST(req: Request) {
       if (!base) continue
       yields[u.id] = u.dividendYield
       if (u.dividendYield == null && u.dividendYieldReason) yieldReasons[u.id] = u.dividendYieldReason
-      const pnl = computePnL({ market: base.market, shares: base.shares, cost: base.cost, currentPrice: u.price, dividend: base.dividend ?? 0 })
+      // #44：裸價差重算（不再讀舊 dividend 值）。
+      const pnl = computePnL({ market: base.market, shares: base.shares, cost: base.cost, currentPrice: u.price })
       const ok = await updatePortfolioSyncedPrice(u.id, {
         currentPrice: u.price,
         marketValue: pnl.marketValue,
@@ -192,7 +200,9 @@ export async function POST(req: Request) {
       void reportServerError({ route: 'POST /api/portfolio/sync', status: 429, error: `Yahoo rate limited during manual sync (scanned ${holdings.length})` })
     }
     // #35：同步鈕順帶更新當年除息快取（缺檔才抓；best-effort，不擋主流程）。
+    // #44：順帶觸發 5 年殖利率回填（封頂＋斷點續抓，best-effort）。
     const dividends = await ensureTodayDividends(taipeiTodayStr())
+    const yieldBackfill = await ensureYieldHistoryBackfill(taipeiTodayStr())
     const res = NextResponse.json({
       success: true,
       scope,
@@ -204,6 +214,7 @@ export async function POST(req: Request) {
       syncedAt: result.syncedAt,
       rateLimited: result.rateLimited,
       dividends,
+      yieldBackfill,
     })
     if (createdGuest && guestUid) await applyGuestCookie(res, guestUid)
     return res

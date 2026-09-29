@@ -746,6 +746,12 @@ export interface Dict {
     syncNonRealtime: string
     colRefYield: string
     detailRefYield: string
+    // #44：當年／5 年殖利率欄（三語新鍵；TWSE 真源）。
+    colCurYield: string
+    colAvg5Yield: string
+    helpCurYield: string
+    helpAvg5Yield: string
+    yieldPartialNote: string
     syncDone: string
     syncFailedTitle: string
     syncFailedItem: string

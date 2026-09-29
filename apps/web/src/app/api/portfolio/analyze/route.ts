@@ -1,6 +1,6 @@
 import { runPortfolioAnalysis, INVESTMENT_FRAMEWORKS, getFramework } from '@stock/ai-engine'
 import { savePortfolioRecord, consumeAnalysisQuota } from '@stock/database'
-import { DAILY_ANALYSIS_LIMIT, getCurrentUserFromCookies, getTaiwanDateStr } from '../../../../lib/auth'
+import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../../lib/auth'
 import { buildMarketContext, computePnL, validatePortfolioInput } from '../../../../lib/portfolio'
 import { reportServerError } from '../../../../lib/server-alert'
 
@@ -27,11 +27,12 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ error: '請選擇有效的投資法則' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
     }
 
-    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), DAILY_ANALYSIS_LIMIT)
+    // #44：分級額度（一般每日 1 次／管理員每日 3 次；客訴文案寫清分級）。
+    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), getDailyAnalysisLimit(await isAdminUser(user)))
     if (!quota.allowed) {
       return new Response(
         JSON.stringify({
-          error: `今日 AI 分析額度已用完（${quota.used}/${quota.max}），請明天再試`,
+          error: `今日 AI 分析額度已用完（一般用戶每日 1 次／管理員每日 3 次；已用 ${quota.used}/${quota.max}），請明天再試`,
           quota,
         }),
         { status: 429, headers: { 'Content-Type': 'application/json' } },
@@ -39,6 +40,7 @@ export async function POST(req: Request) {
     }
 
     const { market, symbol, shares, cost, currentPrice, dividend, symbolName } = parsed.data
+    // #44：dividend 恆為 0（股息輸入欄移除；DB 欄保留，寫入 0；總報酬為裸價差）。
     const pnl = computePnL(parsed.data)
     const framework = getFramework(strategyId)
 

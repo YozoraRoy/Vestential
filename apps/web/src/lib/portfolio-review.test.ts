@@ -61,9 +61,9 @@ describe('computePortfolioReviewStats（與明細加總一致）', () => {
     expect(s.maxLossEntry).toBeNull()
   })
 
-  it('缺 total_return 時以 unrealized_pnl＋dividend 還原', () => {
+  it('#44：缺 total_return 時以 unrealized_pnl 還原（裸價差，不再加配息）', () => {
     const e = entry({ id: 1, symbol: '2330', total_return: null, unrealized_pnl: 8000, dividend: 2000 })
-    expect(computePortfolioReviewPnl(e)).toBe(10000)
+    expect(computePortfolioReviewPnl(e)).toBe(8000)
   })
 })
 

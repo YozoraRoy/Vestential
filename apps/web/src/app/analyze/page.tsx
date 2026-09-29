@@ -282,7 +282,7 @@ function AnalyzeContent() {
           return
         }
         if (res.status === 429) {
-          setError(body.error || ui.rateLimitError.replace('{used}', String(body.quota?.used ?? 3)))
+          setError(body.error || ui.rateLimitError.replace('{used}', String(body.quota?.used ?? 1)).replace('{max}', String(body.quota?.max ?? 1)))
           return
         }
         // 後端台股門禁（格式／權證）：以後端 code 對應三語文案顯示。

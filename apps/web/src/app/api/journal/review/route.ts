@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createQuickLLM } from '@stock/ai-engine'
 import { loadConfig } from '@stock/core'
 import { consumeAnalysisQuota, listTradeJournalEntries } from '@stock/database'
-import { DAILY_ANALYSIS_LIMIT, getCurrentUserFromCookies, getTaiwanDateStr } from '../../../../lib/auth'
+import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../../lib/auth'
 import {
   JOURNAL_MIN_REVIEW_COUNT,
   JOURNAL_REVIEW_SYSTEM_PROMPT,
@@ -12,7 +12,8 @@ import {
 
 /**
  * POST /api/journal/review — AI 交易覆盤（紀律/勝率歸因）。
- * - 需登入；與既有 analyze 共用每日 3 次 quota（consumeAnalysisQuota，不另開額度）。
+ * - 需登入；與既有 analyze 共用分級 quota（#44：一般每日 1 次／管理員每日 3 次，
+ *   consumeAnalysisQuota，不另開額度）。
  * - <5 筆擋下，提示先記帳（不扣 quota）。
  * - prompt 硬性約束：只准引用日誌原文筆次、禁推論未寫資訊、不輸出未來買賣點。
  * - LLM 失敗 → 回 fallback:true（quota 已扣，與 analyze 行為一致）。
@@ -43,11 +44,12 @@ export async function POST(req: Request) {
       )
     }
 
-    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), DAILY_ANALYSIS_LIMIT)
+    // #44：分級額度（一般每日 1 次／管理員每日 3 次；客訴文案寫清分級）。
+    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), getDailyAnalysisLimit(await isAdminUser(user)))
     if (!quota.allowed) {
       return NextResponse.json(
         {
-          error: `今日 AI 分析額度已用完（${quota.used}/${quota.max}），請明天再試`,
+          error: `今日 AI 分析額度已用完（一般用戶每日 1 次／管理員每日 3 次；已用 ${quota.used}/${quota.max}），請明天再試`,
           quota,
         },
         { status: 429 },

@@ -150,6 +150,187 @@ export async function fetchTwt48uDay(dateStr: string): Promise<Twt48uParseResult
   return parseTwt48uCsv(text)
 }
 
+// ─── #44：5 年殖利率回填（lazy＋封頂＋斷點續抓）────────────────────
+// 背景：twse_dividends 由每日 ensureTodayDividends 逐日累積，當年齊全；
+// 過去年份冷啟動時整年缺檔，5 年平均需回填歷史 TWT48U。
+//
+// 上限值（實作註明）：YIELD_BACKFILL_MAX_DAYS_PER_RUN＝30（每輪最多抓 30 個
+// 交易日；TWT48U 單日回全市場檔，故每檔均攤同一上限，無需逐檔配額）。
+// 斷點續抓：agent_settings `twse_dividends.backfill_cursor` 記「下次起抓日」
+// （由新往舊掃；掃完記 'done'；年份窗滾動時自動失效重掃）。
+// 呼叫時機：同步鈕＋排程順帶（沿用既有 ensureTodayDividends 位置），
+// best-effort 永不 throw；/dividends 讀取端唯讀不觸發。
+//
+// MOPS 選邊註明：TWT48U 的 ?date= 歷史檔僅 TWSE 保留近期才有；若舊年份
+// 連續回空／HTTP 錯（實測待確認），改用 MOPS「股利分派表」逐檔查
+// （未實作：需另接 MOPS API＋欄位對映，本輪先以 TWT48U＋年份不全註記覆蓋）。
+export const YIELD_BACKFILL_YEARS = 5
+export const YIELD_BACKFILL_MAX_DAYS_PER_RUN = 30
+export const TWSE_DIVIDENDS_BACKFILL_CURSOR = 'twse_dividends.backfill_cursor'
+
+export type YieldBackfillStatus = 'done' | 'advanced' | 'failed'
+
+export interface YieldBackfillYear {
+  year: string
+  rows: number
+  missing: boolean
+}
+
+export interface YieldBackfillResult {
+  status: YieldBackfillStatus
+  years: YieldBackfillYear[]
+  /** 本輪實際抓取交易日數（≤ 上限 30）。 */
+  fetchedDays: number
+  /** 本輪寫入筆數。 */
+  written: number
+  /** 斷點 cursor（下次起抓日／'done'）。 */
+  cursor: string | null
+  /** 失敗／空檔說明；正常時為 null。 */
+  reason: string | null
+}
+
+function backfillTargetYears(today: string): string[] {
+  const y = Number(today.slice(0, 4))
+  if (!Number.isInteger(y)) return []
+  const out: string[] = []
+  // 過去 4 個完整年（當年由每日 ensureTodayDividends 負責，不列入回填）。
+  for (let i = YIELD_BACKFILL_YEARS - 1; i >= 1; i--) out.push(String(y - i))
+  return out
+}
+
+/** 某年交易日清單（由新往舊；週末必休＋已知國定假日表；更早年份僅週末判斷，見註明）。 */
+async function listYearTradingDaysDesc(year: string): Promise<string[]> {
+  const { isTwseTradingDay } = await import('./twse-calendar')
+  const days: string[] = []
+  const d = new Date(`${year}-12-31T12:00:00+08:00`)
+  if (Number.isNaN(d.getTime())) return days
+  const start = new Date(`${year}-01-01T12:00:00+08:00`).getTime()
+  for (let t = d.getTime(); t >= start; t -= 24 * 3600 * 1000) {
+    const s = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
+    if (isTwseTradingDay(s)) days.push(s)
+  }
+  return days
+}
+
+export async function ensureYieldHistoryBackfill(
+  today: string,
+  opts?: { maxDays?: number },
+): Promise<YieldBackfillResult> {
+  const maxDays = opts?.maxDays ?? YIELD_BACKFILL_MAX_DAYS_PER_RUN
+  const empty: YieldBackfillResult = {
+    status: 'failed', years: [], fetchedDays: 0, written: 0, cursor: null, reason: null,
+  }
+  try {
+    const { getAgentSetting, setAgentSetting, getTwseDividendsByYear, upsertTwseDividends } =
+      await import('@stock/database')
+
+    const targetYears = backfillTargetYears(today)
+    if (targetYears.length === 0) return { ...empty, reason: 'invalid-today' }
+
+    // 覆蓋檢查：整年 0 筆＝缺年（需回填）；有筆即視為齊全（逐日冪等，不重掃）。
+    const years: YieldBackfillYear[] = []
+    for (const year of targetYears) {
+      let rows = 0
+      try {
+        rows = (await getTwseDividendsByYear(year)).length
+      } catch {
+        rows = 0
+      }
+      years.push({ year, rows, missing: rows === 0 })
+    }
+    const missingYears = years.filter((y) => y.missing).map((y) => y.year)
+    if (missingYears.length === 0) {
+      return { status: 'done', years, fetchedDays: 0, written: 0, cursor: 'done', reason: null }
+    }
+
+    // 斷點：cursor 為「下次起抓日」（含）；'done' 但窗內又有缺年 → 視為失效重掃。
+    let cursor: string | null = null
+    try {
+      cursor = await getAgentSetting(TWSE_DIVIDENDS_BACKFILL_CURSOR)
+    } catch {
+      cursor = null
+    }
+    const needRescan = cursor === 'done'
+
+    // 候選日：缺年交易日由新往舊；cursor 有效時只取 ≤cursor 者（已抓過的不重抓）。
+    const candidates: string[] = []
+    for (const year of missingYears) {
+      const days = await listYearTradingDaysDesc(year)
+      for (const day of days) {
+        if (!needRescan && cursor && cursor !== 'done' && day > cursor) continue
+        candidates.push(day)
+      }
+    }
+    candidates.sort().reverse()
+    if (candidates.length === 0) {
+      try {
+        await setAgentSetting({
+          key: TWSE_DIVIDENDS_BACKFILL_CURSOR,
+          value: 'done',
+          category: 'sync',
+          label: 'TWT48U 5 年回填斷點（下次起抓日；done＝窗內齊全）',
+        })
+      } catch {}
+      return { status: 'done', years, fetchedDays: 0, written: 0, cursor: 'done', reason: null }
+    }
+
+    // 每輪封頂：只抓前 maxDays 天（TWT48U 單日回全市場，逐日 best-effort）。
+    const batch = candidates.slice(0, Math.max(1, maxDays))
+    let written = 0
+    let okDays = 0
+    let lastError: string | null = null
+    for (const day of batch) {
+      try {
+        const { rows } = await fetchTwt48uDay(day)
+        okDays++
+        try {
+          written += await upsertTwseDividends(rows)
+        } catch (e) {
+          console.error('[TwseDividends] backfill upsert failed (non-blocking):', e)
+        }
+      } catch (e: unknown) {
+        // 單日失敗不中斷整輪（舊年份 TWSE 可能已無檔；連續失敗由 reason 揭露）。
+        lastError = e instanceof Error ? e.message : 'TWT48U history fetch failed'
+      }
+    }
+
+    const oldestAttempted = batch[batch.length - 1]
+    const remaining = candidates.length - batch.length
+    // 斷點＝已抓最舊日的前一日（下輪由該日起抓；無剩餘即 done）。
+    const nextCursor = remaining <= 0 ? 'done' : prevDayStr(oldestAttempted)
+    try {
+      await setAgentSetting({
+        key: TWSE_DIVIDENDS_BACKFILL_CURSOR,
+        value: nextCursor,
+        category: 'sync',
+        label: 'TWT48U 5 年回填斷點（下次起抓日；done＝窗內齊全）',
+      })
+    } catch {}
+    if (okDays === 0) {
+      return {
+        status: 'failed', years, fetchedDays: 0, written: 0, cursor: nextCursor,
+        reason: lastError ?? 'empty-history',
+      }
+    }
+    return {
+      status: nextCursor === 'done' ? 'done' : 'advanced',
+      years, fetchedDays: batch.length, written, cursor: nextCursor,
+      reason: lastError ? `partial-fail: ${lastError}` : null,
+    }
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'yield backfill failed'
+    console.error('[TwseDividends] backfill failed (non-blocking):', message)
+    return { ...empty, reason: message }
+  }
+}
+
+/** 前一日 'YYYY-MM-DD'（斷點 cursor 用；非法回 null 由呼叫端視為 done）。 */
+function prevDayStr(dateStr: string): string {
+  const t = new Date(`${dateStr}T12:00:00+08:00`).getTime()
+  if (Number.isNaN(t)) return 'done'
+  return new Date(t - 24 * 3600 * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
+}
+
 // ─── 缺檔才抓（同步鈕＋16:00 排程順帶更新）─────────────────────────
 // TWT48U 是「預告表」：單次抓取回多筆未來除息事件，逐日累積成當年快取。
 // 「已有快取不重抓」以 agent_settings 抓取日標記判斷（同日第二次直接 skip；

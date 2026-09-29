@@ -7,8 +7,9 @@
  *
  * 與 journal 覆盤的差異（規格要求於 prompt 註明）：
  * - 歷史紀錄無 方向／理由／停損 欄位，故不做停損遵守統計、不引用交易理由；
- * - 只准引用歷史紀錄既有欄位：市場／代號／股數／成本／現價／配息／策略／
+ * - 只准引用歷史紀錄既有欄位：市場／代號／股數／成本／現價／策略／
  *   AI 評級＋摘要／稅費淨損益（含稅費淨損益由既有欄位以通用費率重算）。
+ *   （#44：配息欄已移除，不再引用；總報酬採裸價差。）
  */
 
 export type PortfolioReviewMarket = 'tw' | 'us'
@@ -20,8 +21,9 @@ export interface PortfolioReviewEntryLike {
   shares: number
   cost: number
   current_price: number
-  dividend: number
-  /** 含配息總報酬（明細 total_return）；缺值時以 unrealized_pnl＋dividend 還原。 */
+  /** #44：已棄用（配息欄移除；保留相容，計算一律忽略）。 */
+  dividend?: number
+  /** 總報酬（裸價差；#44 起不再含配息）；缺值時以 unrealized_pnl 還原。 */
   total_return?: number | null
   unrealized_pnl?: number | null
   strategy?: string | null
@@ -42,13 +44,11 @@ function toNum(v: unknown): number | null {
   return null
 }
 
-/** 單筆賺賠：明細 total_return（含配息）；舊資料缺值時以未實現＋配息還原。 */
+/** 單筆賺賠：明細 total_return（#44 起為裸價差）；舊資料缺值時以未實現損益還原（不再加配息）。 */
 export function computePortfolioReviewPnl(e: PortfolioReviewEntryLike): number {
   const total = toNum(e.total_return)
   if (total != null) return total
-  const unrealized = toNum(e.unrealized_pnl) ?? 0
-  const dividend = toNum(e.dividend) ?? 0
-  return unrealized + dividend
+  return toNum(e.unrealized_pnl) ?? 0
 }
 
 export interface PortfolioReviewStats {
@@ -115,7 +115,7 @@ export const PORTFOLIO_REVIEW_SYSTEM_PROMPT = [
   '與交易日誌覆盤的差異（注意）：歷史紀錄沒有「方向／理由／停損」欄位，',
   '因此不做停損遵守統計、不引用交易理由原文、不推測任何進出場動機。',
   '硬性規則（違反即不合格）：',
-  '1. 只准引用歷史紀錄既有欄位：市場／代號／股數／成本／現價／配息／策略／AI 評級＋摘要／稅費淨損益，',
+  '1. 只准引用歷史紀錄既有欄位：市場／代號／股數／成本／現價／策略／AI 評級＋摘要／稅費淨損益，',
   '   以 #id 指稱筆次（如 #12、#15），嚴禁臆測、推論紀錄未寫的動機、情緒或盤勢原因。',
   '2. 不輸出任何未來買賣點：嚴禁出現「建議買進／賣出／加碼／停損價／目標價」等前瞻交易指示。',
   '3. 只做紀律與勝率歸因：輸出「紀律問題 Top-3」（每項附具體筆次引用，如 #12、#15）＋勝率／平均賺賠統計解讀。',

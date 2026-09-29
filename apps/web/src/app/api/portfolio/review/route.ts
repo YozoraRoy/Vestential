@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createQuickLLM } from '@stock/ai-engine'
 import { loadConfig } from '@stock/core'
 import { consumeAnalysisQuota, getAgentSetting, getPortfolioRecords } from '@stock/database'
-import { DAILY_ANALYSIS_LIMIT, getCurrentUserFromCookies, getTaiwanDateStr } from '../../../../lib/auth'
+import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../../lib/auth'
 import { DEFAULT_FEE_DISCOUNT, computeNetPnL } from '../../../../lib/portfolio-net'
 import {
   PORTFOLIO_MIN_REVIEW_COUNT,
@@ -25,8 +25,8 @@ export const dynamic = 'force-dynamic'
  * 2. 篩選維度不同：此處支援 month／all 兩檔（created_at 前綴），journal 只吃 month；
  * 3. /journal 本次不碰（out-of-scope），新建 route 可獨立演進且不影響 journal。
  *
- * - 需登入（未登入 401）；與 journal 覆盤共用每日 3 次 quota
- *  （consumeAnalysisQuota，不另開額度；純統計走前端純算，不打此 API、不扣 quota）。
+  * - 需登入（未登入 401）；與 journal 覆盤共用分級 quota（#44：一般每日 1 次／
+  *    管理員每日 3 次；consumeAnalysisQuota，不另開額度；純統計走前端純算，不打此 API、不扣 quota）。
  * - <5 筆擋下（code TOO_FEW_ENTRIES，不扣 quota）。
  * - prompt 硬性約束：只准引用歷史紀錄既有欄位、禁臆測未寫資訊、不輸出未來買賣點。
  * - LLM 失敗 → 回 fallback:true（quota 已扣，與 journal review 行為一致）。
@@ -59,11 +59,12 @@ export async function POST(req: Request) {
       )
     }
 
-    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), DAILY_ANALYSIS_LIMIT)
+    // #44：分級額度（一般每日 1 次／管理員每日 3 次；客訴文案寫清分級）。
+    const quota = await consumeAnalysisQuota(user.id, getTaiwanDateStr(), getDailyAnalysisLimit(await isAdminUser(user)))
     if (!quota.allowed) {
       return NextResponse.json(
         {
-          error: `今日 AI 分析額度已用完（${quota.used}/${quota.max}），請明天再試`,
+          error: `今日 AI 分析額度已用完（一般用戶每日 1 次／管理員每日 3 次；已用 ${quota.used}/${quota.max}），請明天再試`,
           code: 'QUOTA_EXCEEDED',
           quota,
         },
@@ -82,10 +83,11 @@ export async function POST(req: Request) {
     }
 
     const stats = computePortfolioReviewStats(records)
+    // #44：配息欄已移除；單筆賺賠採裸價差（total_return 缺值時以未實現損益還原）。
     const entryLines = records.map((r) => {
       const pnl = typeof r.total_return === 'number' && Number.isFinite(r.total_return)
         ? r.total_return
-        : (r.unrealized_pnl ?? 0) + (r.dividend ?? 0)
+        : (r.unrealized_pnl ?? 0)
       const net = computeNetPnL({
         market: r.market, symbol: r.symbol, shares: r.shares,
         cost: r.cost, currentPrice: r.current_price, discount,
@@ -93,7 +95,7 @@ export async function POST(req: Request) {
       const strategy = r.strategy ?? '未標註策略'
       const rating = r.recommendation ? `AI 評級 ${r.recommendation}` : '無 AI 評級'
       const summary = r.summary ? `摘要「${r.summary}」` : '無摘要'
-      return `#${r.id}｜${r.market === 'us' ? '美股' : '台股'}｜${r.symbol}｜${r.shares} 股｜成本 ${r.cost}／現價 ${r.current_price}｜配息 ${r.dividend}｜含息賺賠 ${pnl.toFixed(2)}｜稅費淨 ${net.toFixed(2)}｜策略 ${strategy}｜${rating}｜${summary}`
+      return `#${r.id}｜${r.market === 'us' ? '美股' : '台股'}｜${r.symbol}｜${r.shares} 股｜成本 ${r.cost}／現價 ${r.current_price}｜賺賠 ${pnl.toFixed(2)}｜稅費淨 ${net.toFixed(2)}｜策略 ${strategy}｜${rating}｜${summary}`
     })
 
     const userPrompt = [
