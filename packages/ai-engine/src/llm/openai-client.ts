@@ -26,16 +26,25 @@ export class OpenAICompatibleClient implements LLMClient {
 
   async generateObject<T>(_systemPrompt: string, _userPrompt: string, schema: any): Promise<T> {
     const prompt = `${_systemPrompt}\n\n${_userPrompt}\n\nRespond with valid JSON only. No markdown, no explanation.`
-    const raw = await this.callAPI([
-      { role: 'system', content: 'You output valid JSON matching the requested schema. Never include markdown or extra text.' },
-      { role: 'user', content: prompt },
-    ])
+    // #46：原始呼叫先壓住 hook（fireHooks: false），驗證成功後才親發 usage/call。
+    // 否則 HTTP 成功但 JSON parse/validation 失敗時已記一筆 phantom row，
+    // 外層 FallbackClient 切備援成功再記一筆 → 一次邏輯呼叫兩筆。
+    const { text: raw, usage } = await this.callAPIWithUsage(
+      [
+        { role: 'system', content: 'You output valid JSON matching the requested schema. Never include markdown or extra text.' },
+        { role: 'user', content: prompt },
+      ],
+      false,
+    )
 
     let cleaned = ''
     try {
       cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
       const parsed = JSON.parse(cleaned)
-      return schema.parse(parsed) as T
+      const result = schema.parse(parsed) as T
+      if (usage) this.onUsage?.(usage)
+      this.onCall?.({ model: this.config.model, usedFallback: false })
+      return result
     } catch (e: any) {
       console.error('[OpenAIClient] failed to parse or validate JSON object.')
       console.error('[OpenAIClient] raw response:', raw)
@@ -58,6 +67,19 @@ export class OpenAICompatibleClient implements LLMClient {
   }
 
   private async callAPI(messages: { role: string; content: string | ContentPart[] }[]): Promise<string> {
+    const { text } = await this.callAPIWithUsage(messages, true)
+    return text
+  }
+
+  /**
+   * 帶重試的底層呼叫。fireHooks=true 時成功即發 onUsage/onCall（generate／generateWithImage
+   * 路徑）；generateObject 傳 false 自行在驗證成功後補發，避免 phantom row（#46）。
+   * 重試迴圈全用區域變數，並行呼叫互不干擾。
+   */
+  private async callAPIWithUsage(
+    messages: { role: string; content: string | ContentPart[] }[],
+    fireHooks: boolean,
+  ): Promise<{ text: string; usage: LLMUsage | null }> {
     const maxRetries = Number(process.env.LLM_MAX_RETRIES) || 5
     const timeoutMs = Number(process.env.LLM_TIMEOUT_MS) || 180_000
     // 靜態預算（config 傳入／env 預設）：全程不改；429 時只縮小「當次重試」的
@@ -128,21 +150,27 @@ export class OpenAICompatibleClient implements LLMClient {
 
         const data: any = await res.json()
 
-        if (this.onUsage && data.usage) {
-          this.onUsage({
-            promptTokens: data.usage.prompt_tokens,
-            completionTokens: data.usage.completion_tokens,
-          })
-        }
+        const captured: LLMUsage | null = data.usage
+          ? {
+              promptTokens: data.usage.prompt_tokens,
+              completionTokens: data.usage.completion_tokens,
+            }
+          : null
 
         const message = data.choices?.[0]?.message
         if (message?.content) {
-          this.onCall?.({ model: this.config.model, usedFallback: false })
-          return message.content
+          if (fireHooks) {
+            if (captured) this.onUsage?.(captured)
+            this.onCall?.({ model: this.config.model, usedFallback: false })
+          }
+          return { text: message.content, usage: captured }
         }
         if (message?.reasoning_content) {
-          this.onCall?.({ model: this.config.model, usedFallback: false })
-          return message.reasoning_content
+          if (fireHooks) {
+            if (captured) this.onUsage?.(captured)
+            this.onCall?.({ model: this.config.model, usedFallback: false })
+          }
+          return { text: message.reasoning_content, usage: captured }
         }
         throw new AIError('No content in model response')
 

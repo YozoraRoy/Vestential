@@ -6136,7 +6136,10 @@ export async function getLlmUsageReport(opts?: { from?: string; to?: string }): 
     totalTokens: number
   }>(
     `SELECT agent, model, COUNT(*) AS calls,
-            SUM(usedFallback) AS fallbackCalls,
+            -- #46：usedFallback 理論只含 0/1，但生產曾出現髒值（平均數百級）導致
+            -- SUM 直接爆表（備援 44171%）。只認 =1 為備援，其餘（含 NULL/髒值）計 0；
+            -- 歷史舊數不 UPDATE（選邊：僅修聚合口徑，見 Issue #46）。
+            SUM(CASE WHEN usedFallback = 1 THEN 1 ELSE 0 END) AS fallbackCalls,
             SUM(promptTokens) AS promptTokens,
             SUM(completionTokens) AS completionTokens,
             SUM(totalTokens) AS totalTokens
@@ -6161,12 +6164,13 @@ export async function getLlmUsageReport(opts?: { from?: string; to?: string }): 
       agentReport = { agent: row.agent, callCount: 0, models: {}, fallbackCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
       agentMap.set(row.agent, agentReport)
     }
-    agentReport.callCount += row.calls
-    agentReport.models[row.model] = (agentReport.models[row.model] || 0) + row.calls
-    agentReport.fallbackCalls += row.fallbackCalls
-    agentReport.promptTokens += row.promptTokens
-    agentReport.completionTokens += row.completionTokens
-    agentReport.totalTokens += row.totalTokens
+    agentReport.callCount += Number(row.calls ?? 0)
+    agentReport.models[row.model] = (agentReport.models[row.model] || 0) + Number(row.calls ?? 0)
+    // #46：DB 驅動回傳可能是 NULL/字串，先 Number() 正規化（NaN 視為 0），避免字串串接或 NaN 污染。
+    agentReport.fallbackCalls += Number(row.fallbackCalls ?? 0) || 0
+    agentReport.promptTokens += Number(row.promptTokens ?? 0) || 0
+    agentReport.completionTokens += Number(row.completionTokens ?? 0) || 0
+    agentReport.totalTokens += Number(row.totalTokens ?? 0) || 0
   }
 
   // 從 DB GROUP BY 結果中彙整 total

@@ -204,7 +204,12 @@ export function LlmUsageClient() {
   const minuteTruncated = (minute?.buckets.length ?? 0) > MINUTE_RENDER_LIMIT
 
   const total = report?.total
-  const fallbackRatio = total && total.callCount > 0 ? Math.round((total.fallbackCalls / total.callCount) * 100) : 0
+  // #46：備援比恆為 0~100（聚合髒值由後端口徑擋第一層，此處 min(100) 兜底；
+  // 絕對數 total.fallbackCalls 照常顯示，兩者並列即可交叉判讀）。
+  const fallbackRatio =
+    total && total.callCount > 0
+      ? Math.min(100, Math.max(0, Math.round((total.fallbackCalls / total.callCount) * 100)))
+      : 0
 
   return (
     <SectionPageWrapper
