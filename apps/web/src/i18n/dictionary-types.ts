@@ -157,6 +157,15 @@ export interface Dict {
     methodAi: string
     methodAiLabel: string
     methodAiLink: string
+    methodMarketFocus: string
+    methodMarketFocusLabel: string
+    methodMarketFocusLink: string
+    methodArena: string
+    methodArenaLabel: string
+    methodArenaLink: string
+    methodNewsletter: string
+    methodNewsletterLabel: string
+    methodNewsletterLink: string
     startTitle: string
     step1Title: string
     step1Desc: string

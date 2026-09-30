@@ -52,7 +52,7 @@ export function MarketFocusSubscribe({ socialLinks, t: tProp }: MarketFocusSubsc
   }
 
   return (
-    <section aria-labelledby="newsletter-title" className="mb-10">
+    <section id="subscribe" aria-labelledby="newsletter-title" className="mb-10 scroll-mt-20">
       <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/5 px-6 py-5">
         <div className="flex items-center gap-2 mb-2">
           <Mail className="w-4 h-4 text-[var(--accent)]" />

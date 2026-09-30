@@ -55,6 +55,9 @@ export default async function AboutPage() {
             <li><strong className="text-[var(--text-primary)]">{dict.about.methodOddLotLabel}</strong> — {dict.about.methodOddLot}<span>（<Link href={localizePath(locale, '/odd-lot')} className="text-[var(--accent)] hover:underline">{dict.about.methodOddLotLink}</Link>）。</span></li>
             <li><strong className="text-[var(--text-primary)]">{dict.about.methodPortfolioLabel}</strong> — {dict.about.methodPortfolio}<span>（<Link href={localizePath(locale, '/portfolio')} className="text-[var(--accent)] hover:underline">{dict.about.methodPortfolioLink}</Link>）。</span></li>
             <li><strong className="text-[var(--text-primary)]">{dict.about.methodAiLabel}</strong> — {dict.about.methodAi}<span>（<Link href={localizePath(locale, '/analyze')} className="text-[var(--accent)] hover:underline">{dict.about.methodAiLink}</Link>）。</span></li>
+            <li><strong className="text-[var(--text-primary)]">{dict.about.methodMarketFocusLabel}</strong> — {dict.about.methodMarketFocus}<span>（<Link href={localizePath(locale, '/market-focus')} className="text-[var(--accent)] hover:underline">{dict.about.methodMarketFocusLink}</Link>）。</span></li>
+            <li><strong className="text-[var(--text-primary)]">{dict.about.methodArenaLabel}</strong> — {dict.about.methodArena}<span>（<Link href={localizePath(locale, '/agent-arena')} className="text-[var(--accent)] hover:underline">{dict.about.methodArenaLink}</Link>）。</span></li>
+            <li><strong className="text-[var(--text-primary)]">{dict.about.methodNewsletterLabel}</strong> — {dict.about.methodNewsletter}<span>（<Link href={localizePath(locale, '/market-focus#subscribe')} className="text-[var(--accent)] hover:underline">{dict.about.methodNewsletterLink}</Link>）。</span></li>
           </ul>
         </section>
 
