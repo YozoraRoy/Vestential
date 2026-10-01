@@ -9,8 +9,11 @@ export const ANALYSIS_LANGUAGE_OPTIONS: { id: AnalysisLanguage; label: string; l
 ]
 
 /**
- * 8 個 AI Agent 的執行順序與節點名稱。
+ * 12 個 AI Agent 的執行順序與節點名稱。
  * 引擎、API 與前端共用同一份金鑰，避免名稱不一致。
+ * 順序：4 分析 → Bull→Bear（一輪多空辯論）→ Research Manager → Trader
+ * → 風險三方（aggressive→conservative→neutral 各一次）→ Portfolio Manager。
+ * Bull↔Bear 輪數寫死（Issue #52：不進後台）。
  */
 export const AGENT_KEYS = [
   'Market Analyst',
@@ -18,8 +21,12 @@ export const AGENT_KEYS = [
   'News Analyst',
   'Fundamentals Analyst',
   'Bull Researcher',
+  'Bear Researcher',
   'Research Manager',
   'Trader',
+  'Aggressive Analyst',
+  'Conservative Analyst',
+  'Neutral Analyst',
   'Portfolio Manager',
 ] as const
 

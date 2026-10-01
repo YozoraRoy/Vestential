@@ -26,6 +26,10 @@ import {
   createNewsAnalyst,
   createFundamentalsAnalyst,
   createBullResearcher,
+  createBearResearcher,
+  createAggressiveDebator,
+  createConservativeDebator,
+  createNeutralDebator,
   createResearchManager,
   createTrader,
   createPortfolioManager,
@@ -480,10 +484,24 @@ ${historyContext}`
       finalDecision: '',
     })
 
-    // 續跑：以快照覆蓋初始值（含已完成 agent 的報告內容、investDebate round/history 等）
+    // 續跑：以快照覆蓋初始值（含已完成 agent 的報告內容、investDebate round/history 等）。
+    // 舊快照相容（Issue #52）：舊 job 快照可能缺 bearHistory／riskDebate 三方欄位，
+    // 以 buildInitialState 預設逐層兜底（淺層 spread 會整塊覆蓋 investDebate／riskDebate 故需深合併）。
+    const defaultState = buildInitialState()
     const initialState: AnalysisState = isResume
-      ? { ...buildInitialState(), ...(existingState as Partial<AnalysisState>) } as AnalysisState
-      : buildInitialState()
+      ? {
+          ...defaultState,
+          ...(existingState as Partial<AnalysisState>),
+          investDebate: {
+            ...defaultState.investDebate,
+            ...((existingState as Partial<AnalysisState>).investDebate ?? {}),
+          },
+          riskDebate: {
+            ...defaultState.riskDebate,
+            ...((existingState as Partial<AnalysisState>).riskDebate ?? {}),
+          },
+        } as AnalysisState
+      : defaultState
 
     // agent 名稱 → 該 agent 產出的報告欄位（字串）；用於 fallback 時在末尾附加備援說明。
     const reportFieldByAgent: Record<string, keyof AnalysisState> = {
@@ -508,22 +526,35 @@ ${historyContext}`
       const field = reportFieldByAgent[name]
       if (field && typeof result[field] === 'string') {
         ;(result as Record<string, any>)[field] += formatFallbackNote(usage)
-      } else if (name === 'Bull Researcher' && result.investDebate?.currentResponse) {
+      } else if ((name === 'Bull Researcher' || name === 'Bear Researcher') && result.investDebate?.currentResponse) {
         result.investDebate = {
           ...result.investDebate,
           currentResponse: result.investDebate.currentResponse + formatFallbackNote(usage),
         }
+      } else if (
+        (name === 'Aggressive Analyst' || name === 'Conservative Analyst' || name === 'Neutral Analyst') &&
+        result.riskDebate?.history
+      ) {
+        result.riskDebate = {
+          ...result.riskDebate,
+          history: result.riskDebate.history + formatFallbackNote(usage),
+        }
       }
     }
 
+    // Issue #52：12 節點寫死順序（Bull↔Bear 一輪辯論；風險三方各發言一次；不進後台）。
     const nodeFactories: Array<[string, (s: AnalysisState) => Promise<Partial<AnalysisState>>]> = [
       ['Market Analyst', createMarketAnalyst(this.quickLLM)],
       ['Sentiment Analyst', createSentimentAnalyst(this.quickLLM)],
       ['News Analyst', createNewsAnalyst(this.quickLLM)],
       ['Fundamentals Analyst', createFundamentalsAnalyst(this.quickLLM)],
       ['Bull Researcher', createBullResearcher(this.quickLLM)],
+      ['Bear Researcher', createBearResearcher(this.quickLLM)],
       ['Research Manager', createResearchManager(this.deepLLM)],
       ['Trader', createTrader(this.quickLLM)],
+      ['Aggressive Analyst', createAggressiveDebator(this.quickLLM)],
+      ['Conservative Analyst', createConservativeDebator(this.quickLLM)],
+      ['Neutral Analyst', createNeutralDebator(this.quickLLM)],
       ['Portfolio Manager', createPortfolioManager(this.deepLLM)],
     ]
 
@@ -548,11 +579,13 @@ ${historyContext}`
 
         const field = reportFieldByAgent[name] ?? ''
         const content =
-          name === 'Bull Researcher'
+          name === 'Bull Researcher' || name === 'Bear Researcher'
             ? (result.investDebate?.currentResponse ?? '')
-            : field && typeof state[field] === 'string'
-              ? String(state[field])
-              : ''
+            : name === 'Aggressive Analyst' || name === 'Conservative Analyst' || name === 'Neutral Analyst'
+              ? (result.riskDebate?.history ?? '')
+              : field && typeof state[field] === 'string'
+                ? String(state[field])
+                : ''
         options.onAgentComplete?.(name, field, content, state)
       } catch (e: any) {
         failedAgent = name

@@ -74,6 +74,17 @@ const AGENT_META: AgentMeta[] = [
     model: 'quick',
   },
   {
+    key: 'Bear Researcher',
+    name: { zh: '空方研究', en: 'Bear Researcher', ja: '弱気派リサーチ' },
+    role: { zh: '從空方角度提出看空論述', en: 'Builds the bear case for the stock', ja: '弱気の論拠を構築' },
+    detail: {
+      zh: '站在空方立場，回應多方論點，聚焦估值過高、競爭威脅與負面催化劑，與多方形成實質辯論。',
+      en: 'Argues against investment, rebutting bull points with overvaluation, competitive threats, and negative catalysts.',
+      ja: '弱気の立場から強気の論点に反論し、割高感・競争リスク・ネガティブなカタリストに注目します。',
+    },
+    model: 'quick',
+  },
+  {
     key: 'Research Manager',
     name: { zh: '研究總結', en: 'Research Manager', ja: 'リサーチマネージャー' },
     role: { zh: '綜整多空辯論產出評級', en: 'Synthesizes the debate into a rating', ja: '多様な論点を統合して評価を生成' },
@@ -92,6 +103,39 @@ const AGENT_META: AgentMeta[] = [
       zh: '把研究結論轉為具體動作：Buy/Hold/Sell、進場價、停損價、區分階段建倉與風險佔比。',
       en: 'Turns the plan into specific actions: Buy/Hold/Sell, entry price, stop loss, phased entry, and position sizing.',
       ja: '研究結果を具体的なアクション（Buy/Hold/Sell）、エントリー価格、ストップロス、段階的建て玉、ポジションサイズに変換します。',
+    },
+    model: 'quick',
+  },
+  {
+    key: 'Aggressive Analyst',
+    name: { zh: '積極風險', en: 'Aggressive Risk', ja: 'アグレッシブリスク' },
+    role: { zh: '主張積極承擔風險換取更高報酬', en: 'Argues for aggressive risk-taking', ja: '積極的なリスクテイクを主張' },
+    detail: {
+      zh: '針對交易提案主張放大部位、放寬風險容忍，點出過度保守錯失的機會。',
+      en: 'Pushes for larger position sizing and higher risk tolerance, flagging missed opportunities from being too conservative.',
+      ja: '取引提案に対し大きめのポジションと高いリスク許容を主張し、慎重すぎて逃す機会を指摘します。',
+    },
+    model: 'quick',
+  },
+  {
+    key: 'Conservative Analyst',
+    name: { zh: '保守風險', en: 'Conservative Risk', ja: 'コンサバティブリスク' },
+    role: { zh: '主張保本優先、收緊風險控制', en: 'Argues for capital preservation', ja: '資本保全を優先する立場で主張' },
+    detail: {
+      zh: '主張縮小部位、收緊停損與風險控制，凸顯下檔風險與潛在虧損。',
+      en: 'Pushes for smaller positions and tighter risk controls, highlighting downside risks and potential losses.',
+      ja: '小さめのポジションと厳格なリスク管理を主張し、下落リスクと潜在損失を指摘します。',
+    },
+    model: 'quick',
+  },
+  {
+    key: 'Neutral Analyst',
+    name: { zh: '中性風險', en: 'Neutral Risk', ja: 'ニュートラルリスク' },
+    role: { zh: '在積極與保守間取平衡', en: 'Balances aggressive and conservative views', ja: '積極と保守の中庸を取る' },
+    detail: {
+      zh: '在積極與保守間找中庸，提出適度部位與平衡的風險方案。',
+      en: 'Finds middle ground between aggressive and conservative stances with moderate position sizing.',
+      ja: '積極と保守の中間として、適度なポジションサイズのバランス案を提示します。',
     },
     model: 'quick',
   },

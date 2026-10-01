@@ -1,5 +1,6 @@
 import type { AnalysisState } from '@stock/core'
 import type { LLMClient } from '../../llm/client.js'
+import { buildSynthesizedReports } from '../../context.js'
 
 export function createBearResearcher(llm: LLMClient) {
   return async (state: AnalysisState): Promise<Partial<AnalysisState>> => {
@@ -11,15 +12,19 @@ export function createBearResearcher(llm: LLMClient) {
       `You are a Bear Analyst advocating AGAINST investing in ${state.ticker}.`,
       '',
       `Resources:`,
-      state.instrumentContext,
-      `Market Report: ${marketReport}`,
-      `Sentiment: ${sentimentReport}`,
-      `News: ${newsReport}`,
-      `Fundamentals: ${fundamentalsReport}`,
+      buildSynthesizedReports({
+        instrumentContext: state.instrumentContext,
+        marketReport,
+        sentimentReport,
+        newsReport,
+        fundamentalsReport,
+      }),
       `Debate history: ${history}`,
       `Last bull argument: ${lastBull}`,
       '',
       `Build a strong bear case addressing the bull's points. Focus on risks, overvaluation, competitive threats, and negative catalysts.`,
+      '',
+      state.outputInstruction,
     ].join('\n')
 
     const argument = `Bear Analyst: ${await llm.generate('You are a bearish stock analyst arguing against investment.', prompt)}`

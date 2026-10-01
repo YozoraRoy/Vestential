@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import {
   TrendingUp, AlertTriangle, Newspaper, BarChart3,
-  ThumbsUp, ClipboardList, ShoppingCart, Briefcase,
+  ThumbsUp, ThumbsDown, ClipboardList, ShoppingCart, Briefcase,
+  Zap, Shield, Scale,
   LucideIcon,
 } from 'lucide-react'
 import { useI18n } from '@/i18n/LanguageProvider'
@@ -12,8 +13,12 @@ const STEPS = [
   { key: 'News Analyst', icon: Newspaper },
   { key: 'Fundamentals Analyst', icon: BarChart3 },
   { key: 'Bull Researcher', icon: ThumbsUp },
+  { key: 'Bear Researcher', icon: ThumbsDown },
   { key: 'Research Manager', icon: ClipboardList },
   { key: 'Trader', icon: ShoppingCart },
+  { key: 'Aggressive Analyst', icon: Zap },
+  { key: 'Conservative Analyst', icon: Shield },
+  { key: 'Neutral Analyst', icon: Scale },
   { key: 'Portfolio Manager', icon: Briefcase },
 ] as const
 
