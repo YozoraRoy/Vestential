@@ -15,6 +15,7 @@ import { buildSlotPrices } from './intraday.js'
 import type { ArenaDayOhlc, ArenaPrice, ArenaUniverseItem } from './types.js'
 import { arenaSlotTimes } from './types.js'
 import { arenaReturnPct } from './returns.js'
+import { creditArenaDividends } from './dividends.js'
 import { ARENA_TONE_DESCRIPTIONS, type ArenaDecisionContext } from './strategist.js'
 
 export interface RunArenaRoundParams {
@@ -423,6 +424,19 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
 
   // ── 收盤 equity snapshot（close / full 模式）──────────────────
   if (!phase || phase === 'close') {
+    // Issue #54：現金股利自動入帳（結算時持有即發；冪等；缺快取跳過；歷史快照不追溯）。
+    for (const agent of agents) {
+      const st = states.get(agent.id)!
+      try {
+        const credited = await creditArenaDividends(store, agent.id, roundDate, st.holdings)
+        if (credited > 0) {
+          st.cash = Math.round((st.cash + credited) * 100) / 100
+          await store.advanceRound(agent.id, roundDate, st.cash)
+        }
+      } catch (err) {
+        errors.push(`agent#${agent.id} dividend credit failed: ${(err as Error).message}`)
+      }
+    }
     for (const agent of agents) {
       const st = states.get(agent.id)!
       const equity = computeArenaEquity(st.cash, st.holdings, closes)

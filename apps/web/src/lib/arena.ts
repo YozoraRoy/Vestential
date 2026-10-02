@@ -40,6 +40,9 @@ import {
   saveArenaTickJob,
   updateArenaTickJob,
   findRunningArenaTickJob,
+  getTwseDividendsInWindow,
+  saveArenaDividendCredit,
+  hasArenaDividendCredit,
   type ArenaTickJobRow,
 } from '@stock/database'
 import type { ArenaAgentRecord, ArenaTradeRecord, ArenaSnapshotRecord } from '@stock/ai-engine'
@@ -171,6 +174,26 @@ export function dbArenaStore(): ArenaStore {
 
     async saveDiscussion(roundDate: string, content: string, model?: string | null, fallbackUsed?: boolean | null): Promise<void> {
       await saveArenaDiscussion(roundDate, content, model, fallbackUsed)
+    },
+
+    // Issue #54：股利入帳 seam（twse_dividends 窗查詢＋arena_dividend_credits 冪等寫入）。
+    async getDividendsInWindow(symbols: string[], fromDate: string, toDate: string) {
+      const rows = await getTwseDividendsInWindow(symbols, fromDate, toDate)
+      return rows.map((r) => ({ symbol: r.symbol, exDate: r.ex_date, cashDividend: r.cash_dividend }))
+    },
+
+    async saveDividendCredit(credit: { agentId: number; symbol: string; exDate: string; shares: number; amount: number }): Promise<boolean> {
+      return saveArenaDividendCredit({
+        agentId: credit.agentId,
+        symbol: credit.symbol,
+        exDate: credit.exDate,
+        shares: credit.shares,
+        amount: credit.amount,
+      })
+    },
+
+    async hasDividendCredit(agentId: number, symbol: string, exDate: string): Promise<boolean> {
+      return hasArenaDividendCredit(agentId, symbol, exDate)
     },
   }
 }

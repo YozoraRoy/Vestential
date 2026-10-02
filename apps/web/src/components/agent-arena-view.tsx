@@ -1267,7 +1267,7 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                       </td>
                       <td className="px-3 py-2.5 text-[var(--text-secondary)] hidden md:table-cell">
                         {d.currency}
-                        {fmt(r.initial_capital)}
+                        {fmt(r.cash ?? r.initial_capital)}
                       </td>
                       {(() => {
                         const lr = leaderboardReturn(r)
@@ -1432,7 +1432,7 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                             </span>
                           </div>
                           <div className="p-3 rounded-xl bg-[var(--bg-secondary)] border border-white/5">
-                            <span className="text-xs text-[var(--text-secondary)] block mb-1">{d.colCapital}</span>
+                            <span className="text-xs text-[var(--text-secondary)] block mb-1">{d.colInitialCapital}</span>
                             <span className="text-sm sm:text-base font-bold font-mono text-[var(--text-primary)]">
                               {d.currency}
                               {fmt(detailData.agent.initial_capital)}

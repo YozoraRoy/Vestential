@@ -66,6 +66,22 @@ export interface ArenaDecisionLogRecord {
   fallbackUsed?: boolean | null
 }
 
+/** 除息快取列（Issue #54：twse_dividends 窗查詢的回傳形狀）。 */
+export interface ArenaDividendQuote {
+  symbol: string
+  exDate: string
+  cashDividend: number
+}
+
+/** 股利入帳列（Issue #54：寫入 arena_dividend_credits 的形狀）。 */
+export interface ArenaDividendCreditInput {
+  agentId: number
+  symbol: string
+  exDate: string
+  shares: number
+  amount: number
+}
+
 /** 引擎所需的資料存取面（由 apps/web 用 @stock/database 實作）。 */
 export interface ArenaStore {
   listActiveAgents(): Promise<ArenaAgentRecord[]>
@@ -80,4 +96,13 @@ export interface ArenaStore {
   getMarketBriefing(roundDate: string): Promise<{ content: string; fallbackUsed?: boolean | null } | null>
   insertDecisionLog(record: ArenaDecisionLogRecord): Promise<void>
   saveDiscussion(roundDate: string, content: string, model?: string | null, fallbackUsed?: boolean | null): Promise<void>
+  /**
+   * Issue #54 股利入帳 seam（可選：未實作的 store 直接跳過入帳，不擋結算）。
+   * - getDividendsInWindow：窗內除息快取（symbol 正規化後比對；缺檔回 []）。
+   * - saveDividendCredit：原子冪等寫入（已入帳過回 false）。
+   * - hasDividendCredit：是否已入帳（讀端／對帳用）。
+   */
+  getDividendsInWindow?(symbols: string[], fromDate: string, toDate: string): Promise<ArenaDividendQuote[]>
+  saveDividendCredit?(credit: ArenaDividendCreditInput): Promise<boolean>
+  hasDividendCredit?(agentId: number, symbol: string, exDate: string): Promise<boolean>
 }

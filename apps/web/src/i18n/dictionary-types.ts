@@ -912,6 +912,7 @@ export interface Dict {
     colEquity: string
     colReturn: string
     colCapital: string
+    colInitialCapital: string
     snapshotAsOf: string
     cashEstimateNote: string
     colRounds: string

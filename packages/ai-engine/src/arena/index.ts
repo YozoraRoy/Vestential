@@ -1,6 +1,7 @@
 export * from './types.js'
 export * from './ledger.js'
 export * from './store.js'
+export * from './dividends.js'
 export * from './strategist.js'
 export * from './lightweight-strategist.js'
 export * from './market.js'

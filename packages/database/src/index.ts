@@ -57,7 +57,8 @@ export {
   LLM_USAGE_ROW_LIMIT,
   saveAnalysisJob, updateAnalysisJob, getAnalysisJobById, listAnalysisJobsByUser,
   saveArenaTickJob, updateArenaTickJob, getArenaTickJobById, findRunningArenaTickJob, cleanupArenaTickJobs,
-  upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate,
+  upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate, getTwseDividendsInWindow,
+  normalizeArenaDividendSymbol, saveArenaDividendCredit, hasArenaDividendCredit, getArenaDividendCredits,
 } from './db.js'
 export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdate, AnalysisJobAgentState, AnalysisJobStatus, PortfolioRecord, PortfolioRecordInput, PortfolioRecordUpdate, PortfolioSyncedPricePatch, PortfolioSyncTarget, TradeJournalEntry, TradeJournalInput, TradeJournalDirection, TradeJournalUpdate, HistoricalGift, UserRow, UserIdentityRow, AuthProvider, IdentityInput, QuotaResult, MarketFocusItem, MarketFocusMeta, MarketFocusWind, MarketFocusWindDirection, MarketFocusLogRow, MarketFocusLogInput,
   ArenaSeasonRow, ArenaAgentRow, ArenaHoldingRow, ArenaTradeRow, ArenaSnapshotRow, ArenaAgentInput, ArenaLeaderboardRow,
@@ -68,8 +69,8 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
   CycleEntrySignalRow, CycleEntryMetaRow,
   LlmUsageLogInput, LlmUsageAgentReport, LlmUsageReportResult,
   LlmUsageRawRow, LlmUsageDailyAgentRow, LlmUsageDailyDay, LlmUsageDailyResult,
-  LlmUsageMinuteBucket, LlmUsageMinuteResult, ArenaTickJobRow, ArenaTickJobInput, ArenaTickJobUpdate,
-  TwseDividendRow, TwseDividendInput } from './db.js'
+  LlmUsageMinuteBucket, LlmUsageMinuteResult,   ArenaTickJobRow, ArenaTickJobInput, ArenaTickJobUpdate,
+  TwseDividendRow, TwseDividendInput, ArenaDividendCreditRow, ArenaDividendCreditInput } from './db.js'
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'
 export type { Database } from 'better-sqlite3'

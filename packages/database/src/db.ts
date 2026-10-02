@@ -32,6 +32,8 @@ const portfolioMemoryStore: PortfolioRecord[] = []
 let portfolioMemoryIdCounter = 1
 // Issue #35：TWSE 除息快取記憶體兜底（SQLite/Azure 皆不可用時；僅程序生命週期內有效）。
 const twseDividendMemoryStore: TwseDividendRow[] = []
+// Issue #54：競技場股利入帳去重記憶體兜底（同上；僅程序生命週期內有效）。
+const arenaDividendCreditMemoryStore: ArenaDividendCreditRow[] = []
 
 // ─── SQLite connection ───────────────────────────────────────────
 function getSqliteDb(): Database.Database | null {
@@ -596,6 +598,20 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       );
       CREATE INDEX IF NOT EXISTS idx_twse_dividends_ex_date ON twse_dividends(ex_date);
       CREATE INDEX IF NOT EXISTS idx_twse_dividends_symbol ON twse_dividends(symbol);
+
+      -- Issue #54：競技場股利入帳去重（UNIQUE(agent_id, symbol, ex_date) 防重發冪等）。
+      CREATE TABLE IF NOT EXISTS arena_dividend_credits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        ex_date TEXT NOT NULL,
+        shares REAL NOT NULL,
+        amount REAL NOT NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE (agent_id, symbol, ex_date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_arena_dividend_credits_agent ON arena_dividend_credits(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_arena_dividend_credits_symbol_ex ON arena_dividend_credits(symbol, ex_date);
 
     `)
 
@@ -1301,6 +1317,25 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_twse_dividends_ex_date ON twse_dividends(ex_date);
         CREATE INDEX idx_twse_dividends_symbol ON twse_dividends(symbol);
+      END
+    `)
+
+    // Issue #54：競技場股利入帳去重（UNIQUE 防重發冪等）。
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'arena_dividend_credits')
+      BEGIN
+        CREATE TABLE arena_dividend_credits (
+          id         INT IDENTITY(1,1) PRIMARY KEY,
+          agent_id   INT NOT NULL,
+          symbol     NVARCHAR(30) NOT NULL,
+          ex_date    NVARCHAR(20) NOT NULL,
+          shares     FLOAT NOT NULL,
+          amount     FLOAT NOT NULL,
+          created_at DATETIME2 DEFAULT GETDATE(),
+          CONSTRAINT uq_arena_dividend_credit UNIQUE (agent_id, symbol, ex_date)
+        );
+        CREATE INDEX idx_arena_dividend_credits_agent ON arena_dividend_credits(agent_id);
+        CREATE INDEX idx_arena_dividend_credits_symbol_ex ON arena_dividend_credits(symbol, ex_date);
       END
     `)
 
@@ -3160,6 +3195,228 @@ export async function hasTwseDividendsForDate(exDate: string): Promise<boolean> 
     }
   }
   return twseDividendMemoryStore.some(m => m.ex_date === exDate)
+}
+
+// ─── 競技場股利入帳去重（Issue #54，arena_dividend_credits）───────
+export interface ArenaDividendCreditRow {
+  id?: number
+  agent_id: number
+  /** 正規化後代號（去 .TW／.TWO，大寫；見 normalizeArenaDividendSymbol）。 */
+  symbol: string
+  /** 除息日 'YYYY-MM-DD'。 */
+  ex_date: string
+  /** 結算時持有股數。 */
+  shares: number
+  /** 入帳金額 = round2(shares × cash_dividend)。 */
+  amount: number
+  created_at?: string
+}
+
+export interface ArenaDividendCreditInput {
+  agentId: number
+  symbol: string
+  exDate: string
+  shares: number
+  amount: number
+}
+
+/**
+ * 股利 symbol 正規化（兩邊對齊用）：去 `.TW`／`.TWO` 尾綴、轉大寫。
+ * 只對「數字代號＋尾綴」做剝離（`2330.TW`→`2330`）；其餘原樣大寫
+ * （twse_dividends 快取本就存無尾綴代號，如 `2330`／`00400A`）。
+ */
+export function normalizeArenaDividendSymbol(symbol: string): string {
+  const s = (symbol ?? '').trim().toUpperCase()
+  const m = s.match(/^(\d{4,6}[A-Z]?)\.(TW|TWO)$/)
+  return m ? m[1]! : s
+}
+
+function normalizeArenaDividendCreditInput(r: ArenaDividendCreditInput): ArenaDividendCreditRow | null {
+  const agentId = Number(r.agentId)
+  const symbol = normalizeArenaDividendSymbol(r.symbol)
+  const exDate = (r.exDate ?? '').trim()
+  const shares = Number(r.shares)
+  const amount = Number(r.amount)
+  if (!Number.isInteger(agentId) || agentId <= 0) return null
+  if (!symbol || !/^\d{4}-\d{2}-\d{2}$/.test(exDate)) return null
+  if (!Number.isFinite(shares) || shares <= 0) return null
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  return { agent_id: agentId, symbol, ex_date: exDate, shares, amount }
+}
+
+/**
+ * 寫入股利入帳列（UNIQUE(agent_id, symbol, ex_date) 冪等：重跑不重發）。
+ * @returns true＝本次新入帳；false＝已入帳過（或非法列／DB 不可用）。
+ */
+export async function saveArenaDividendCredit(input: ArenaDividendCreditInput): Promise<boolean> {
+  const clean = normalizeArenaDividendCreditInput(input)
+  if (!clean) return false
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('agentId', sql.Int, clean.agent_id)
+          .input('symbol', sql.NVarChar(30), clean.symbol)
+          .input('exDate', sql.NVarChar(20), clean.ex_date)
+          .input('shares', sql.Float, clean.shares)
+          .input('amount', sql.Float, clean.amount)
+          .query(`
+            IF NOT EXISTS (SELECT 1 FROM arena_dividend_credits WHERE agent_id = @agentId AND symbol = @symbol AND ex_date = @exDate)
+              INSERT INTO arena_dividend_credits (agent_id, symbol, ex_date, shares, amount) VALUES (@agentId, @symbol, @exDate, @shares, @amount)
+          `)
+        return Number(result.rowsAffected?.[0] ?? 0) > 0
+      } catch (e) {
+        console.error('[AzureSQL] saveArenaDividendCredit error:', e)
+        return false
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        const info = db.prepare(`
+          INSERT INTO arena_dividend_credits (agent_id, symbol, ex_date, shares, amount)
+          VALUES (@agent_id, @symbol, @ex_date, @shares, @amount)
+          ON CONFLICT(agent_id, symbol, ex_date) DO NOTHING
+        `).run(clean)
+        return Number(info.changes ?? 0) > 0
+      } catch (e) {
+        console.error('[SQLite] saveArenaDividendCredit error:', e)
+        return false
+      }
+    }
+  }
+  // 記憶體兜底（同鍵即視為已入帳，不重複）。
+  const exists = arenaDividendCreditMemoryStore.some(
+    m => m.agent_id === clean.agent_id && m.symbol === clean.symbol && m.ex_date === clean.ex_date,
+  )
+  if (exists) return false
+  arenaDividendCreditMemoryStore.push({ id: arenaDividendCreditMemoryStore.length + 1, ...clean })
+  return true
+}
+
+/** 某 (agent, symbol, ex_date) 是否已入帳（重跑守衛的讀端）。 */
+export async function hasArenaDividendCredit(agentId: number, symbol: string, exDate: string): Promise<boolean> {
+  const sym = normalizeArenaDividendSymbol(symbol)
+  if (!Number.isInteger(agentId) || agentId <= 0 || !sym || !/^\d{4}-\d{2}-\d{2}$/.test(exDate)) return false
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('agentId', sql.Int, agentId)
+          .input('symbol', sql.NVarChar(30), sym)
+          .input('exDate', sql.NVarChar(20), exDate)
+          .query('SELECT COUNT(*) AS cnt FROM arena_dividend_credits WHERE agent_id = @agentId AND symbol = @symbol AND ex_date = @exDate')
+        return Number(result.recordset?.[0]?.cnt ?? 0) > 0
+      } catch (e) {
+        console.error('[AzureSQL] hasArenaDividendCredit error:', e)
+        return false
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        const row = db.prepare(
+          'SELECT COUNT(*) AS cnt FROM arena_dividend_credits WHERE agent_id = ? AND symbol = ? AND ex_date = ?',
+        ).get(agentId, sym, exDate) as { cnt: number }
+        return Number(row?.cnt ?? 0) > 0
+      } catch (e) {
+        console.error('[SQLite] hasArenaDividendCredit error:', e)
+        return false
+      }
+    }
+  }
+  return arenaDividendCreditMemoryStore.some(
+    m => m.agent_id === agentId && m.symbol === sym && m.ex_date === exDate,
+  )
+}
+
+/** 取某 agent 的股利入帳列（engine 重跑守衛／對帳用；依 ex_date ASC）。 */
+export async function getArenaDividendCredits(agentId: number): Promise<ArenaDividendCreditRow[]> {
+  if (!Number.isInteger(agentId) || agentId <= 0) return []
+  const cols = 'id, agent_id, symbol, ex_date, shares, amount, created_at'
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('agentId', sql.Int, agentId)
+          .query(`SELECT ${cols} FROM arena_dividend_credits WHERE agent_id = @agentId ORDER BY ex_date ASC`)
+        return result.recordset as ArenaDividendCreditRow[]
+      } catch (e) {
+        console.error('[AzureSQL] getArenaDividendCredits error:', e)
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        return db.prepare(
+          `SELECT ${cols} FROM arena_dividend_credits WHERE agent_id = ? ORDER BY ex_date ASC`,
+        ).all(agentId) as ArenaDividendCreditRow[]
+      } catch (e) {
+        console.error('[SQLite] getArenaDividendCredits error:', e)
+      }
+    }
+  }
+  return arenaDividendCreditMemoryStore
+    .filter(m => m.agent_id === agentId)
+    .sort((a, b) => (a.ex_date < b.ex_date ? -1 : 1))
+}
+
+/**
+ * 取窗內除息快取（ex_date ∈ [fromDate, toDate]，symbol ∈ symbols；沿 getTwseDividendsByYear 模式）。
+ * 呼叫端先正規化 symbols（本函式亦會正規化一次，雙保險）。
+ * 缺快取／非法窗 → 回空陣列（呼叫端視為跳過，不 throw）。
+ */
+export async function getTwseDividendsInWindow(
+  symbols: string[],
+  fromDate: string,
+  toDate: string,
+): Promise<TwseDividendRow[]> {
+  const cleanSyms = [...new Set((symbols ?? []).map(normalizeArenaDividendSymbol).filter(Boolean))]
+  if (cleanSyms.length === 0) return []
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate) || fromDate > toDate) return []
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const req = pool.request()
+          .input('fromDate', sql.NVarChar(20), fromDate)
+          .input('toDate', sql.NVarChar(20), toDate)
+        const inList = cleanSyms.map((s, i) => {
+          req.input(`s${i}`, sql.NVarChar(30), s)
+          return `@s${i}`
+        }).join(', ')
+        const result = await req.query(
+          `SELECT ${TWSE_DIVIDEND_COLUMNS} FROM twse_dividends WHERE symbol IN (${inList}) AND ex_date >= @fromDate AND ex_date <= @toDate ORDER BY ex_date ASC`,
+        )
+        return result.recordset as TwseDividendRow[]
+      } catch (e) {
+        console.error('[AzureSQL] getTwseDividendsInWindow error:', e)
+        return []
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        const placeholders = cleanSyms.map(() => '?').join(', ')
+        return db.prepare(
+          `SELECT ${TWSE_DIVIDEND_COLUMNS} FROM twse_dividends WHERE symbol IN (${placeholders}) AND ex_date >= ? AND ex_date <= ? ORDER BY ex_date ASC`,
+        ).all(...cleanSyms, fromDate, toDate) as TwseDividendRow[]
+      } catch (e) {
+        console.error('[SQLite] getTwseDividendsInWindow error:', e)
+        return []
+      }
+    }
+  }
+  return twseDividendMemoryStore
+    .filter(m => cleanSyms.includes(m.symbol) && m.ex_date >= fromDate && m.ex_date <= toDate)
+    .sort((a, b) => (a.ex_date < b.ex_date ? -1 : 1))
 }
 
 // ─── Trade Journal（交易日誌，Issue #21）───────────────────────────
