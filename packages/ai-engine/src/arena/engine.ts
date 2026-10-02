@@ -47,6 +47,13 @@ export interface RunArenaRoundParams {
   liveMark?: Record<string, number>
   /** 全域 custom prompt 覆寫（後台 arena.system_prompt），附加到每個 agent 決策 system prompt 末尾。 */
   customPrompt?: string | null
+  /**
+   * 進度回報（Issue #56：三連掛看門狗根因 = 無分段心跳＋逐 agent 串行 LLM，
+   * status 端點只能以 wall-clock 判 stale）。
+   * 每完成一段落／一位 agent 的 LLM 呼叫即觸發一次，上層用來刷新 tick job
+   * 的 updated_at 心跳（#39 runPipelineStage 模式）。純觀測，不影響對戰語意。
+   */
+  onProgress?: (stage: string) => void
 }
 
 export interface RunArenaRoundResult {
@@ -91,10 +98,19 @@ function entryText(e: ArenaLedgerEntry): string {
 }
 
 export async function runArenaRound(params: RunArenaRoundParams): Promise<RunArenaRoundResult> {
-  const { store, strategist, prices, history, universe, roundDate, agentIds, slippage, phase, slotIndex, liveMark, customPrompt } = params
+  const { store, strategist, prices, history, universe, roundDate, agentIds, slippage, phase, slotIndex, liveMark, customPrompt, onProgress } = params
   const errors: string[] = []
   let trades = 0
   let modelCalls = 0
+
+  // Issue #56：段級心跳（#39 模式）＋逐 call 耗時 log。
+  // 背景：slot/close 都是「逐 agent 串行 LLM」，單次 429 級聯可燒掉數分鐘；
+  // 過去整段零 log、零心跳，掛了只能看 wall-clock 猜。本函數只加觀測，不改語意。
+  const report = (stage: string) => {
+    try {
+      onProgress?.(stage)
+    } catch {}
+  }
 
   const slotTimes = arenaSlotTimes()
   const slotsOverride = params.intradaySlots ?? Number(process.env.ARENA_INTRADAY_SLOTS)
@@ -173,12 +189,15 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       const briefing = await buildMarketBriefing({ roundDate, universe, prices, history, days, maxTokens: 900 })
       modelCalls++
       briefingText = briefing.content
+      console.log(`[Arena][phase=premarket] briefing done (fallback=${briefing.fallbackUsed})`)
+      report('premarket:briefing')
       try {
         await store.saveMarketBriefing(roundDate, briefing.content, briefing.model ?? null, briefing.fallbackUsed)
       } catch (err) {
         errors.push(`saveMarketBriefing failed: ${(err as Error).message}`)
       }
       for (const agent of agents) {
+        const t0 = Date.now()
         const res = await buildPreMarketPlan({
           agentName: agent.name,
           roundDate,
@@ -191,6 +210,10 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
         })
         modelCalls++
         const content = res.content || fallbackPlan(agent.name)
+        console.log(
+          `[Arena][phase=premarket][agent#${agent.id}] plan done in ${((Date.now() - t0) / 1000).toFixed(1)}s (fallback=${res.fallbackUsed ?? false})`,
+        )
+        report(`premarket:agent:${agent.id}`)
         if (res.error) errors.push(`agent#${agent.id} premarket plan failed: ${res.error}`)
         try {
           await store.insertDecisionLog({
@@ -277,6 +300,7 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       let model: string | undefined
       let fallbackUsed = false
       let decisionError: string | undefined
+      const t0 = Date.now()
       try {
         const res = await strategist.decide(ctx)
         model = res.model
@@ -284,6 +308,10 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
         decisionError = res.error
         decision = res.decision
         modelCalls++
+        console.log(
+          `[Arena][phase=slot][slot=${slotIndex}][agent#${agent.id}] decide done in ${((Date.now() - t0) / 1000).toFixed(1)}s (model=${model ?? 'unknown'} fallback=${fallbackUsed})`,
+        )
+        report(`slot:${slotIndex}:agent:${agent.id}`)
       } catch (err) {
         errors.push(`agent#${agent.id} slot${slotIndex} decide failed: ${(err as Error).message}`)
         decision = { actions: [] }
@@ -459,6 +487,7 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       const st = states.get(agent.id)!
       const equity = computeArenaEquity(st.cash, st.holdings, closes)
       const returnPct = arenaReturnPct(equity, st.initialCapital)
+      const t0 = Date.now()
       const res = await buildPostCloseReflection({
         agentName: agent.name,
         roundDate,
@@ -481,6 +510,10 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       })
       modelCalls++
       const content = res.content || fallbackReflection(agent.name, roundDate)
+      console.log(
+        `[Arena][phase=close][agent#${agent.id}] reflection done in ${((Date.now() - t0) / 1000).toFixed(1)}s (fallback=${res.fallbackUsed ?? false})`,
+      )
+      report(`close:reflection:${agent.id}`)
       if (res.error) errors.push(`agent#${agent.id} reflection failed: ${res.error}`)
       try {
         await store.insertDecisionLog({
@@ -503,6 +536,8 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       participants: [...participants].sort((a, b) => b.returnPct - a.returnPct),
     })
     modelCalls++
+    console.log(`[Arena][phase=close] discussion done`)
+    report('close:discussion')
     const content = sum.content || fallbackDiscussion(roundDate, participants.length)
     if (sum.error) errors.push(`discussion failed: ${sum.error}`)
     try {

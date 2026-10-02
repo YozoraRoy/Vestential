@@ -31,6 +31,7 @@ import { tmpdir } from 'node:os'
 import {
   startArenaTickJob,
   arenaTickWatchdogMinutes,
+  arenaTickHeartbeatMs,
   ARENA_TICK_WATCHDOG_MIN,
   ARENA_TICK_ERRORS_MAX,
   ARENA_TICK_ERROR_ITEM_MAX_CHARS,
@@ -39,7 +40,7 @@ import {
   interpretArenaTickJobStatus,
   type ArenaTickStatusView,
 } from './arena'
-import { getArenaTickJobById, closeDb } from '@stock/database'
+import { getArenaTickJobById, closeDb, dbExecute } from '@stock/database'
 import type { ArenaTickJobRow } from '@stock/database'
 
 // ─── helpers ──────────────────────────────────────────────────────
@@ -319,7 +320,6 @@ describe('startArenaTickJob（背景跑完寫 DB）', () => {
     expect(after.jobId).not.toBe(first.jobId)
     expect(after.deduplicated).toBe(false)
   })
-
   it('去重：premarket/close（slot=NULL）也能攔到 running job（IS NULL 語意）', async () => {
     const uni = deferred<Array<{ symbol: string; name: string }>>()
     aiMocks.buildDefaultDailyUniverse.mockReturnValue(uni.promise)
@@ -352,4 +352,126 @@ describe('startArenaTickJob（背景跑完寫 DB）', () => {
       return j?.status !== 'running'
     })
   })
+
+// ─── Issue #56 心跳（段級 report＋interval 兜底 touch）─────────────
+describe('arenaTickHeartbeatMs（心跳間隔）', () => {
+  const prev = process.env.ARENA_TICK_HEARTBEAT_MS
+  afterAll(() => {
+    if (prev === undefined) delete process.env.ARENA_TICK_HEARTBEAT_MS
+    else process.env.ARENA_TICK_HEARTBEAT_MS = prev
+  })
+
+  it('預設 60s；env 可覆寫；低於 1000ms 鉗制回預設（防 DB 洗版）', () => {
+    delete process.env.ARENA_TICK_HEARTBEAT_MS
+    expect(arenaTickHeartbeatMs()).toBe(60_000)
+    expect(arenaTickHeartbeatMs({ ARENA_TICK_HEARTBEAT_MS: '5000' } as unknown as NodeJS.ProcessEnv)).toBe(5000)
+    expect(arenaTickHeartbeatMs({ ARENA_TICK_HEARTBEAT_MS: '50' } as unknown as NodeJS.ProcessEnv)).toBe(60_000)
+    expect(arenaTickHeartbeatMs({ ARENA_TICK_HEARTBEAT_MS: 'abc' } as unknown as NodeJS.ProcessEnv)).toBe(60_000)
+  })
+})
+
+describe('startArenaTickJob 心跳（Issue #56）', () => {
+  beforeEach(() => {
+    aiMocks.runArenaRound.mockReset()
+    aiMocks.buildDefaultDailyUniverse.mockReset()
+    aiMocks.fetchArenaMarket.mockReset()
+    aiMocks.fetchArenaLivePrices.mockReset()
+    aiMocks.fetchArenaLivePrices.mockResolvedValue({ bySymbol: {} })
+  })
+
+  it('engine onProgress 穿透 runArenaTick → touch updated_at（stale→非stale）', async () => {    const uni = deferred<Array<{ symbol: string; name: string }>>()
+    const round = deferred<unknown>()
+    aiMocks.buildDefaultDailyUniverse.mockReturnValue(uni.promise)
+    aiMocks.fetchArenaMarket.mockResolvedValue({ prices: [], history: [] })
+    let captured: ((stage: string) => void) | undefined
+    aiMocks.runArenaRound.mockImplementation(async (params: { onProgress?: (s: string) => void }) => {
+      captured = params.onProgress
+      return round.promise
+    })
+
+    const started = await startArenaTickJob('2026-09-17', { phase: 'slot', slot: 1 })
+    uni.resolve([{ symbol: '2330', name: '台積電' }])
+    await waitFor(() => aiMocks.runArenaRound.mock.calls.length > 0)
+    expect(typeof captured).toBe('function')
+
+    // 人為老化 updated_at → 先判 stale（slot watchdog 12min）
+    await dbExecute(`UPDATE arena_tick_jobs SET updated_at = '2020-01-01 00:00:00' WHERE id = @id`, {
+      id: started.jobId,
+    })
+    let job = await getArenaTickJobById(started.jobId)
+    expect(isArenaTickJobStale(job!, new Date())).toBe(true)
+
+    // 模擬 engine 段級 report → touch 更新 updated_at → 不再 stale
+    captured!('slot:1:agent:1')
+    await waitFor(async () => {
+      job = await getArenaTickJobById(started.jobId)
+      return !isArenaTickJobStale(job!, new Date())
+    })
+    expect(job?.status).toBe('running')
+
+      round.resolve({
+      processed: 1,
+      trades: 0,
+      errors: [],
+      modelCalls: 1,
+      roundDate: '2026-09-17',
+      slots: 1,
+      premarket: false,
+      discussion: false,
+      phase: 'slot',
+      executedSlot: 1,
+    })
+    await waitFor(async () => {
+      const j = await getArenaTickJobById(started.jobId)
+      return j?.status !== 'running'
+    })
+    expect((await getArenaTickJobById(started.jobId))?.status).toBe('done')
+  })
+
+  it('interval 兜底：無 report 時仍定期 touch（單次超長 LLM call 空窗）', async () => {
+    process.env.ARENA_TICK_HEARTBEAT_MS = '1000'
+    try {
+      const uni = deferred<Array<{ symbol: string; name: string }>>()
+      const round = deferred<unknown>()
+      aiMocks.buildDefaultDailyUniverse.mockReturnValue(uni.promise)
+      aiMocks.fetchArenaMarket.mockResolvedValue({ prices: [], history: [] })
+      aiMocks.runArenaRound.mockImplementation(() => round.promise)
+
+      const started = await startArenaTickJob('2026-09-18', { phase: 'close' })
+      uni.resolve([{ symbol: '2330', name: '台積電' }])
+      await waitFor(() => aiMocks.runArenaRound.mock.calls.length > 0)
+
+      await dbExecute(`UPDATE arena_tick_jobs SET updated_at = '2020-01-01 00:00:00' WHERE id = @id`, {
+        id: started.jobId,
+      })
+      // 不發任何 report，interval（1s）應自行 touch 回來
+      await waitFor(
+        async () => {
+          const j = await getArenaTickJobById(started.jobId)
+          return j != null && !isArenaTickJobStale(j, new Date())
+        },
+        8000,
+        100,
+      )
+
+      round.resolve({
+      processed: 1,
+      trades: 0,
+      errors: [],
+      modelCalls: 1,
+      roundDate: '2026-09-18',
+      slots: 0,
+      premarket: false,
+      discussion: true,
+      phase: 'close',
+    })
+      await waitFor(async () => {
+        const j = await getArenaTickJobById(started.jobId)
+        return j?.status !== 'running'
+      })
+    } finally {
+      delete process.env.ARENA_TICK_HEARTBEAT_MS
+    }
+  })
+}) // ── describe('startArenaTickJob 心跳（Issue #56）') end
 })

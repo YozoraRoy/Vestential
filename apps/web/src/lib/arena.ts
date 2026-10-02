@@ -234,7 +234,7 @@ const SLOT_MAP: Record<number, string> = { 0: 'slot0', 1: 'slot1', 2: 'slot2', 3
 /** 執行單日競技場 tick（支援分段 phase 與完整流程）。 */
 export async function runArenaTick(
   roundDate: string,
-  opts?: { phase?: 'premarket' | 'slot' | 'close'; slot?: number; force?: boolean },
+  opts?: { phase?: 'premarket' | 'slot' | 'close'; slot?: number; force?: boolean; onProgress?: (stage: string) => void },
 ): Promise<ArenaTickResult> {
   const phase = opts?.phase
   const slot = opts?.slot
@@ -302,6 +302,7 @@ export async function runArenaTick(
       slotIndex: slot,
       liveMark,
       customPrompt: ((await getAgentSetting('arena.system_prompt').catch(() => null)) ?? '') || null,
+      onProgress: opts?.onProgress,
     })
 
     // ── 標記進度（僅分段模式）──────────────────────────────────
@@ -330,12 +331,28 @@ export async function runArenaTick(
  * Watchdog 逾時（分鐘）依 phase 分設（QA 量測定案）：
  * premarket 含股票池建立＋逐檔決策、close 含多 slot 結算 → 20 min；
  * slot 單一時點決策較快 → 12 min；full（不分段）比照 premarket/close → 20 min。
+ *
+ * Issue #56 三連掛（slot 12min×2、close 20min×1）後決議：數值維持不動。
+ * 理由：無生產逐 call 耗時數據前放寬只是掩蓋慢死（slow-death）；本次改走
+ * 「數據化」路線——engine 段級心跳＋逐 call 耗時 log 先把數據補齊，
+ * 下次再掛就有 per-agent 耗時可判（OTPM 429 級聯 vs 單一慢 call vs 太緊）。
  */
 export const ARENA_TICK_WATCHDOG_MIN: Record<string, number> = {
   premarket: 20,
   slot: 12,
   close: 20,
   full: 20,
+}
+
+/**
+ * 心跳間隔（ms）：engine 段級 report 之外的兜底 touch，覆蓋「單次 LLM call
+ * 本身超長」（期間無 report 可發）的空窗。env ARENA_TICK_HEARTBEAT_MS 可覆寫，
+ * 下限 1000ms 防 DB 洗版；預設 60s。
+ */
+export function arenaTickHeartbeatMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.ARENA_TICK_HEARTBEAT_MS)
+  if (Number.isFinite(n) && n >= 1000) return Math.floor(n)
+  return 60_000
 }
 
 /** 依 phase 回傳 watchdog 分鐘數（未知名/undefined 一律 20）。 */
@@ -389,6 +406,11 @@ export function sanitizeArenaTickResult(result: ArenaTickResult): string {
 /**
  * staleness 判定：running 且 updated_at 超過該 phase watchdog → 視為逾時/實例回收。
  * 用於 status 端點（讓 workflow 快速失敗可重觸發）。
+ *
+ * Issue #56 補心跳後語意：updated_at = 最後進展時刻（engine 段級 report 或
+ * 60s 兜底 touch），故此處判的是「無進展超過 watchdog」，不再是 wall-clock。
+ * 進程內另有 setTimeout wall-clock 看門狗兜底慢死；實例回收時心跳停止，
+ * 此處仍能判出 stale。
  */
 function parseArenaTickTimestamp(value: string): Date {
   return new Date(value.replace(' ', 'T') + (value.length === 19 ? 'Z' : ''))
@@ -487,9 +509,11 @@ export async function startArenaTickJob(
   // 背景執行（fire-and-forget）：route 不等待 LLM，只回 jobId。
   void (async () => {
     let settled = false
+    let hb: ReturnType<typeof setInterval> | undefined
     const finish = async (patch: { status: 'done' | 'failed'; result?: string; error?: string }) => {
       if (settled) return
       settled = true
+      if (hb) clearInterval(hb)
       await updateArenaTickJob(jobId, patch)
     }
 
@@ -498,8 +522,28 @@ export async function startArenaTickJob(
     }, watchdogMs)
     timer.unref?.()
 
+    // Issue #56 心跳（#39 stage 心跳模式）：engine 每完成一段/agent 即 touch
+    // updated_at；另加 interval 兜底單次超長 LLM call 的空窗。touch 只在未
+    // settle 時發生（status:'running' 原地重寫，只刷新 updated_at），故
+    // settle／watchdog 觸發後心跳即停——stale 判定仍然有效（實例回收
+    // = 心跳停止 = 超過 watchdog 即判 stale）。
+    const touch = () => {
+      if (settled) return
+      void updateArenaTickJob(jobId, { status: 'running' }).catch(() => {})
+    }
+    hb = setInterval(touch, arenaTickHeartbeatMs())
+    hb.unref?.()
+
     try {
-      const result = await runArenaTick(roundDate, { phase, slot: slot ?? undefined, force: opts.force })
+      const result = await runArenaTick(roundDate, {
+        phase,
+        slot: slot ?? undefined,
+        force: opts.force,
+        onProgress: (stage) => {
+          console.log(`[Arena/Tick] job ${jobId} progress: ${stage}`)
+          touch()
+        },
+      })
       await finish({ status: 'done', result: sanitizeArenaTickResult(result) })
     } catch (e: any) {
       const msg = String(e?.message ?? e).slice(0, ARENA_TICK_ERROR_MAX_CHARS)
