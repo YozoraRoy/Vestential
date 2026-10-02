@@ -1,8 +1,16 @@
 import Link from 'next/link'
-import { Search, PieChart, Wallet, Activity, TrendingUp, Clock } from 'lucide-react'
+import { Search, PieChart, Wallet, Activity, TrendingUp, Clock, AtSign, Facebook, Instagram } from 'lucide-react'
 import { getDict, getLocale } from '@/i18n/server'
 import { localizePath } from '@/i18n/paths'
 import { buildAlternates } from '@/i18n/metadata'
+import { SITE_SOCIAL_LINKS, type SiteSocialKey } from '@/lib/site-social'
+
+// 與 footer 共用同一組 icon 映射（lucide 無 Threads 品牌 icon，用 AtSign）。
+const socialIcons: Record<SiteSocialKey, typeof AtSign> = {
+  threads: AtSign,
+  instagram: Instagram,
+  facebook: Facebook,
+}
 
 export async function generateMetadata() {
   const dict = await getDict()
@@ -99,6 +107,23 @@ export default async function AboutPage() {
             <a href="mailto:service@vestential.com" className="text-[var(--accent)] hover:underline">service@vestential.com</a>
             {d.contactSuffix}
           </p>
+          <div className="not-prose mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            {SITE_SOCIAL_LINKS.map((social) => {
+              const Icon = socialIcons[social.key]
+              return (
+                <a
+                  key={social.key}
+                  href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline"
+                >
+                  <Icon className="w-4 h-4" aria-hidden="true" />
+                  <span>{social.label}</span>
+                </a>
+              )
+            })}
+          </div>
         </section>
 
         <section>
