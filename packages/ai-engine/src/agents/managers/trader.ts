@@ -54,7 +54,105 @@ function formatPositionSizing(value: string | object | undefined): string | unde
   return lines.length > 0 ? lines.join(', ') : JSON.stringify(obj)
 }
 
-const TraderProposalSchema = z.object({
+/** Issue #53 續作：invalidation／tranches 接受 string｜(string｜object)[]。模型偶爾回傳
+ *  物件陣列（如 {trigger,sizePct}／{percentage,triggerPrice,description}），
+ *  以可讀字串拼接存（下游 traderProposal 維持字串）；其餘型別（number／boolean／null／
+ *  純 object 非陣列／含非字串非物件元素的陣列）照樣拒絕（拋錯＋partial），不做無條件 String() 兜底。 */
+function formatStringList(items: string[]): string | undefined {
+  const cleaned = items.map((s) => s.trim()).filter(Boolean)
+  if (cleaned.length === 0) return undefined
+  if (cleaned.length === 1) return cleaned[0]
+  return cleaned.map((s, i) => `${i + 1}. ${s}`).join('\n')
+}
+
+/** 物件元素轉可讀字串：優先取人類可讀欄位拼接，缺欄位時 JSON.stringify 兜底。 */
+function formatObjectItem(obj: Record<string, any>): string {
+  const textKeys = [
+    'description',
+    'trigger',
+    'reasoning',
+    'reason',
+    'text',
+    'content',
+    'condition',
+    'detail',
+    'label',
+    'title',
+    'name',
+  ]
+  const pctKeys = [
+    'sizePct',
+    'size_pct',
+    'percentage',
+    'percentage_of_total',
+    'percent',
+    'weight',
+    'size',
+    'allocation',
+    'allocation_pct',
+  ]
+  const priceKeys = ['triggerPrice', 'trigger_price', 'target_price', 'price', 'level', 'target']
+  const scalar = (v: unknown): string | undefined => {
+    if (v == null) return undefined
+    if (typeof v === 'string') {
+      const t = v.trim()
+      return t || undefined
+    }
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+    return undefined
+  }
+  const texts: string[] = []
+  for (const k of textKeys) {
+    const s = scalar(obj[k])
+    if (s != null && !texts.includes(s)) texts.push(s)
+  }
+  let pct: string | undefined
+  for (const k of pctKeys) {
+    const s = scalar(obj[k])
+    if (s != null) {
+      pct = typeof obj[k] === 'number' ? `${s}%` : s.includes('%') ? s : `${s}%`
+      break
+    }
+  }
+  // 數量欄位若本身就是可讀文字（如 "50% 現價進場"），scalar 已取到；pct 僅作前綴補強
+  let price: string | undefined
+  for (const k of priceKeys) {
+    const s = scalar(obj[k])
+    if (s != null && !texts.some((t) => t.includes(s))) {
+      price = s
+      break
+    }
+  }
+  const parts: string[] = []
+  if (pct != null && !texts.some((t) => t.includes(pct as string))) parts.push(pct)
+  parts.push(...texts)
+  if (price != null) parts.push(`@ ${price}`)
+  if (parts.length > 0) return parts.join(' ').trim()
+  try {
+    return JSON.stringify(obj)
+  } catch {
+    return String(obj)
+  }
+}
+
+const ListItemObject = z.object({}).passthrough()
+
+const StringOrStringArray = z
+  .union([z.string(), z.array(z.union([z.string(), ListItemObject]))])
+  .optional()
+  .transform((value): string | undefined => {
+    if (value == null) return undefined
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      return trimmed || undefined
+    }
+    const stringified = value.map((item) =>
+      typeof item === 'string' ? item : formatObjectItem(item as Record<string, any>),
+    )
+    return formatStringList(stringified)
+  })
+
+export const TraderProposalSchema = z.object({
   action: z.enum(['Buy', 'Hold', 'Sell']),
   reasoning: z.string(),
   entryPrice: z.number().optional(),
@@ -67,9 +165,9 @@ const TraderProposalSchema = z.object({
   stopLoss: z.number().optional(),
   stop_loss: z.number().optional(),
   /** 失效條件：哪些情況出現即代表本次交易假設被推翻、應出場或重新評估。 */
-  invalidation: z.string().optional(),
+  invalidation: StringOrStringArray,
   /** 分批進場計畫（文字描述，如「分兩批：首批 50% 現價，第二批 50% 回測支撐」）。 */
-  tranches: z.string().optional(),
+  tranches: StringOrStringArray,
   /** 單一標的部位上限（佔總資金 %，數字）。 */
   maxPositionPct: z.number().optional(),
   max_position_pct: z.number().optional(),
