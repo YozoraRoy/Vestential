@@ -48,6 +48,22 @@ if (-not $ready) { throw "dev server 未在 60 秒內 Ready" }
 - 再用 `Get-NetTCPConnection -LocalPort 3000` 確認只有 3000 在聽。
 - **不要同時起第二台**（port 3000 被佔時 Next 會自動改跑 3001，造成「卡住」錯覺）。
 
+### 3b. 備案：Start-Process 卡住時改用 WMI 完全 detach
+
+> 實測（2026-10-03）：`Start-Process -NoNewWindow` 起 server 會讓 bash tool call
+> hang 到 timeout、超時後連 server 一起殺掉（log 有 `Ready` 照死，npm error
+> 4294967295）。此時不要重試同一招，改用 WMI 起（非 tool shell 的子程序，
+> 不繼承 handle、不會被連坐）：
+
+```powershell
+Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = 'cmd /c "cd /d D:\PG\stock-platform && npm run dev > C:\Users\Roy\AppData\Local\Temp\opencode\devout.log 2>&1"'}
+```
+
+- 觸發條件：Start-Process 那行回了 pid 但 tool call 照樣超時，或 server 有 `Ready` 卻隨即被殺（port 空、node 剩孤兒）。
+- WMI 起的不是子程序，tool 立即返回；log 合併寫同一檔（無獨立 deverr.log），Ready 輪詢與 port 確認照 §3 原樣。
+- 停機一樣用 `Stop-Process -Id <listener pid> -Force`（已驗證有效）。
+- **本備案只修「起 server 的 detach」這一類卡死**；port 被佔、編譯錯誤、log 檔鎖照樣會卡，仍走 §1／§3 檢查，不保證永不卡。
+
 ### 4. 由 subagent（QA）起 server 時：必須用「完全 detach」方式
 
 > **與 §3 的分工**：§3 的「起 server＋等 Ready＋確認 port」是主 agent
@@ -114,4 +130,5 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 - node dev server 用完必須清乾淨。之前曾殘留兩台（3000/3001 各一），新起的 server 因 3000 被佔自動改跑 3001，讓測試誤以為「卡住」。
 - QA 驗證時給顯式短 timeout（`curl --max-time 10`、`-TimeoutSec 10～15`），`curl`/powershell 呼叫太容易卡住；無 timeout 參數的驗證步驟視為不合格。
 - subagent 起長駐程式必須 detach（見 §4）；起完立即回傳 pid，由 observer 負責 Ready／port／停機，分工才不會卡。
+- 主 agent 用 Start-Process 起 server 若 hang 到 tool timeout（回了 pid 也算）：不要重試，改走 §3b WMI 備案；重試同一招只會再殺掉一台剛起好的 server。
 - QA task 時間預算 25–30 分鐘，超時由主 agent 取消重派（重派前清殘留 server）；QA 超時／失聯改走降級驗收（typecheck＋lint＋diff 核對放行，runtime 標 UNVERIFIED），詳見 `dev-loop.md`「QA 派單 SOP」與「降級驗收」。
