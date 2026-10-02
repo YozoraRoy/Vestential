@@ -16,6 +16,7 @@ import {
   type FirstReplyQuestion,
 } from '@/lib/social-first-reply'
 import { sendMarketFocusAlert } from '@/lib/email'
+import { buildFirstReplyFailMessage, buildSocialPartialFailMessage } from '@/lib/social-alert'
 
 // ─── 社群發布協調層 ───────────────────────────────────────────────
 // 供 market-focus/refresh 尾端內嵌觸發，也可由 publish route 獨立呼叫。
@@ -236,10 +237,8 @@ export async function triggerSocialPublish(
 
   const failed = results.filter((r) => r.status === 'failed')
   if (failed.length > 0) {
-    await sendMarketFocusAlert(
-      '社群發布部分失敗',
-      `${failed.map((f) => `${f.platform}: ${f.error}`).join('\n')}\nedition: ${editionKey}`,
-    )
+    // Issue #57：告警內文改由 social-alert.ts 純函式組裝（含內容名／成功／失敗＋錯誤原文／重試／edition）。
+    await sendMarketFocusAlert('社群發布部分失敗', buildSocialPartialFailMessage(editionKey!, results))
   }
 
   return { triggered: true, editionKey, dryRun: false, results }
@@ -278,7 +277,8 @@ async function postFirstReplyBestEffort(
     const msg = (e?.message || String(e)).slice(0, 1000)
     console.error(`[Social/${platform}] 首回覆失敗（主文不受影響）:`, msg)
     await recordFirstReplyFailed(platform, editionKey, { error: msg, text: q.text, category: q.category })
-    await sendMarketFocusAlert('社群首回覆失敗', `${platform}: ${msg}\nedition: ${editionKey}`).catch(() => {})
+    // Issue #57：告警內文改由 social-alert.ts 純函式組裝（保留錯誤原文＋edition key，另含內容名／重試方式）。
+    await sendMarketFocusAlert('社群首回覆失敗', buildFirstReplyFailMessage(platform, msg, editionKey)).catch(() => {})
     return 'failed'
   }
 }

@@ -1,0 +1,29 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildFestivalPartialFailMessage（節慶） > 含節慶名＋日期、成功平台、失敗平台＋錯誤原文、重試方式、edition key 1`] = `
+"內容：中秋節賀文 2026-09-25
+成功：Threads、FB
+失敗：
+- IG: Application request limit reached (4)
+重試：至 admin 後台 /admin/social 按「強制重發選定平台」（POST /api/admin/social/publish，force:true）重發失敗平台
+edition: festival:mid-autumn:2026-09-25"
+`;
+
+exports[`buildFirstReplyFailMessage（首回覆失敗） > 含內容名、失敗平台＋錯誤原文、重試方式、edition key，主文不受影響備註 1`] = `
+"內容：今日市場焦點總覽 2026-10-02首回覆
+成功：無（全部失敗）
+失敗：
+- IG: IG_ACCESS_TOKEN 未設定
+重試：至 admin 後台 /admin/social 按「強制重發選定平台」（POST /api/admin/social/publish，force:true）重發失敗平台
+edition: 2026-10-02T17:16:00.000Z
+備註：首回覆為 best-effort，主文已發不受影響"
+`;
+
+exports[`buildSocialPartialFailMessage（日常） > 含內容名、成功平台、失敗平台＋錯誤原文、重試方式、edition key 1`] = `
+"內容：今日市場焦點總覽 2026-10-02
+成功：Threads、FB
+失敗：
+- IG: Application request limit reached (4)
+重試：至 admin 後台 /admin/social 按「強制重發選定平台」（POST /api/admin/social/publish，force:true）重發失敗平台
+edition: 2026-10-02T17:16:00.000Z"
+`;

@@ -1,5 +1,7 @@
 import { saveSocialCardImage, logMarketFocusEvent } from '@stock/database'
 import type { SocialPostPlatform } from '@stock/database'
+import { sendMarketFocusAlert } from '@/lib/email'
+import { buildFestivalPartialFailMessage } from '@/lib/social-alert'
 import { getTaiwanDateStr } from '@/lib/auth'
 import { getTodayFestival, type FestivalId } from '@/lib/festival-calendar'
 import { generateFestivalCaptions, type SocialCaptions } from '@/lib/social-festival'
@@ -110,13 +112,17 @@ export async function triggerFestivalPublish(
 
   const failed = results.filter((r) => r.status === 'failed')
   if (failed.length > 0) {
+    // Issue #57：節慶版告警內文同改（含節慶名＋日期／成功／失敗＋錯誤原文／重試／edition）。
+    // 事件紀錄沿用既有 logMarketFocusEvent；另經既有 sendMarketFocusAlert 信件管線通知（不新增渠道）。
+    const alertBody = buildFestivalPartialFailMessage(festival.id, todayStr, editionKey, results)
     await logMarketFocusEvent({
       source: 'festival',
       level: 'warn',
       code: 'FESTIVAL_PUBLISH_PARTIAL_FAIL',
       editionKey,
-      message: `節慶發布部分失敗：${failed.map((f) => `${f.platform}: ${f.error}`).join('；')}`,
+      message: alertBody,
     }).catch(() => null)
+    await sendMarketFocusAlert('節慶發布部分失敗', alertBody).catch(() => null)
   }
 
   return { triggered: true, festival: festival.id, editionKey, dryRun: false, results }
