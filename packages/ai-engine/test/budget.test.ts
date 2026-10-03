@@ -18,6 +18,7 @@ import {
   getMetaPaceMs,
   getMetaRetryBaseMs,
   isMetaRateLimit,
+  isMetaTransient,
   getMetaBackoffMs,
 } from '../src/llm/budget.js'
 
@@ -232,4 +233,40 @@ test('isMetaRateLimit - HTTP 429／Graph 限流碼／限流訊息才判 true', (
   assert.equal(isMetaRateLimit(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
   assert.equal(isMetaRateLimit(500, { error: { message: 'Internal error' } }), false)
   assert.equal(isMetaRateLimit(400, null), false)
+})
+
+// ─── Issue #59：isMetaTransient（暫態錯誤分類）────────────────────────
+
+test('isMetaTransient - HTTP 5xx 即判 true（不看 body）', () => {
+  assert.equal(isMetaTransient(500, { error: { message: 'Internal error' } }), true)
+  assert.equal(isMetaTransient(502), true)
+  assert.equal(isMetaTransient(503, null), true)
+  assert.equal(isMetaTransient(599), true)
+  assert.equal(isMetaTransient(400, null), false)
+  assert.equal(isMetaTransient(429), false)
+  assert.equal(isMetaTransient(200), false)
+})
+
+test('isMetaTransient - Graph code -1 即判 true', () => {
+  assert.equal(isMetaTransient(400, { error: { code: -1, message: 'Fatal' } }), true)
+  assert.equal(isMetaTransient(400, { error: { code: -1 } }), true)
+  assert.equal(isMetaTransient(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
+})
+
+test('isMetaTransient - message 含 Fatal（大小寫皆可）即判 true', () => {
+  assert.equal(isMetaTransient(400, { error: { code: 1, message: 'Fatal error occurred' } }), true)
+  assert.equal(isMetaTransient(400, { error: { message: 'FATAL' } }), true)
+  assert.equal(isMetaTransient(400, { error: { message: 'fatal' } }), true)
+  assert.equal(isMetaTransient(400, { error: { message: 'Internal error' } }), false)
+})
+
+test('isMetaTransient - is_transient=true 即判 true', () => {
+  assert.equal(isMetaTransient(400, { error: { code: 1, message: 'busy', is_transient: true } }), true)
+  assert.equal(isMetaTransient(400, { error: { code: 1, message: 'busy' } }), false)
+})
+
+test('isMetaTransient - 真 4xx（190／100／2207040）一律 false', () => {
+  assert.equal(isMetaTransient(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
+  assert.equal(isMetaTransient(400, { error: { code: 100, message: 'Invalid parameter' } }), false)
+  assert.equal(isMetaTransient(400, { error: { code: 2207040, message: 'Content violates policy' } }), false)
 })

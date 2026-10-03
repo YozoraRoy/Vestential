@@ -39,6 +39,7 @@ export {
   getMetaPaceMs,
   getMetaRetryBaseMs,
   isMetaRateLimit,
+  isMetaTransient,
   getMetaBackoffMs,
 } from './llm/budget.js'
 export type { MetaRateLimitBody } from './llm/budget.js'

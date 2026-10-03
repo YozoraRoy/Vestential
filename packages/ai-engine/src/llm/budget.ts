@@ -75,6 +75,8 @@ export interface MetaRateLimitBody {
     code?: number
     error_subcode?: number
     message?: string
+    /** Graph 暫態旗標（Issue #59：is_transient=true 即視為暫態）。 */
+    is_transient?: boolean
   }
 }
 
@@ -93,6 +95,24 @@ export function isMetaRateLimit(status: number, body?: MetaRateLimitBody | null)
   }
   const msg = body?.error?.message ?? ''
   return /request limit|rate limit|throttl|too many|temporarily blocked|error\s*4\b/i.test(msg)
+}
+
+/**
+ * 判定一次 Meta 回應是否為「暫態錯誤」（Issue #59）：
+ * - HTTP 5xx；或
+ * - Graph error code === -1；或
+ * - 錯誤訊息命中 /fatal/i；或
+ * - Graph error.is_transient === true。
+ * 命中者與限流共用同一退避序列重打；真 4xx（190／100／2207040 等）一律回 false。
+ * 純函數，方便單測斷言。
+ */
+export function isMetaTransient(status: number, body?: MetaRateLimitBody | null): boolean {
+  if (Number.isFinite(status) && status >= 500 && status <= 599) return true
+  const code = body?.error?.code
+  if (code === -1) return true
+  if (body?.error?.is_transient === true) return true
+  const msg = body?.error?.message ?? ''
+  return /fatal/i.test(msg)
 }
 
 /**

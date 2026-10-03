@@ -4,6 +4,7 @@ import {
   getMetaPaceMs,
   getMetaBackoffMs,
   isMetaRateLimit,
+  isMetaTransient,
   META_RETRY_MAX_ATTEMPTS,
 } from '@stock/ai-engine'
 import { IG_DRIVE_COMMENT } from '@/lib/social'
@@ -351,21 +352,23 @@ function parseRetryAfterMs(res: Response): number | null {
 
 /**
  * Meta Graph API 專用 fetch：30 秒超時（2026-09-26 job 卡 running 教訓：無超時的 Meta 呼叫會拖死整條 job）
- * ＋Issue #58 節流：
+ * ＋Issue #58 節流＋Issue #59 暫態退避：
  * - 錯峰：每次呼叫前 paceMetaCalls（預設間隔 5s，env META_PACE_MS 覆寫）；
- * - 退避：命中限流（HTTP 429／Graph code 4·17·32·613／限流訊息）時睡退避再打
+ * - 退避：命中限流（HTTP 429／Graph code 4·17·32·613／限流訊息）或暫態
+ *   （HTTP 5xx／Graph code -1／Fatal 訊息／is_transient=true）時睡退避再打
  *   （Retry-After 優先，否則 base×2^n 指數退避＋jitter），最多 META_RETRY_MAX_ATTEMPTS 次嘗試；
- *   用罄拋 MetaRateLimitError，非限流錯誤照舊直接回傳（呼叫端既有錯誤訊息不變）。
+ *   用罄拋 MetaRateLimitError（訊息保留原文 detail），真 4xx 照舊直接回傳（呼叫端既有錯誤訊息不變）。
  */
 async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
   let lastStatus = 0
+  let lastCode: number | null = null
   let lastDetail = ''
   for (let attempt = 1; attempt <= META_RETRY_MAX_ATTEMPTS; attempt++) {
     await paceMetaCalls()
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) })
     if (res.ok) return res
-    // 用 clone 偷看 body 判限流（原 res 留給呼叫端照舊讀 json 組錯誤訊息）。
-    type RateLimitPeek = { error?: { code?: number; message?: string } }
+    // 用 clone 偷看 body 判限流／暫態（原 res 留給呼叫端照舊讀 json 組錯誤訊息）。
+    type RateLimitPeek = { error?: { code?: number; message?: string; is_transient?: boolean } }
     let body: RateLimitPeek | null = null
     try {
       body = (await res.clone().json()) as RateLimitPeek
@@ -373,18 +376,22 @@ async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
       body = null
     }
     lastStatus = res.status
+    lastCode = typeof body?.error?.code === 'number' ? body.error.code : null
     lastDetail = body?.error?.message ?? ''
-    if (!isMetaRateLimit(res.status, body)) return res
+    const rateLimited = isMetaRateLimit(res.status, body)
+    const transient = !rateLimited && isMetaTransient(res.status, body)
+    if (!rateLimited && !transient) return res
     if (attempt >= META_RETRY_MAX_ATTEMPTS) break
     const delay = parseRetryAfterMs(res) ?? getMetaBackoffMs(attempt - 1)
+    const reason = rateLimited ? '限流' : '暫態'
     console.warn(
-      `[Social] Meta 限流（HTTP ${res.status}${body?.error?.code ? ` code=${body.error.code}` : ''}），` +
+      `[Social] Meta ${reason}（HTTP ${res.status}${body?.error?.code ? ` code=${body.error.code}` : ''}），` +
         `${Math.round(delay / 1000)}s 後退避重打（attempt ${attempt}/${META_RETRY_MAX_ATTEMPTS}）`,
     )
     await sleep(delay)
   }
   throw new MetaRateLimitError(
-    `Meta 限流重試用罄（HTTP ${lastStatus}${lastDetail ? `：${lastDetail}` : ''}，已退避重打 ${META_RETRY_MAX_ATTEMPTS - 1} 次）`,
+    `Meta 限流重試用罄（HTTP ${lastStatus}${lastCode != null ? ` code=${lastCode}` : ''}${lastDetail ? `：${lastDetail}` : ''}，已退避重打 ${META_RETRY_MAX_ATTEMPTS - 1} 次）`,
     META_RETRY_MAX_ATTEMPTS,
   )
 }
