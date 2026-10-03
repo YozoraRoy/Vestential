@@ -1,5 +1,11 @@
 import { hasSocialPosted, createSocialPost, updateSocialPost, deleteSocialPostByEdition } from '@stock/database'
 import type { SocialPostRow, SocialPostPlatform } from '@stock/database'
+import {
+  getMetaPaceMs,
+  getMetaBackoffMs,
+  isMetaRateLimit,
+  META_RETRY_MAX_ATTEMPTS,
+} from '@stock/ai-engine'
 import { IG_DRIVE_COMMENT } from '@/lib/social'
 
 // ─── IG / Threads / Facebook 發布層 ───────────────────────────────
@@ -304,9 +310,83 @@ async function resolveFbPageToken(systemUserToken: string, pageId: string): Prom
 
 // ─── 輔助 ─────────────────────────────────────────────────────────
 
-/** Meta Graph API 專用 fetch：30 秒超時（2026-09-26 job 卡 running 教訓：無超時的 Meta 呼叫會拖死整條 job） */
+// Issue #58：Meta 呼叫節流狀態（process 內單例）。
+// 所有打 Meta Graph API 的 HTTP 呼叫都經過 graphFetch，錯峰＋退避只收斂在
+// 這一個 choke point；發布語意／去重邏輯一律不動。
+let lastMetaCallAt = 0
+
+/** 單測重置錯峰狀態（避免跨 test 互相等待）。 */
+export function resetMetaCallPaceForTest(): void {
+  lastMetaCallAt = 0
+}
+
+/** 錯峰：與上一次 Meta 呼叫間隔不足 getMetaPaceMs 時先睡滿再打。 */
+async function paceMetaCalls(): Promise<void> {
+  const pace = getMetaPaceMs()
+  const wait = pace - (Date.now() - lastMetaCallAt)
+  if (wait > 0) await sleep(wait)
+  lastMetaCallAt = Date.now()
+}
+
+/** 限流即退避重打、用罄即拋出的錯誤（呼叫端照既有流程記 failed＋告警）。 */
+export class MetaRateLimitError extends Error {
+  readonly attempts: number
+  constructor(message: string, attempts: number) {
+    super(message)
+    this.name = 'MetaRateLimitError'
+    this.attempts = attempts
+  }
+}
+
+/** 從 Retry-After 回應標頭解析等待毫秒（秒數或 HTTP-date；非法回 null 走指數退避）。 */
+function parseRetryAfterMs(res: Response): number | null {
+  const raw = res.headers?.get?.('retry-after')
+  if (!raw) return null
+  const secs = Number(raw.trim())
+  if (Number.isFinite(secs) && secs >= 0) return Math.round(secs * 1000)
+  const when = Date.parse(raw)
+  if (Number.isFinite(when)) return Math.max(0, when - Date.now())
+  return null
+}
+
+/**
+ * Meta Graph API 專用 fetch：30 秒超時（2026-09-26 job 卡 running 教訓：無超時的 Meta 呼叫會拖死整條 job）
+ * ＋Issue #58 節流：
+ * - 錯峰：每次呼叫前 paceMetaCalls（預設間隔 5s，env META_PACE_MS 覆寫）；
+ * - 退避：命中限流（HTTP 429／Graph code 4·17·32·613／限流訊息）時睡退避再打
+ *   （Retry-After 優先，否則 base×2^n 指數退避＋jitter），最多 META_RETRY_MAX_ATTEMPTS 次嘗試；
+ *   用罄拋 MetaRateLimitError，非限流錯誤照舊直接回傳（呼叫端既有錯誤訊息不變）。
+ */
 async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) })
+  let lastStatus = 0
+  let lastDetail = ''
+  for (let attempt = 1; attempt <= META_RETRY_MAX_ATTEMPTS; attempt++) {
+    await paceMetaCalls()
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) })
+    if (res.ok) return res
+    // 用 clone 偷看 body 判限流（原 res 留給呼叫端照舊讀 json 組錯誤訊息）。
+    type RateLimitPeek = { error?: { code?: number; message?: string } }
+    let body: RateLimitPeek | null = null
+    try {
+      body = (await res.clone().json()) as RateLimitPeek
+    } catch {
+      body = null
+    }
+    lastStatus = res.status
+    lastDetail = body?.error?.message ?? ''
+    if (!isMetaRateLimit(res.status, body)) return res
+    if (attempt >= META_RETRY_MAX_ATTEMPTS) break
+    const delay = parseRetryAfterMs(res) ?? getMetaBackoffMs(attempt - 1)
+    console.warn(
+      `[Social] Meta 限流（HTTP ${res.status}${body?.error?.code ? ` code=${body.error.code}` : ''}），` +
+        `${Math.round(delay / 1000)}s 後退避重打（attempt ${attempt}/${META_RETRY_MAX_ATTEMPTS}）`,
+    )
+    await sleep(delay)
+  }
+  throw new MetaRateLimitError(
+    `Meta 限流重試用罄（HTTP ${lastStatus}${lastDetail ? `：${lastDetail}` : ''}，已退避重打 ${META_RETRY_MAX_ATTEMPTS - 1} 次）`,
+    META_RETRY_MAX_ATTEMPTS,
+  )
 }
 
 /** 解析 IG token 對應的 user id（/me），作為 user_id 未設定時的 fallback。 */

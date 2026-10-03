@@ -42,6 +42,74 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// ─── Issue #58：Meta Graph API 節流（錯峰＋429 退避）──────────────────
+// 與 Issue #32 LLM 鏈錯峰同模式：預設寫死在 code，僅能以 env 覆寫。
+// 呼叫端（apps/web social-publish.ts 的 graphFetch）是唯一的節流 choke point：
+// 所有打 Meta 的 HTTP 呼叫都經過它，發布語意／去重邏輯一律不動。
+
+/** Meta 連續兩次呼叫之間的最小間隔預設值（ms）。單次日常 edition 約
+ *  10 POST＋數次輪詢 GET，5s 間隔 ≈ 單 edition 多耗 60–90s，換取 App 層級
+ *  限流窗口不再被突發打爆。 */
+export const DEFAULT_META_PACE_MS = 5000
+/** 429 退避基底（ms）：第 n 次重試等待 base×2^n（封頂＋jitter，見 getMetaBackoffMs）。 */
+export const DEFAULT_META_RETRY_BASE_MS = 15_000
+/** 退避等待封頂（ms）：10 分鐘。 */
+export const META_RETRY_MAX_MS = 600_000
+/** 限流重試總嘗試次數（含首次）：首次＋退避重打×2；非限流錯誤一律不重試。 */
+export const META_RETRY_MAX_ATTEMPTS = 3
+/** 判定為 Meta 限流的 Graph error code（App／User／Page 層級＋通用 throttle 碼）。 */
+export const META_RATE_LIMIT_CODES = [4, 17, 32, 613] as const
+
+/** Meta 呼叫錯峰間隔（env META_PACE_MS 覆寫，預設 5000ms）。 */
+export function getMetaPaceMs(env: NodeJS.ProcessEnv = process.env): number {
+  return parsePaceMs(env.META_PACE_MS, DEFAULT_META_PACE_MS)
+}
+
+/** 429 退避基底（env META_RETRY_BASE_MS 覆寫，預設 15000ms；單測可調小加速）。 */
+export function getMetaRetryBaseMs(env: NodeJS.ProcessEnv = process.env): number {
+  return parsePaceMs(env.META_RETRY_BASE_MS, DEFAULT_META_RETRY_BASE_MS)
+}
+
+export interface MetaRateLimitBody {
+  error?: {
+    code?: number
+    error_subcode?: number
+    message?: string
+  }
+}
+
+/**
+ * 判定一次 Meta 回應是否為「限流」：
+ * - HTTP 429；或
+ * - Graph error code ∈ META_RATE_LIMIT_CODES；或
+ * - 錯誤訊息命中限流關鍵字（防 Meta 新增碼／訊息改寫）。
+ * 純函數，方便單測斷言。
+ */
+export function isMetaRateLimit(status: number, body?: MetaRateLimitBody | null): boolean {
+  if (status === 429) return true
+  const code = body?.error?.code
+  if (typeof code === 'number' && (META_RATE_LIMIT_CODES as readonly number[]).includes(code)) {
+    return true
+  }
+  const msg = body?.error?.message ?? ''
+  return /request limit|rate limit|throttl|too many|temporarily blocked|error\s*4\b/i.test(msg)
+}
+
+/**
+ * 第 attempt 次限流重試的等待時間（attempt 從 0 起算：首次重試等 base，
+ * 之後每次 ×2，封頂 META_RETRY_MAX_MS 再加 jitter 防對齊）。
+ * 純函數（random 可注入，方便單測斷言退避序列）。
+ */
+export function getMetaBackoffMs(
+  attempt: number,
+  env: NodeJS.ProcessEnv = process.env,
+  random: () => number = Math.random,
+): number {
+  const n = Number.isFinite(attempt) && attempt > 0 ? Math.floor(attempt) : 0
+  const capped = Math.min(META_RETRY_MAX_MS, getMetaRetryBaseMs(env) * 2 ** n)
+  return jitterDelay(capped, random)
+}
+
 /**
  * 對退避等待加 jitter（±25%），避免整鏈多個呼叫在同一分鐘窗邊界「對齊」重試、
  * 集體再打爆 OTPM。純函數（random 可注入，方便單測）。

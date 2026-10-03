@@ -11,6 +11,14 @@ import {
   getSummaryPaceMs,
   jitterDelay,
   shrinkBudgetForRetry,
+  DEFAULT_META_PACE_MS,
+  DEFAULT_META_RETRY_BASE_MS,
+  META_RETRY_MAX_MS,
+  META_RETRY_MAX_ATTEMPTS,
+  getMetaPaceMs,
+  getMetaRetryBaseMs,
+  isMetaRateLimit,
+  getMetaBackoffMs,
 } from '../src/llm/budget.js'
 
 // ─── FALLBACK_SAFE_MAX_TOKENS ────────────────────────────────────
@@ -180,4 +188,48 @@ test('getChainPaceMs/getSummaryPaceMs - env 覆寫與非法值回退', () => {
   assert.equal(getChainPaceMs({ LLM_CHAIN_PACE_MS: '-5' }), 8000)
   assert.equal(getSummaryPaceMs({ LLM_SUMMARY_PACE_MS: '60000' }), 60000)
   assert.equal(getSummaryPaceMs({ LLM_SUMMARY_PACE_MS: '' }), 20000)
+})
+
+// ─── Issue #58：Meta 節流（錯峰間隔＋退避序列＋限流判定）──────────────
+
+test('getMetaPaceMs/getMetaRetryBaseMs - 預設值與 env 覆寫', () => {
+  assert.equal(DEFAULT_META_PACE_MS, 5000)
+  assert.equal(DEFAULT_META_RETRY_BASE_MS, 15_000)
+  assert.equal(META_RETRY_MAX_ATTEMPTS, 3)
+  assert.equal(getMetaPaceMs({}), 5000)
+  assert.equal(getMetaRetryBaseMs({}), 15_000)
+  assert.equal(getMetaPaceMs({ META_PACE_MS: '1000' }), 1000)
+  assert.equal(getMetaPaceMs({ META_PACE_MS: 'abc' }), 5000)
+  assert.equal(getMetaRetryBaseMs({ META_RETRY_BASE_MS: '100' }), 100)
+  assert.equal(getMetaRetryBaseMs({ META_RETRY_BASE_MS: '' }), 15_000)
+})
+
+test('getMetaBackoffMs - 退避序列：base×2^n（random=0.5 時 jitter 係數為 1，無偏移）', () => {
+  const half = () => 0.5
+  const env = { META_RETRY_BASE_MS: '15000' }
+  assert.equal(getMetaBackoffMs(0, env, half), 15_000)
+  assert.equal(getMetaBackoffMs(1, env, half), 30_000)
+  assert.equal(getMetaBackoffMs(2, env, half), 60_000)
+  assert.equal(getMetaBackoffMs(3, env, half), 120_000)
+})
+
+test('getMetaBackoffMs - 封頂 META_RETRY_MAX_MS；非法 attempt 視為 0', () => {
+  const half = () => 0.5
+  assert.equal(META_RETRY_MAX_MS, 600_000)
+  assert.equal(getMetaBackoffMs(99, {}, half), 600_000)
+  assert.equal(getMetaBackoffMs(-1, { META_RETRY_BASE_MS: '1000' }, half), 1000)
+  assert.equal(getMetaBackoffMs(Number.NaN, { META_RETRY_BASE_MS: '1000' }, half), 1000)
+})
+
+test('isMetaRateLimit - HTTP 429／Graph 限流碼／限流訊息才判 true', () => {
+  assert.equal(isMetaRateLimit(429), true)
+  assert.equal(isMetaRateLimit(400, { error: { code: 4, message: 'Application request limit reached' } }), true)
+  assert.equal(isMetaRateLimit(400, { error: { code: 17, message: 'User request limit reached' } }), true)
+  assert.equal(isMetaRateLimit(400, { error: { code: 32 } }), true)
+  assert.equal(isMetaRateLimit(400, { error: { code: 613 } }), true)
+  assert.equal(isMetaRateLimit(500, { error: { message: 'Calls to this api have exceeded the rate limit.' } }), true)
+  assert.equal(isMetaRateLimit(200), false)
+  assert.equal(isMetaRateLimit(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
+  assert.equal(isMetaRateLimit(500, { error: { message: 'Internal error' } }), false)
+  assert.equal(isMetaRateLimit(400, null), false)
 })

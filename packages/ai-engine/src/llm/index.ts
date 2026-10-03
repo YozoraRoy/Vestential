@@ -16,4 +16,14 @@ export {
   sleep,
   jitterDelay,
   shrinkBudgetForRetry,
+  DEFAULT_META_PACE_MS,
+  DEFAULT_META_RETRY_BASE_MS,
+  META_RETRY_MAX_MS,
+  META_RETRY_MAX_ATTEMPTS,
+  META_RATE_LIMIT_CODES,
+  getMetaPaceMs,
+  getMetaRetryBaseMs,
+  isMetaRateLimit,
+  getMetaBackoffMs,
 } from './budget.js'
+export type { MetaRateLimitBody } from './budget.js'
