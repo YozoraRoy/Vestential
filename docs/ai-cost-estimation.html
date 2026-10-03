@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 工作流實際成本評估（Cost Estimation）— Vestential</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; color: #1e293b; background: #f8fafc; margin: 0; padding: 32px 16px; line-height: 1.75; }
+  main { max-width: 860px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 40px 44px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 2em 0 .6em; padding-bottom: .3em; border-bottom: 2px solid #268fe6; }
+  .meta { color: #64748b; font-size: .9rem; background: #f1f5f9; border-radius: 10px; padding: 12px 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: .92rem; }
+  th, td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f0f9ff; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ntd { color: #64748b; }
+  .hl { background: #fff7ed; font-weight: 700; }
+  .rec { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px 16px; }
+  code { background: #f1f5f9; padding: 1px 6px; border-radius: 6px; font-size: .88em; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; overflow-x: auto; font-size: .85rem; line-height: 1.6; }
+  ul { padding-left: 1.4em; }
+  li { margin: .3em 0; }
+  footer { margin-top: 2em; color: #94a3b8; font-size: .8rem; text-align: center; }
+  @media print { body { background: #fff; padding: 0; } main { border: none; box-shadow: none; max-width: 100%; } }
+  @media (max-width: 640px) { main { padding: 24px 18px; } table { font-size: .8rem; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>AI 工作流實際成本評估 <small style="font-size:.9rem;color:#64748b">Cost Estimation</small></h1>
+  <div class="meta">
+    價格基準日：2026-10-03（OpenCode Zen 公開價格表口徑）・幣別 USD／月，台幣以 <strong>1 USD ≈ NT$32</strong> 換算（2026-10-03 銀行即期中間價約 31.85，取整；僅供體感，實際以帳單匯率為準）<br>
+    token 數為「單次執行」。下次更新觸發：模型調價、Gemini 優惠到期（2026-12-31）、匯率大幅波動、用量級距變化、arena 校準完成。
+  </div>
+
+  <h2>1. 模型價格（opencode 優先）</h2>
+  <p>「opencode 優先」指走 <strong>OpenCode Zen 通路計價</strong>：零加價（at cost，只收刷卡手續費 4.4%＋$0.30／筆，$20 起充，餘額低於 $5 自動加值 $20，可設月上限）。</p>
+  <table>
+    <tr><th>模型</th><th>in／1M</th><th>out／1M</th><th>備註</th></tr>
+    <tr class="hl"><td>Big Pickle（Zen 免費）</td><td class="num">$0</td><td class="num">$0</td><td><strong>現況 primary，全站今天實際 $0</strong>；免費 tier 無 SLA，dev 見過 free-tier 403</td></tr>
+    <tr><td>Claude Sonnet 4.6</td><td class="num">$3</td><td class="num">$15</td><td>最貴，品質最高；Batch 半價（本評估未計，屬樂觀上限）</td></tr>
+    <tr><td>OpenAI GPT 6.1 Sol</td><td class="num">$2</td><td class="num">$10</td><td>≤272K tokens；超量 $4／$15</td></tr>
+    <tr><td>Gemini 3.8 Flash</td><td class="num">$1.50</td><td class="num">$7.50</td><td>標準價；<strong>優惠價 $0.75／$3.75 只到 2026-12-31，2027 翻倍</strong></td></tr>
+  </table>
+
+  <h2>2. 各工作流單次用量</h2>
+  <p>等級：<strong>實測</strong>（真機跑過）／<strong>預算</strong>（程式 maxTokens cap 推導）／<strong>粗估</strong>（待校準）。</p>
+  <table>
+    <tr><th>工作流</th><th>in</th><th>out</th><th>等級／來源</th><th>頻率</th></tr>
+    <tr><td><code>/analyze</code> 一輪（12 節點）</td><td class="num">~20k</td><td class="num">~10k</td><td>實測：#52 真機 2330（4 分析師 in 1656–1756、out 441–1440；其餘外推，±30%）</td><td>用戶觸發（quota：一般 1／天、管理員 3／天）</td></tr>
+    <tr><td>market-focus 一版</td><td class="num">~20k</td><td class="num">~6k</td><td>預算：filter＋摘要 ≤6 批×340＋總覽 550</td><td>cron 4 次／天，有新版閘門，日均約 2 版</td></tr>
+    <tr><td>arena 一日（平日）</td><td class="num">~70k</td><td class="num">~20k</td><td>粗估：6 slot＋close 圓桌；<strong>待 §5 校準</strong></td><td>週一至週五</td></tr>
+    <tr><td>社群日更＋電子報</td><td class="num">~6k</td><td class="num">~3k</td><td>預算；電子報重用總覽，LLM ≈ 0</td><td>每日</td></tr>
+    <tr><td>截圖辨識／review 類</td><td colspan="2" style="text-align:center">另計／零頭</td><td>vision 另計、量小</td><td>用戶觸發</td></tr>
+  </table>
+  <p>單次 <code>/analyze</code> 成本：Sonnet <strong>$0.21 <span class="ntd">(約 NT$7)</span></strong>／Sol $0.14 <span class="ntd">(約 NT$4)</span>／G38 $0.105 <span class="ntd">(約 NT$3，優惠 $0.053)</span>／Pickle $0。</p>
+
+  <h2>3. 月成本試算（三情境，30 天月，固定排程已攤入）</h2>
+  <table>
+    <tr><th>情境</th><th>Sonnet 4.6</th><th>GPT 6.1 Sol</th><th>Gemini 3.8（優惠價）</th><th>Big Pickle</th></tr>
+    <tr><td>輕（5 輪／天）</td><td class="num">~$55 <span class="ntd">(約 NT$1,760)</span></td><td class="num">~$36 <span class="ntd">(約 NT$1,150)</span></td><td class="num">~$27 <span class="ntd">(約 NT$860；優惠 ~$14／約 NT$450)</span></td><td class="num">$0</td></tr>
+    <tr><td>中（30 輪／天）</td><td class="num">~$212 <span class="ntd">(約 NT$6,800)</span></td><td class="num">~$141 <span class="ntd">(約 NT$4,500)</span></td><td class="num">~$106 <span class="ntd">(約 NT$3,400；優惠 ~$53／約 NT$1,700)</span></td><td class="num">$0</td></tr>
+    <tr><td>重（100 輪／天）</td><td class="num">~$653 <span class="ntd">(約 NT$20,900)</span></td><td class="num">~$435 <span class="ntd">(約 NT$13,900)</span></td><td class="num">~$326 <span class="ntd">(約 NT$10,400；優惠 ~$168／約 NT$5,400)</span></td><td class="num">$0</td></tr>
+  </table>
+
+  <h2>4. 建議：混合配置（重點）</h2>
+  <div class="rec">
+    全切 Sonnet 是最貴的答案。引擎 deep／quick 雙鏈已分開，換模型只是改 env：<strong>quick 10 節點用免費／便宜模型，deep 2 節點（Research／Portfolio Manager）用 Sonnet</strong>——輕量情境月成本 $55 → <strong>~$10（約 NT$320）</strong>，品質花在刀口上。
+  </div>
+
+  <h2>5. 隱藏成本與風險</h2>
+  <ul>
+    <li><strong>Fallback 爆發 ×2</strong>：429 潮時兩層都計費，月結可能比上表高一倍。</li>
+    <li><strong>重試與回填</strong>：退避重打、缺文回填零星增加，不列主表。</li>
+    <li><strong>Big Pickle 可用性</strong>：免費無 SLA；掛掉時備援鏈接手，屆時按備援模型計費。</li>
+    <li><strong>Gemini 時鐘風險</strong>：2027-01-01 起 $1.50／$7.50，年度預算用標準價。</li>
+    <li><strong>arena 粗估待校準</strong>：跑一次 §6 SQL 即轉實測。</li>
+  </ul>
+
+  <h2>6. 校準方法（附錄）</h2>
+  <pre>-- 各 agent 實測平均 token（校準 §2 用）
+SELECT agent, model, COUNT(*) AS n,
+  ROUND(AVG(promptTokens)) AS avg_in,
+  ROUND(AVG(completionTokens)) AS avg_out,
+  SUM(totalTokens) AS total
+FROM llm_usage_logs
+GROUP BY agent, model ORDER BY total DESC;
+
+-- 過去 30 天總 token（對月結帳單）
+SELECT SUM(promptTokens) AS in_30d, SUM(completionTokens) AS out_30d,
+  SUM(totalTokens) AS total_30d FROM llm_usage_logs
+WHERE created_at >= date('now', '-30 days');</pre>
+  <p>後台用量儀表板（Issue #45：日報表＋OTPM 視角）可交叉核對；OTPM 配額（Groq 1000）是<strong>速率</strong>上限不是費用上限，別跟本表搞混。</p>
+
+  <footer>Vestential ・ docs/ai-cost-estimation.md ・價格基準 2026-10-03・1 USD ≈ NT$32</footer>
+</main>
+</body>
+</html>
