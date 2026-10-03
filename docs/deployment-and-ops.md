@@ -49,6 +49,13 @@
 | `FB_ACCESS_TOKEN` | Facebook system user token（EAAL…，長期有效） | `FB_ACCESS_TOKEN` |
 | `FB_PAGE_ID` | 粉專 ID（發文時自動由 system user 換出 page token） | `FB_PAGE_ID` |
 
+> 註：以下為**選填 env（deploy.yml 未硬編，不設即用 code 預設）**，有 Meta 限流疑慮時才需到 Azure App Settings 加設：
+>
+> | Azure App Setting | 預設值 | 說明 |
+> | :--- | :--- | :--- |
+> | `META_PACE_MS` | `5000` | Meta Graph API 呼叫間錯峰毫秒數（`social-publish.ts` 的 `graphFetch`，`getMetaPaceMs` 讀取） |
+> | `META_RETRY_MAX_ATTEMPTS` | `3` | 暫態錯誤（5xx／Graph code -1／Fatal／`is_transient`）退避重試上限次數 |
+
 > 註：此外尚有幾個「硬編進 deploy.yml App Settings、不需當 GitHub Secret」的值：
 
 | Azure App Setting | 值說明 |
@@ -203,6 +210,7 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 - **QA 全 PASS 才能 merge 上線**：typecheck／lint／build 是靜態門檻，P2 的 ACCEPTANCE 逐項驗證才是實質門檻；任一 FAIL 就得回 P1，沒有例外。
 - **「待確認」擋路要停**：P0–P4 任一環節遇到規格模糊、ACCEPTANCE 無法達成、或 production 驗證無法進行，一律在 issue comment 標「待確認」並**停下來問使用者**，不擅自改範圍、不自行假設。
 - **QA 驗證的環境規則**：local smoke 需要 dev server 時依 AGENTS.md §4 用完全 detach 方式起（`Start-Process -RedirectStandardOutput/-RedirectStandardError -WindowStyle Hidden -PassThru`），Ready／port／停機由 observer（主 agent）負責；`curl`／PowerShell 呼叫一律短 timeout。
+- **Start-Process 起 server 卡住時**：改走 AGENTS.md §3b WMI 備案（`Invoke-CimMethod Win32_Process Create` 起 `npm run dev`，非 tool shell 子程序、不會被連坐殺掉），勿重試同一招。
 
 ---
 

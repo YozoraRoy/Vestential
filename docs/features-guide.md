@@ -130,12 +130,14 @@
   - **專屬頁 (`/market-focus`)**：擴充至 **10 則平衡報導**，全面涵蓋「半導體/AI 科技」、「傳產/金融/綠能」、「總體經濟與匯率利率」三大板塊。
 
 ### 4.3 每日 Email 總覽與異常告警
-- 排程完成後，系統自動透過 SMTP 寄發「今日市場焦點總覽」電子郵件給管理員。
-- 若爬蟲異常或 LLM 產生回退降級，自動發送告警信件，方便隨時掌握系統狀態。
+- 每日一封「今日市場焦點總覽」電子郵件直送**訂閱者**（`/market-focus#subscribe` 訂閱，一鍵退訂）為主，管理員同步收到同一份總覽。
+- 若爬蟲異常或 LLM 產生回退降級，自動發送告警信件給管理員，方便隨時掌握系統狀態。
 
 ### 4.4 新聞→市場影響結構化（交易策略閉環）
 - 遴選與摘要同一次 LLM 呼叫產出影響欄位（不新增 quota 消耗）：`impact_direction`（利多／利空／中性）、`scope`（影響族群）、`horizon`（短／中／長）、`action`／`affected_sectors`／`related_symbols`（可連回測標的），migration 021＋save/get 透傳。
 - 市場焦點卡與 `/analyze` News Analyst／Trader 共用同一份新聞物件。
+- **川普風向燈**：每日總覽附 `trump_wind`（多／空／中性／無，`lib/market-focus.ts` 與遴選摘要同一次 LLM 呼叫產出，不新增 quota；TTS／email／社群只讀 summary，不受影響）。
+- **TTS 語速可調**：總覽朗讀條（`MarketFocusTtsBar`）支援播放／暫停／重播＋語速調整（預設 1 倍速）與口音切換（自動／台灣／香港）。
 
 ---
 
@@ -166,8 +168,9 @@
   3. `close 15:30` discussion（互評）→ 裁決 → 更新排行與績效
 - **排程**：主要時鐘為 in-process 的 `arena-scheduler.ts`（`ARENA_CRON_ENABLED=true`），`arena-tick.yml` 為 GH 備援。
 - **股票池**：動態市值**前 200**（`fetchTopMarketCapUniverse` 預設 topN=200）＋ETF 池（`DEFAULT_ARENA_ETF_UNIVERSE` 約 67 檔，可用 `ARENA_ETF_UNIVERSE` env 代換）；失敗兜底 `DEFAULT_ARENA_UNIVERSE`。
-- **起始資金**：新 agent **NT$500,000**（`initial_capital` DEFAULT，migration 023；既有 agent 維持 20 萬不追溯）；文案三語同步。
+- **起始資金**：全體 agent 起始資金 **NT$500,000**（`initial_capital` DEFAULT，migration 023；#27 起既有已全數補足，不再有 20 萬舊制）；文案三語同步。
 - **參數覆寫**：後台 `/admin/arena` 可改 `arena.slippage`（預設 0.003）、`arena.system_prompt` 等，優先於程式預設值。
+- **資金與心跳揭露**：排行頁揭露每隻 agent 剩餘資金與股息入帳（`twse_dividends` 真源窗內配息自動入帳）；tick 狀態端點含心跳／staleness 判斷（running 但 `updated_at` 超過 watchdog 即視為 stale，由備援 tick 接手）。
 - **資料展示**：後台提供決策時間軸（briefing／discussion／各 agent 決策與理由），可審視每日完整過程。
 
 ---
@@ -186,6 +189,7 @@
 - **節慶小編**：獨立節慶日期表（`lib/festival-calendar.ts`，中秋 2024–2026 確定值、2027–2028 推估待確認；時區一律 Asia/Taipei）；節日當天 08:00（台北）由 `social-festival.yml`（每日 00:00 UTC）觸發全自動發賀圖＋貼文，去重 key `festival:{id}:{YYYY-MM-DD}`；站內全域頂部橫幅僅當天顯示、隔日自動恢復。
 - **首回覆問 Meta AI**：主文發出後 Threads 自回覆（`reply_to_id`）＋IG 第二則留言（第一則維持導流）自動發提問；問題由 LLM 依當期內容四類輪換（價值投資／新聞／風險／情緒）生成、固定題庫兜底；開關 `social.reply_tag_metaai` 三態（`on`＝@meta.ai 版／`editor`＝去 tag 小編提問／`off`＝不發）——台灣未開放 @meta.ai，**預設 `editor`**，待開放後乾跑驗證再切 `on`。
 - **FB 特殊流程**：system user token 不能直接貼文，系統先呼叫 `/me/accounts` 換出對應 `FB_PAGE_ID` 的 page token 再發布。
+- **Meta 呼叫保護**：所有 Meta Graph API 呼叫經 `graphFetch` 統一出口——呼叫間錯峰（`META_PACE_MS`，預設 5 秒）、暫態錯誤（HTTP 5xx／Graph code -1／Fatal 訊息／`is_transient`）退避重試（`Retry-After` 優先否則指數退避＋jitter，最多 `META_RETRY_MAX_ATTEMPTS`＝3 次）；耗盡後告警信載明 HTTP 狀態＋Graph code＋已重試次數。
 - **憑證健康**：`check-social-tokens.yml` 每日 03:30 檢查 `GET /api/social/token-health`，失效即告警；換發步驟見 `docs/deployment-and-ops.md` §5。
 
 ### 8.3 資料庫清理保護
@@ -193,7 +197,9 @@
 
 ---
 
-## 9. 🤖 AI 智能分析 (`/analyze`，僅支援台股)
+## 9. 🤖 AI 個股分析 (`/analyze`，僅支援台股)
+
+- **12 節點流程**：Market／Sentiment／News／Fundamentals 四分析師 → Bull／Bear 一輪辯論 → Research Manager 裁決 → Trader 結構化提案（schema 欄位多為選填，缺欄不擋主流程）→ 風險三方（Aggressive／Conservative／Neutral）各發言一次 → Portfolio Manager 定案；Bull／Bear／Trader／風險三方走 quickLLM，Research／Portfolio Manager 走 deepLLM（engine 實測）。
 
 - **範圍**：`/analyze` 僅接受台股代號（純數字 **4~6 碼**，可附 `.TW` / `.TWO`，大小寫皆可）；美股代號（如 AAPL / SPCX）、`2330.US`、含字母代號與 3 碼以下數字一律拒絕。`/portfolio` 仍維持台美雙市場，不受影響。
 - **雙層門禁（quota 扣除前）**：前台即時格式驗證（不發 API）＋後端 `/api/analyze` 格式驗證（回 400，不扣 `analysis_quota`、不建 `analysis_jobs`）；權證／牛熊證以後端 Yahoo `quoteType` 為準（僅 `EQUITY`／`ETF` 放行，其餘擋，不扣 quota、不建 job、不寫 `analysis_records`）。

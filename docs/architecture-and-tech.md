@@ -1,6 +1,6 @@
 # 系統架構與技術手冊
 
-本文件說明 Vestential 的 Monorepo 結構、8-Agent AI 協作引擎、雙層 LLM 備援與雙資料庫持久化機制。
+本文件說明 Vestential 的 Monorepo 結構、12-Agent AI 協作引擎、雙層 LLM 備援與雙資料庫持久化機制。
 
 ---
 
@@ -25,7 +25,7 @@ flowchart TB
     end
 
     subgraph CoreEngine["多代理人與模型層"]
-        AgentEngine["8-Agent AI 分析引擎<br/>(@stock/ai-engine)"]
+        AgentEngine["12-Agent AI 分析引擎<br/>(@stock/ai-engine)"]
         Guard["0.3 秒無效代號熔斷門禁"]
         LLM_Primary["Primary (Google Gemini)"]
         LLM_Fallback["Fallback tier1 (Groq 新 key)"]
@@ -35,7 +35,7 @@ flowchart TB
     subgraph DataLayer["資料與外部服務"]
         DB[("持久化資料庫<br/>Azure SQL Server / SQLite (NFS)")]
         TWSE["TWSE 官方 OpenAPI (TWT53U / t187ap41_L)"]
-        NewsSources["財經媒體池 (鉅亨 / 經濟日報 / Yahoo)"]
+        NewsSources["財經媒體池 (鉅亨 / 經濟日報 / Yahoo / Google News RSS)"]
         Mail["SMTP 郵件伺服器 (Gmail / 自訂信箱)"]
     end
 
@@ -64,7 +64,7 @@ flowchart TB
 | 套件 / 目錄 | 職責說明 |
 | :--- | :--- |
 | **`apps/web`** | Next.js 15 現代化 Web 前端，採用 App Router、Tailwind CSS 與 Server Actions。 |
-| **`packages/ai-engine`** | 8 個專業分析代理人、Prompt 模板、0.3 秒無效標的門禁機制與投資法則引擎。 |
+| **`packages/ai-engine`** | 12 個專業分析代理人、Prompt 模板、0.3 秒無效標的門禁機制與投資法則引擎。 |
 | **`packages/backtest`** | 60 日均線乖離率回測演算法、勝率計算與歷史回測資料快取。 |
 | **`packages/cycle-entry`** | 週期進場回測引擎（`rules.ts`／`runSignalBacktest`），供 `/cycle-entry` 與後台使用。 |
 | **`packages/database`** | 雙資料庫抽象層（SQLite / Azure SQL）、遷移指令碼與批次同步排程。 |
@@ -73,18 +73,24 @@ flowchart TB
 
 ---
 
-## 3. 8-Agent AI 協作引擎（`/analyze` 僅支援台股）
+## 3. 12-Agent AI 協作引擎（`/analyze` 僅支援台股）
 
-進入 `/analyze` 進行深度分析時，系統循序啟動 8 個分工代理人，各司其職：
+進入 `/analyze` 進行深度分析時，系統循序啟動 12 個分工代理人，各司其職：
 
 1. **Market Technical Analyst（技術面分析師）**：計算均線多空排列、KD/RSI 動能與關鍵支撐壓力。
 2. **Sentiment Analyst（市場情緒分析師）**：分析社群討論熱度與散戶恐慌/貪婪指標。
 3. **News & Macro Analyst（總經與新聞分析師）**：爬梳重大新聞要聞與央行貨幣政策影響。
 4. **Fundamentals Analyst（基本面分析師）**：檢視三大財務報表、毛利率、自由現金流與估值位階。
 5. **Bull Researcher（多方觀點辯論員）**：挖掘潛在利多題材與獲利爆發點。
-6. **Research Manager（研究主管）**：整合多空觀點，裁定最終評級（買進 / 續抱 / 賣出）。
-7. **Trader（交易員）**：制定具體的進場買點、分批加碼點與停損停利價格。
-8. **Portfolio Manager（投資組合經理）**：從整體資產配置與風險分散角度給予最終配置比例。
+6. **Bear Researcher（空方觀點辯論員）**：挖掘潛在利空風險與下行觸發點，與多方進行一輪辯論。
+7. **Research Manager（研究主管）**：整合多空觀點，裁定最終評級（買進 / 續抱 / 賣出）。
+8. **Trader（交易員）**：制定具體的進場買點、分批加碼點與停損停利價格（schema 欄位多為選填，缺欄不擋主流程）。
+9. **Aggressive Analyst（積極風險辯論員）**：風險三方之一，從高風險偏好角度挑戰交易提案。
+10. **Conservative Analyst（保守風險辯論員）**：風險三方之一，從低風險偏好角度挑戰交易提案。
+11. **Neutral Analyst（中立風險辯論員）**：風險三方之一，從中立角度綜合攻守再平衡。
+12. **Portfolio Manager（投資組合經理）**：從整體資產配置與風險分散角度給予最終配置比例。
+
+> **模型分組（engine 實測）**：Bull／Bear／Trader／風險三方（Aggressive／Conservative／Neutral）走 quickLLM；Research Manager／Portfolio Manager 走 deepLLM；其餘分析師（Market／Sentiment／News／Fundamentals）走 quickLLM。
 
 > **0.3 秒無效代號熔斷門禁 (Early-Exit Guard)**：
 > 在耗費 LLM 額度之前，系統先於記憶體高速驗證股票代號真實性。若輸入不存在代碼，立即在 0.3 秒內回傳錯誤並提示修正，避免浪費使用者的等待時間與每日配額。
@@ -143,7 +149,7 @@ flowchart TB
 - 4 隻固定角色 agent 每日依台灣時間五階段角逐票選：premarket 09:00（briefing）→ slot 0~3（09:35/10:35/11:35/13:05 決策）→ 15:30（discussion + 裁決 + 排行榜）。
 - 主要時鐘為 **in-process** 的 `apps/web/src/lib/arena-scheduler.ts`（`ARENA_CRON_ENABLED=true`），GH Actions `arena-tick.yml` 為備援。
 - 股票池：動態市值**前 200**＋ETF 池（`DEFAULT_ARENA_ETF_UNIVERSE`，`ARENA_ETF_UNIVERSE` 可代換）；失敗兜底 `DEFAULT_ARENA_UNIVERSE`。
-- 新 agent 起始資金 **NT$500,000**（既有不追溯）；後台可覆寫滑價等參數（預設 `0.003`）。
+- 新 agent 起始資金 **NT$500,000**（#27 起全體補足 50 萬，既有已追溯）；後台可覆寫滑價等參數（預設 `0.003`）。
 - 資料表：`arena_agents`、`arena_rounds`、`arena_agent_actions`、`arena_round_summaries`、`arena_intraday_prices`、`arena_decision_logs`、`arena_market_briefings`、`arena_discussions`。
 
 ### 7.2 社群小編（IG / Threads / FB）
