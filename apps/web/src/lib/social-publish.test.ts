@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   graphPost,
   MetaRateLimitError,
+  metaEndpointForLog,
   resetMetaCallPaceForTest,
 } from './social-publish'
 
@@ -231,5 +232,107 @@ describe('graphPost｜Issue #58 節流', () => {
       expect(String(err?.message)).toContain(c.detail)
       expect(fetchMock).toHaveBeenCalledTimes(3)
     }
+  })
+
+  // ─── Issue #61：保留首次 403 根因＋warn 加 endpoint/subcode ────────
+  describe('Issue #61｜首次根因保留＋warn 可觀測欄位', () => {
+    it('首次 403 code=4 → 末次 400 code=-1：用罄訊息同時含兩者＋已退避重打 2 次', async () => {
+      const firstBody = {
+        error: { code: 4, error_subcode: 100, message: 'Application request limit reached' },
+      }
+      const lastBody = { error: { code: -1, message: 'Fatal downstream error' } }
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(fakeRes(403, firstBody))
+        .mockResolvedValueOnce(fakeRes(400, lastBody))
+        .mockResolvedValueOnce(fakeRes(400, lastBody))
+      vi.stubGlobal('fetch', fetchMock)
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const err = await graphPost('https://graph.example/me', { access_token: 't' }).catch((e) => e)
+
+      expect(err).toBeInstanceOf(MetaRateLimitError)
+      const msg = String(err?.message)
+      // 首次根因在前、末次在後
+      expect(msg).toContain('首次 HTTP 403 code=4')
+      expect(msg).toContain('Application request limit reached')
+      expect(msg).toContain('subcode=100')
+      expect(msg).toContain('末次 HTTP 400 code=-1')
+      expect(msg).toContain('Fatal downstream error')
+      expect(msg.indexOf('首次')).toBeLessThan(msg.indexOf('末次'))
+      expect(msg).toContain('已退避重打 2 次')
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      // 各次 warn 均可區分 attempt（2 次 warn：attempt 1/3、2/3）
+      const warns = warnSpy.mock.calls.map((c) => String(c[0]))
+      expect(warns).toHaveLength(2)
+      expect(warns[0]).toContain('attempt 1/3')
+      expect(warns[1]).toContain('attempt 2/3')
+      warnSpy.mockRestore()
+    })
+
+    it('warn 含 endpoint（僅 origin＋pathname）／status／code／subcode，不含 access_token 明文', async () => {
+      const url = 'https://graph.instagram.com/v21.0/12345/media?access_token=SECRET_TOKEN&fields=id'
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          fakeRes(403, { error: { code: 4, error_subcode: 200, message: 'Application request limit reached' } }),
+        )
+        .mockResolvedValueOnce(fakeRes(200, { id: 'ok' }))
+      vi.stubGlobal('fetch', fetchMock)
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const out = await graphPost(url, { access_token: 't' })
+
+      expect(out).toEqual({ id: 'ok' })
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const warn = String(warnSpy.mock.calls[0]?.[0])
+      expect(warn).toContain('endpoint=https://graph.instagram.com/v21.0/12345/media')
+      expect(warn).toContain('HTTP 403')
+      expect(warn).toContain('code=4')
+      expect(warn).toContain('subcode=200')
+      expect(warn).toContain('限流')
+      expect(warn).toContain('attempt 1/3')
+      expect(warn).not.toContain('SECRET_TOKEN')
+      expect(warn).not.toContain('access_token')
+      warnSpy.mockRestore()
+    })
+
+    it('metaEndpointForLog 只留 origin＋pathname（去 query／錨點，access_token 絕不進 log）', () => {
+      expect(metaEndpointForLog('https://graph.facebook.com/v21.0/me/accounts?access_token=SECRET')).toBe(
+        'https://graph.facebook.com/v21.0/me/accounts',
+      )
+      expect(metaEndpointForLog('https://graph.threads.net/v1.0/123/threads_publish?foo=1#frag')).toBe(
+        'https://graph.threads.net/v1.0/123/threads_publish',
+      )
+      // 非 URL 字串不斷言報錯、照樣去 query
+      expect(metaEndpointForLog('not-a-url?access_token=x')).toBe('not-a-url')
+    })
+
+    it('無 subcode／非 JSON body 時省略不報錯（warn 照樣退避、用罄訊息無 subcode 段）', async () => {
+      const badJson = {
+        ok: false,
+        status: 500,
+        headers: { get: () => null },
+        json: async () => ({ id: 'unrelated' }),
+        clone: () => ({
+          json: async () => {
+            throw new Error('not json')
+          },
+        }),
+      }
+      const fetchMock = vi.fn().mockResolvedValue(badJson)
+      vi.stubGlobal('fetch', fetchMock)
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const err = await graphPost('https://graph.example/me', { access_token: 't' }).catch((e) => e)
+
+      expect(err).toBeInstanceOf(MetaRateLimitError)
+      expect(String(err?.message)).toContain('HTTP 500')
+      expect(String(err?.message)).not.toContain('subcode=')
+      expect(String(err?.message)).toContain('已退避重打 2 次')
+      expect(warnSpy).toHaveBeenCalledTimes(2)
+      expect(String(warnSpy.mock.calls[0]?.[0])).not.toContain('subcode=')
+      warnSpy.mockRestore()
+    })
   })
 })

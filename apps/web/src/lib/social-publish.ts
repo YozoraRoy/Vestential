@@ -329,6 +329,31 @@ async function paceMetaCalls(): Promise<void> {
   lastMetaCallAt = Date.now()
 }
 
+/** 脫敏後的 endpoint（Issue #61）：只留 origin＋pathname，不記 query／body，access_token 絕不進 log。 */
+export function metaEndpointForLog(url: string): string {
+  try {
+    const u = new URL(url)
+    return `${u.origin}${u.pathname}`
+  } catch {
+    return url.split('?')[0]?.split('#')[0] ?? url
+  }
+}
+
+/** 單次 Meta 失敗摘要（status＋code＋subcode＋detail 片段），供 warn／用罄訊息共用。 */
+function formatMetaErrorPiece(
+  status: number,
+  code: number | null,
+  subcode: number | null,
+  detail: string,
+): string {
+  return (
+    `HTTP ${status}` +
+    (code != null ? ` code=${code}` : '') +
+    (subcode != null ? ` subcode=${subcode}` : '') +
+    (detail ? `：${detail}` : '')
+  )
+}
+
 /** 限流即退避重打、用罄即拋出的錯誤（呼叫端照既有流程記 failed＋告警）。 */
 export class MetaRateLimitError extends Error {
   readonly attempts: number
@@ -357,41 +382,64 @@ function parseRetryAfterMs(res: Response): number | null {
  * - 退避：命中限流（HTTP 429／Graph code 4·17·32·613／限流訊息）或暫態
  *   （HTTP 5xx／Graph code -1／Fatal 訊息／is_transient=true）時睡退避再打
  *   （Retry-After 優先，否則 base×2^n 指數退避＋jitter），最多 META_RETRY_MAX_ATTEMPTS 次嘗試；
- *   用罄拋 MetaRateLimitError（訊息保留原文 detail），真 4xx 照舊直接回傳（呼叫端既有錯誤訊息不變）。
+ *   用罄拋 MetaRateLimitError（Issue #61：訊息同時保留首次根因與末次錯誤，首次在前），真 4xx 照舊直接回傳（呼叫端既有錯誤訊息不變）。
  */
 async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
+  let firstStatus = 0
+  let firstCode: number | null = null
+  let firstSubcode: number | null = null
+  let firstDetail = ''
   let lastStatus = 0
   let lastCode: number | null = null
+  let lastSubcode: number | null = null
   let lastDetail = ''
   for (let attempt = 1; attempt <= META_RETRY_MAX_ATTEMPTS; attempt++) {
     await paceMetaCalls()
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) })
     if (res.ok) return res
     // 用 clone 偷看 body 判限流／暫態（原 res 留給呼叫端照舊讀 json 組錯誤訊息）。
-    type RateLimitPeek = { error?: { code?: number; message?: string; is_transient?: boolean } }
+    type RateLimitPeek = {
+      error?: { code?: number; error_subcode?: number; message?: string; is_transient?: boolean }
+    }
     let body: RateLimitPeek | null = null
     try {
       body = (await res.clone().json()) as RateLimitPeek
     } catch {
       body = null
     }
+    const code = typeof body?.error?.code === 'number' ? body.error.code : null
+    const subcode = typeof body?.error?.error_subcode === 'number' ? body.error.error_subcode : null
+    const detail = body?.error?.message ?? ''
+    if (attempt === 1) {
+      firstStatus = res.status
+      firstCode = code
+      firstSubcode = subcode
+      firstDetail = detail
+    }
     lastStatus = res.status
-    lastCode = typeof body?.error?.code === 'number' ? body.error.code : null
-    lastDetail = body?.error?.message ?? ''
+    lastCode = code
+    lastSubcode = subcode
+    lastDetail = detail
     const rateLimited = isMetaRateLimit(res.status, body)
     const transient = !rateLimited && isMetaTransient(res.status, body)
     if (!rateLimited && !transient) return res
     if (attempt >= META_RETRY_MAX_ATTEMPTS) break
     const delay = parseRetryAfterMs(res) ?? getMetaBackoffMs(attempt - 1)
     const reason = rateLimited ? '限流' : '暫態'
+    const endpoint = metaEndpointForLog(url)
     console.warn(
-      `[Social] Meta ${reason}（HTTP ${res.status}${body?.error?.code ? ` code=${body.error.code}` : ''}），` +
+      `[Social] Meta ${reason} endpoint=${endpoint}（HTTP ${res.status}${code != null ? ` code=${code}` : ''}${subcode != null ? ` subcode=${subcode}` : ''}），` +
         `${Math.round(delay / 1000)}s 後退避重打（attempt ${attempt}/${META_RETRY_MAX_ATTEMPTS}）`,
     )
     await sleep(delay)
   }
+  // Issue #61：用罄訊息同時保留首次根因與末次錯誤（首次在前，1000 字截斷保留側）；
+  // 首末一致時沿用舊單段格式，避免無意義重複。
+  const firstPiece = formatMetaErrorPiece(firstStatus, firstCode, firstSubcode, firstDetail)
+  const lastPiece = formatMetaErrorPiece(lastStatus, lastCode, lastSubcode, lastDetail)
+  const range = firstPiece === lastPiece ? lastPiece : `首次 ${firstPiece}；末次 ${lastPiece}`
   throw new MetaRateLimitError(
-    `Meta 限流重試用罄（HTTP ${lastStatus}${lastCode != null ? ` code=${lastCode}` : ''}${lastDetail ? `：${lastDetail}` : ''}，已退避重打 ${META_RETRY_MAX_ATTEMPTS - 1} 次）`,
+    `Meta 限流重試用罄（${range}，已退避重打 ${META_RETRY_MAX_ATTEMPTS - 1} 次）`,
     META_RETRY_MAX_ATTEMPTS,
   )
 }

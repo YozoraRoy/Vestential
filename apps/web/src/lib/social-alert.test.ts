@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   SOCIAL_ALERT_LINE_MAX_CHARS,
+  SOCIAL_ALERT_MAX_ERROR_CHARS,
   SOCIAL_ALERT_RETRY_HINT,
   buildFestivalPartialFailMessage,
   buildFirstReplyFailMessage,
   buildSocialPartialFailMessage,
   succeededPlatforms,
+  truncateAlertError,
   truncateAlertText,
 } from './social-alert'
 
@@ -88,5 +90,19 @@ describe('LINE 截斷規則', () => {
     const out = truncateAlertText(`${'🎃'.repeat(100)}${'x'.repeat(6000)}`, 100)
     expect(Array.from(out).length).toBeLessThanOrEqual(100)
     expect(out).toContain('訊息過長已截斷')
+  })
+
+  it('Issue #61：首次 403 根因在前，經 1000 字截斷仍可辨識', () => {
+    const combined =
+      `Meta 限流重試用罄（首次 HTTP 403 code=4 subcode=100：Application request limit reached；` +
+      `末次 HTTP 400 code=-1：Fatal downstream error，已退避重打 2 次）${'x'.repeat(2000)}`
+    const truncated = truncateAlertError(combined)
+    expect(Array.from(truncated).length).toBeLessThanOrEqual(SOCIAL_ALERT_MAX_ERROR_CHARS + 20)
+    expect(truncated).toContain('首次 HTTP 403 code=4')
+    // 告警內文透傳同樣保留根因於截斷保留側
+    const out = buildSocialPartialFailMessage('2026-10-02T17:16:00.000Z', [
+      { platform: 'instagram', status: 'failed', error: combined },
+    ])
+    expect(out).toContain('首次 HTTP 403 code=4')
   })
 })
