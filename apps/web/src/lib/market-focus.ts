@@ -264,6 +264,18 @@ export async function fetchMultiSourceCandidates(): Promise<NewsCandidate[]> {
 // ─── 全文抓取(robots 檢查 + cheerio 抽正文) ─────────────────────
 const robotsCache = new Map<string, { rules: string[]; fetchedAt: number }>()
 
+/** Issue #63 觀測用：取 URL 的 hostname，解析失敗時回傳原文（不拋錯）。 */
+function hostnameOf(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname
+  } catch {
+    return rawUrl
+  }
+}
+
+/** Issue #63：job.error 500 字截斷內保留 pendingDomains（前 N 個＋pending 總數）。 */
+const CRAWL_PENDING_DOMAINS_SHOWN = 8
+
 function parseRobotsTxt(text: string): string[] {
   const disallows: string[] = []
   let agent = ''
@@ -297,14 +309,30 @@ async function isAllowedByRobots(target: string): Promise<boolean> {
   let rules: string[]
   if (cached && now - cached.fetchedAt < 10 * 60 * 1000) {
     rules = cached.rules
+    // Issue #63 觀測：robots 快取命中也記一筆耗時基線（只記錄，不影響判定）。
+    console.log(`[MarketFocus][crawl] domain=${url.hostname} robots=cached robotsMs=0`)
   } else {
+    const robotsStart = Date.now()
     try {
       const res = await fetch(url.origin + '/robots.txt', {
         headers: { 'user-agent': USER_AGENT },
         signal: AbortSignal.timeout(5000),
       })
-      rules = res.ok ? parseRobotsTxt(await res.text()) : []
+      const robotsFetchMs = Date.now() - robotsStart
+      // Issue #63 觀測：res.text() 僅包計時記錄，不加 Abort／timeout 中斷原流程。
+      let bodyText = ''
+      let robotsTextMs = 0
+      if (res.ok) {
+        const textStart = Date.now()
+        bodyText = await res.text()
+        robotsTextMs = Date.now() - textStart
+      }
+      console.log(
+        `[MarketFocus][crawl] domain=${url.hostname} robots=fetch robotsFetchMs=${robotsFetchMs} robotsTextMs=${robotsTextMs} status=${res.status}`,
+      )
+      rules = res.ok ? parseRobotsTxt(bodyText) : []
     } catch {
+      console.log(`[MarketFocus][crawl] domain=${url.hostname} robots=error robotsMs=${Date.now() - robotsStart}`)
       rules = []
     }
     robotsCache.set(url.origin, { rules, fetchedAt: now })
@@ -347,23 +375,45 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
   throw lastErr instanceof Error ? lastErr : new Error('article fetch failed')
 }
 
-/** 抓取文章全文並解析原始來源 URL;失敗或 robots 拒絕時各自回傳 null。 */
+/** 抓取文章全文並解析原始來源 URL;失敗或 robots 拒絕時各自回傳 null。
+ *  Issue #63 觀測：逐篇記錄 domain＋各階段耗時（fetch / res.text / robots / parse）
+ *  建立 domain 耗時基線；所有計時僅 Date.now＋console.log，不中斷原流程。 */
 export async function fetchArticleContent(url: string): Promise<{ content: string | null; sourceUrl: string | null }> {
+  const domain = hostnameOf(url)
+  const totalStart = Date.now()
   try {
+    const fetchStart = Date.now()
     const res = await fetchWithRetry(url, {
       headers: { 'user-agent': USER_AGENT },
       redirect: 'follow',
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) return { content: null, sourceUrl: url }
+    const fetchMs = Date.now() - fetchStart
+    if (!res.ok) {
+      console.log(
+        `[MarketFocus][crawl] domain=${domain} status=${res.status} fetchMs=${fetchMs} totalMs=${Date.now() - totalStart} url=${url}`,
+      )
+      return { content: null, sourceUrl: url }
+    }
     const finalUrl = res.url || url
     // 立即 buffer body，避免 Node.js undici 在 redirect 追蹤時消費 body stream
     // 導致後續 res.text() 拋出 "Body has already been read"
+    // Issue #63 觀測：res.text() 僅包計時記錄，不加 Abort／timeout／throw／early-return 中斷讀取。
+    const textStart = Date.now()
     const html = await res.text()
-    if (!(await isAllowedByRobots(finalUrl))) {
+    const textMs = Date.now() - textStart
+    console.log(`[MarketFocus][crawl] domain=${domain} phase=text textMs=${textMs} fetchMs=${fetchMs} url=${url}`)
+    const robotsStart = Date.now()
+    const allowed = await isAllowedByRobots(finalUrl)
+    const robotsMs = Date.now() - robotsStart
+    if (!allowed) {
+      console.log(
+        `[MarketFocus][crawl] domain=${domain} robots=disallow fetchMs=${fetchMs} textMs=${textMs} robotsMs=${robotsMs} totalMs=${Date.now() - totalStart} url=${finalUrl}`,
+      )
       console.log(`[MarketFocus] robots.txt disallows crawling: ${finalUrl}`)
       return { content: null, sourceUrl: finalUrl }
     }
+    const parseStart = Date.now()
     const $ = load(html)
     $('script, style, noscript, nav, footer, aside, form, iframe, svg, .ad, .ads, .advert, [class*="ad-"], [class*="advertisement"], [id*="ad-"]').remove()
 
@@ -382,9 +432,19 @@ export async function fetchArticleContent(url: string): Promise<{ content: strin
     if (text.length < 200) text = extractLongestParagraph($)
 
     const clean = text.replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_CONTENT_CHARS)
+    const parseMs = Date.now() - parseStart
+    const totalMs = Date.now() - totalStart
+    console.log(
+      `[MarketFocus][crawl] domain=${domain} fetchMs=${fetchMs} textMs=${textMs} robotsMs=${robotsMs} parseMs=${parseMs} totalMs=${totalMs} url=${url}`,
+    )
     return { content: clean || null, sourceUrl: finalUrl }
   } catch (e) {
-    console.error('[MarketFocus] article fetch failed after retries:', url, e)
+    console.error(
+      `[MarketFocus][crawl] domain=${domain} failed totalMs=${Date.now() - totalStart} url=${url}`,
+      '[MarketFocus] article fetch failed after retries:',
+      url,
+      e,
+    )
     // 保留原始新聞網址,讓清單仍能呈現有效直連連結,而不是存入 NULL
     return { content: null, sourceUrl: url }
   }
@@ -1080,11 +1140,32 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
 
   // Issue #39 爬文段：上限 180s。單篇 10s timeout×2 次重試＋robots 5s，
   // 12 篇並行最壞 ~60s；任一篇 hanging 都在此段上限內失敗並指出段名。
-  const crawled = await runPipelineStage(
-    'crawl',
-    () => Promise.allSettled(items.map((it) => fetchArticleContent(it.url))),
-    { onStage },
+  // Issue #63 觀測：追蹤超時當下未 settle 的 URL（pending），快照 domain＋已耗時；
+  // 超時錯誤訊息僅「附加」pending 資訊，不覆蓋原 stage＋timeout 資訊；並行度／上限不變。
+  const crawlStartedAt = Date.now()
+  const crawlSettled = new Array<boolean>(items.length).fill(false)
+  const crawlTracked = items.map((it, i) =>
+    fetchArticleContent(it.url).finally(() => {
+      crawlSettled[i] = true
+    }),
   )
+  let crawled: PromiseSettledResult<{ content: string | null; sourceUrl: string | null }>[]
+  try {
+    crawled = await runPipelineStage('crawl', () => Promise.allSettled(crawlTracked), { onStage })
+  } catch (e) {
+    if (e instanceof MarketFocusStageTimeoutError && e.stage === 'crawl') {
+      const elapsedSec = ((Date.now() - crawlStartedAt) / 1000).toFixed(1)
+      const pendingUrls = items.filter((_, i) => !crawlSettled[i]).map((it) => it.url)
+      const pendingHosts = [...new Set(pendingUrls.map((u) => hostnameOf(u)))]
+      const shownHosts = pendingHosts.slice(0, CRAWL_PENDING_DOMAINS_SHOWN)
+      // console 保留完整清單（供 Azure log 定罪）；error 訊息帶截斷版（保前 N 個＋pending 總數，供 job.error 500 字內）。
+      console.error(
+        `[MarketFocus][stage=crawl] timeout after ${elapsedSec}s pending=${pendingUrls.length} pendingDomains=[${pendingHosts.join(', ')}] pendingUrls=[${pendingUrls.join(', ')}]`,
+      )
+      e.message += ` pending=${pendingUrls.length} pendingDomains=[${shownHosts.join(', ')}]`
+    }
+    throw e
+  }
   const enriched: MarketFocusItem[] = items.map((it, i) => ({
     ...it,
     content: crawled[i].status === 'fulfilled' ? crawled[i].value.content : null,
