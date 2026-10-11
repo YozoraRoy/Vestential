@@ -53,6 +53,20 @@ export function beforeOddLotSyncDeadline(nowMs: number, expectedCompact: string)
   return tw.getUTCHours() * 60 + tw.getUTCMinutes() < ODD_LOT_EXPECTED_SYNC_DEADLINE_TW
 }
 
+/**
+ * Issue #65：odd-lot 最新日期與預期交易日的純比對（可單測）。
+ * - 'empty'：尚無資料；'stale'：落後；'future'：超前（錯標籤如休市日，不應發生）；'ok'：一致。
+ */
+export function classifyOddLotFreshness(
+  latest: string | null | undefined,
+  expected: string,
+): 'empty' | 'stale' | 'future' | 'ok' {
+  if (!latest) return 'empty'
+  if (latest < expected) return 'stale'
+  if (latest > expected) return 'future'
+  return 'ok'
+}
+
 export async function runHealthChecks(): Promise<HealthReport> {
   const issues: HealthIssue[] = []
   const now = Date.now()
@@ -146,7 +160,7 @@ export async function runHealthChecks(): Promise<HealthReport> {
           ? `odd_lot_trades 尚無資料（TW 15:30~20:10 屬預期，盤後零股同步中）`
           : 'odd_lot_trades 完全沒有資料',
       })
-    } else if (row.d < expected) {
+    } else if (classifyOddLotFreshness(row.d, expected) === 'stale') {
       const pending = beforeOddLotSyncDeadline(now, expected)
       issues.push({
         code: 'oddlot_stale',
@@ -154,6 +168,13 @@ export async function runHealthChecks(): Promise<HealthReport> {
         message: pending
           ? `odd_lot 最新交易日 ${row.d}，今日 ${expected} 收盤資料尚未公布（TW 15:30~20:10 屬預期，盤後零股同步中）`
           : `odd_lot 最新交易日 ${row.d} 早於最近交易日 ${expected}`,
+      })
+    } else if (classifyOddLotFreshness(row.d, expected) === 'future') {
+      // Issue #65：latestDate 超前預期交易日即錯標籤（如休市日 20261009），屬 error 且不受同步窗口降級。
+      issues.push({
+        code: 'oddlot_future',
+        severity: 'error',
+        message: `odd_lot 最新交易日 ${row.d} 晚於最近交易日 ${expected}（疑似日期錯標籤或休市日誤寫入）`,
       })
     }
   } catch (e: any) {

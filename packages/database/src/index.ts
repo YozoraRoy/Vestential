@@ -74,7 +74,7 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'
 export type { Database } from 'better-sqlite3'
-export { fetchTwseOddLots } from './fetchers/twse-odd-lot.js'
+export { fetchTwseOddLots, parseDatedOddLotResponse, deleteOddLotByDate, listOddLotDateCounts } from './fetchers/twse-odd-lot.js'
 export { fetchStockGift, fetchStockGiftRows } from './fetchers/stock-gift.js'
 export type { GiftRow } from './fetchers/stock-gift.js'
 export {

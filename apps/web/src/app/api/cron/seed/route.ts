@@ -21,8 +21,9 @@ export async function GET(req: Request) {
   try {
     await migrate()
     console.log('[API/Cron/Seed] Starting TWSE odd lots seed...')
-    // TWT53U 無 date 參數，回傳最近一交易日盤後資料。於非交易日執行時會誤標日期，
-    // 因此一律以「最近開市日」作為該批資料的 date，確保資料與交易日一致。
+    // Issue #65：fetcher 已改用帶日期端點 (TWT53U?date=YYYYMMDD)，每筆 date 恆等於
+    // 其 TWSE 真實交易日；休市日回 stat !== 'OK' 時不寫入。此處仍以「最近開市日」
+    // 作為預設目標，避免在休市日當天觸發無意義抓取。
     // 用 Asia/Taipei 判斷今天是否交易日（Azure 伺服器時區為 UTC，直接 new Date() 會算錯）。
     const nowTw = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date())
     const todayTw = new Date(`${nowTw}T00:00:00`)

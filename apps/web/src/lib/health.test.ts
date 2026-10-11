@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { beforeOddLotSyncDeadline, ODD_LOT_EXPECTED_SYNC_DEADLINE_TW } from './health'
+import { beforeOddLotSyncDeadline, classifyOddLotFreshness, ODD_LOT_EXPECTED_SYNC_DEADLINE_TW } from './health'
 
 /** 以「台灣時間牆鐘」建構 UTC ms（TW = UTC+8，台灣無日光節約，偏移恆為 8h）。 */
 function twMs(year: number, month: number, day: number, hour: number, minute: number): number {
@@ -60,5 +60,21 @@ describe('beforeOddLotSyncDeadline｜跨日／非交易日不誤放', () => {
   })
   it('凌晨跨日邊界：TW 00:30（UTC 前一日 16:30）仍屬當日窗口 → true', () => {
     expect(beforeOddLotSyncDeadline(twMs(2026, 9, 15, 0, 30), '20260915')).toBe(true)
+  })
+})
+
+describe('classifyOddLotFreshness｜Issue #65 最新日期不得超前預期交易日', () => {
+  it('一致 → ok', () => {
+    expect(classifyOddLotFreshness('20261008', '20261008')).toBe('ok')
+  })
+  it('落後 → stale', () => {
+    expect(classifyOddLotFreshness('20261007', '20261008')).toBe('stale')
+  })
+  it('超前（休市日錯標籤如 20261009）→ future', () => {
+    expect(classifyOddLotFreshness('20261009', '20261008')).toBe('future')
+  })
+  it('無資料 → empty', () => {
+    expect(classifyOddLotFreshness(null, '20261008')).toBe('empty')
+    expect(classifyOddLotFreshness(undefined, '20261008')).toBe('empty')
   })
 })

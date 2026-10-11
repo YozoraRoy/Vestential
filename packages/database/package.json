@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/twse-odd-lot.test.ts",
     "seed": "npx tsx seed/index.ts",
     "seed:odd-lot": "npx tsx seed/fetch-odd-lot.ts",
     "seed:gifts": "npx tsx seed/fetch-gifts.ts",
