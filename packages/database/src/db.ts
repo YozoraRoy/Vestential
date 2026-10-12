@@ -34,6 +34,9 @@ let portfolioMemoryIdCounter = 1
 const twseDividendMemoryStore: TwseDividendRow[] = []
 // Issue #54：競技場股利入帳去重記憶體兜底（同上；僅程序生命週期內有效）。
 const arenaDividendCreditMemoryStore: ArenaDividendCreditRow[] = []
+// Issue #69：dca_plans 記憶體兜底（同上）。
+const dcaPlanMemoryStore: DcaPlanRow[] = []
+let dcaPlanMemoryIdCounter = 1
 
 // ─── SQLite connection ───────────────────────────────────────────
 function getSqliteDb(): Database.Database | null {
@@ -612,6 +615,23 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       );
       CREATE INDEX IF NOT EXISTS idx_arena_dividend_credits_agent ON arena_dividend_credits(agent_id);
       CREATE INDEX IF NOT EXISTS idx_arena_dividend_credits_symbol_ex ON arena_dividend_credits(symbol, ex_date);
+
+      -- Issue #69：零股存股試算所計畫儲存（獨立表 dca_plans，不混入 portfolio_records 真實持倉；
+      -- 「計畫 vs 實際」對帳才乾淨；訪客以 guest_uid 隔離，沿 portfolio_records 訪客模式）。
+      CREATE TABLE IF NOT EXISTS dca_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        guest_uid TEXT,
+        symbol TEXT NOT NULL,
+        symbol_name TEXT,
+        monthly_amount REAL NOT NULL,
+        years INTEGER NOT NULL,
+        dividend_mode TEXT NOT NULL DEFAULT 'reinvest',
+        include_fees INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_dca_plans_user ON dca_plans(user_id);
+      CREATE INDEX IF NOT EXISTS idx_dca_plans_guest ON dca_plans(guest_uid);
 
     `)
 
@@ -1336,6 +1356,27 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_arena_dividend_credits_agent ON arena_dividend_credits(agent_id);
         CREATE INDEX idx_arena_dividend_credits_symbol_ex ON arena_dividend_credits(symbol, ex_date);
+      END
+    `)
+
+    // Issue #69：dca_plans 獨立表（計畫儲存；不混真實持倉）。
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'dca_plans')
+      BEGIN
+        CREATE TABLE dca_plans (
+          id             INT IDENTITY(1,1) PRIMARY KEY,
+          user_id        INT NOT NULL DEFAULT 0,
+          guest_uid      NVARCHAR(64),
+          symbol         NVARCHAR(30) NOT NULL,
+          symbol_name    NVARCHAR(100),
+          monthly_amount FLOAT NOT NULL,
+          years          INT NOT NULL,
+          dividend_mode  NVARCHAR(10) NOT NULL DEFAULT 'reinvest',
+          include_fees   INT NOT NULL DEFAULT 1,
+          created_at     DATETIME2 DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_dca_plans_user ON dca_plans(user_id);
+        CREATE INDEX idx_dca_plans_guest ON dca_plans(guest_uid);
       END
     `)
 
@@ -3417,6 +3458,191 @@ export async function getTwseDividendsInWindow(
   return twseDividendMemoryStore
     .filter(m => cleanSyms.includes(m.symbol) && m.ex_date >= fromDate && m.ex_date <= toDate)
     .sort((a, b) => (a.ex_date < b.ex_date ? -1 : 1))
+}
+
+// ─── DCA 存股計畫（Issue #69，dca_plans 獨立表）──────────────────────
+// 選邊（P1 定案）：獨立 `dca_plans` 表（不走 portfolio_records kind='plan'），
+// 「計畫 vs 實際」對帳乾淨＋/portfolio 列表與損益零污染；訪客沿用 guest_uid 隔離。
+export interface DcaPlanRow {
+  id: number
+  user_id: number
+  guest_uid: string | null
+  symbol: string
+  symbol_name: string | null
+  monthly_amount: number
+  years: number
+  dividend_mode: string
+  include_fees: number
+  created_at?: string
+}
+
+export interface DcaPlanInput {
+  userId: number
+  guestUid?: string | null
+  symbol: string
+  symbolName?: string | null
+  monthlyAmount: number
+  years: number
+  dividendMode?: string
+  includeFees?: boolean
+}
+
+const DCA_PLAN_COLUMNS = 'id, user_id, guest_uid, symbol, symbol_name, monthly_amount, years, dividend_mode, include_fees, created_at'
+
+function normalizeDcaPlanInput(r: DcaPlanInput): DcaPlanRow | null {
+  const userId = Number(r.userId)
+  const symbol = (r.symbol ?? '').trim().toUpperCase()
+  const monthlyAmount = Number(r.monthlyAmount)
+  const years = Math.floor(Number(r.years))
+  if (!Number.isInteger(userId) || userId < 0) return null
+  if (!symbol) return null
+  if (!Number.isFinite(monthlyAmount) || monthlyAmount <= 0) return null
+  if (![1, 3, 5, 10].includes(years)) return null
+  const dividendMode = r.dividendMode === 'cash' ? 'cash' : 'reinvest'
+  return {
+    id: 0,
+    user_id: userId,
+    guest_uid: r.guestUid ?? null,
+    symbol,
+    symbol_name: r.symbolName ?? null,
+    monthly_amount: monthlyAmount,
+    years,
+    dividend_mode: dividendMode,
+    include_fees: r.includeFees === false ? 0 : 1,
+  }
+}
+
+/** 儲存一筆 DCA 計畫（獨立表，不寫 portfolio_records；回傳 id）。 */
+export async function saveDcaPlan(input: DcaPlanInput): Promise<number> {
+  const row = normalizeDcaPlanInput(input)
+  if (!row) throw new Error('invalid dca plan')
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('userId', sql.Int, row.user_id)
+          .input('guestUid', sql.NVarChar(64), row.guest_uid)
+          .input('symbol', sql.NVarChar(30), row.symbol)
+          .input('symbolName', sql.NVarChar(100), row.symbol_name)
+          .input('monthlyAmount', sql.Float, row.monthly_amount)
+          .input('years', sql.Int, row.years)
+          .input('dividendMode', sql.NVarChar(10), row.dividend_mode)
+          .input('includeFees', sql.Int, row.include_fees)
+          .query(`
+            INSERT INTO dca_plans (user_id, guest_uid, symbol, symbol_name, monthly_amount, years, dividend_mode, include_fees)
+            VALUES (@userId, @guestUid, @symbol, @symbolName, @monthlyAmount, @years, @dividendMode, @includeFees);
+            SELECT SCOPE_IDENTITY() AS id
+          `)
+        const id = Number(result.recordset?.[0]?.id ?? -1)
+        if (id > 0) return id
+      } catch (e) {
+        console.error('[AzureSQL] saveDcaPlan error:', e)
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        const info = db.prepare(`
+          INSERT INTO dca_plans (user_id, guest_uid, symbol, symbol_name, monthly_amount, years, dividend_mode, include_fees)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          row.user_id, row.guest_uid, row.symbol, row.symbol_name,
+          row.monthly_amount, row.years, row.dividend_mode, row.include_fees,
+        )
+        const id = Number(info.lastInsertRowid)
+        if (id > 0) return id
+      } catch (e) {
+        console.error('[SQLite] saveDcaPlan error:', e)
+      }
+    }
+  }
+  const id = dcaPlanMemoryIdCounter++
+  dcaPlanMemoryStore.unshift({ ...row, id })
+  return id
+}
+
+/** 取 DCA 計畫（登入 user_id 或訪客 guest_uid 二選一；依 id DESC；limit 封頂 50）。 */
+export async function getDcaPlans(opts: { userId?: number; guestUid?: string | null; limit?: number }): Promise<DcaPlanRow[]> {
+  const limit = Math.min(Math.max(Math.floor(Number(opts.limit)) || 20, 1), 50)
+  const userId = Number(opts.userId)
+  const guestUid = (opts.guestUid ?? '') || null
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        if (Number.isInteger(userId) && userId > 0) {
+          const result = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('limit', sql.Int, limit)
+            .query(`SELECT TOP (@limit) ${DCA_PLAN_COLUMNS} FROM dca_plans WHERE user_id = @userId ORDER BY id DESC`)
+          return result.recordset as DcaPlanRow[]
+        }
+        if (guestUid) {
+          const result = await pool.request()
+            .input('guestUid', sql.NVarChar(64), guestUid)
+            .input('limit', sql.Int, limit)
+            .query(`SELECT TOP (@limit) ${DCA_PLAN_COLUMNS} FROM dca_plans WHERE guest_uid = @guestUid ORDER BY id DESC`)
+          return result.recordset as DcaPlanRow[]
+        }
+      } catch (e) {
+        console.error('[AzureSQL] getDcaPlans error:', e)
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        if (Number.isInteger(userId) && userId > 0) {
+          return db.prepare(
+            `SELECT ${DCA_PLAN_COLUMNS} FROM dca_plans WHERE user_id = ? ORDER BY id DESC LIMIT ?`,
+          ).all(userId, limit) as DcaPlanRow[]
+        }
+        if (guestUid) {
+          return db.prepare(
+            `SELECT ${DCA_PLAN_COLUMNS} FROM dca_plans WHERE guest_uid = ? ORDER BY id DESC LIMIT ?`,
+          ).all(guestUid, limit) as DcaPlanRow[]
+        }
+      } catch (e) {
+        console.error('[SQLite] getDcaPlans error:', e)
+      }
+    }
+  }
+  const mem = dcaPlanMemoryStore.filter((m) =>
+    (Number.isInteger(userId) && userId > 0 ? m.user_id === userId : guestUid ? m.guest_uid === guestUid : false),
+  )
+  return mem.slice(0, limit)
+}
+
+/** DCA 事件埋點（dca_page_view／dca_simulate／dca_plan_save／dca_share；沿 placement_events，不另建表）。 */
+export async function logDcaEvent(
+  event: 'dca_page_view' | 'dca_simulate' | 'dca_plan_save' | 'dca_share' | 'dca_og_view',
+  opts?: { symbol?: string | null; userId?: number | null },
+): Promise<void> {
+  try {
+    await dbExecute(
+      'INSERT INTO placement_events (event, symbol, user_id) VALUES (@event, @symbol, @user_id)',
+      { event, symbol: opts?.symbol ?? null, user_id: opts?.userId ?? null },
+    )
+  } catch (e) {
+    console.error(`[DB] logDcaEvent failed (${event}):`, e)
+  }
+}
+
+/** DCA 事件統計（新客佔比／圖卡分享數口徑：page_view vs simulate／share 計數）。 */
+export async function getDcaEventStats(): Promise<Record<string, number>> {
+  const events = ['dca_page_view', 'dca_simulate', 'dca_plan_save', 'dca_share', 'dca_og_view']
+  const out: Record<string, number> = {}
+  for (const e of events) {
+    try {
+      const row = await dbQueryFirst<{ c: number }>('SELECT COUNT(*) AS c FROM placement_events WHERE event = @event', { event: e })
+      out[e] = Number(row?.c ?? 0)
+    } catch {
+      out[e] = 0
+    }
+  }
+  return out
 }
 
 // ─── Trade Journal（交易日誌，Issue #21）───────────────────────────

@@ -142,6 +142,103 @@ export async function renderSocialCard(data: SocialCardData, opts: SocialCardOpt
   return canvas.toBuffer('image/jpeg', 92)
 }
 
+// ─── Issue #69：DCA 存股試算圖卡（純 Canvas，不經 AI 生圖）─────────
+// 1080×1080：投入 vs 市值＋股利再投入加成＋免責小字。供 /api/social/og?type=dca 使用。
+export interface DcaCardData {
+  symbol: string
+  monthly: number
+  years: number
+  invested: number
+  marketValue: number
+  /** 股利加成（百分點）。 */
+  divBoostPp: number
+  /** 含股利總報酬 %。 */
+  totalReturnPct: number
+}
+
+function fmtTWD(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  return `NT$${Math.round(n).toLocaleString('en-US')}`
+}
+
+/** 依 DCA 試算結果生成 1080×1080 JPEG buffer（純 Canvas 鏈路，無 LLM／無 AI 生圖）。 */
+export async function renderDcaCard(d: DcaCardData): Promise<Buffer> {
+  ensureFont()
+  const canvas = createCanvas(CARD_W, CARD_H)
+  const ctx = canvas.getContext('2d')
+
+  const bg = ctx.createLinearGradient(0, 0, 0, CARD_H)
+  bg.addColorStop(0, '#10131a')
+  bg.addColorStop(1, '#0b0d13')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, CARD_W, CARD_H)
+
+  ctx.fillStyle = '#22c55e'
+  ctx.fillRect(CARD_W - 260, 0, 260, 10)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  ctx.fillRect(72, CARD_H - 120, CARD_W - 144, 1)
+
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'alphabetic'
+  ctx.font = `700 40px "${FONT_NAME}"`
+  ctx.fillStyle = '#22c55e'
+  ctx.fillText('Vestential', 72, 96)
+  ctx.font = `400 28px "${FONT_NAME}"`
+  ctx.fillStyle = '#9ca3af'
+  ctx.textAlign = 'right'
+  ctx.fillText('零股存股試算所', CARD_W - 72, 96)
+  ctx.textAlign = 'left'
+
+  const title = `${d.symbol} · 每月 ${fmtTWD(d.monthly)} × ${d.years} 年`
+  ctx.font = `700 56px "${FONT_NAME}"`
+  ctx.fillStyle = '#ffffff'
+  const lines = wrapText(ctx, title, CARD_W - 144, 2)
+  let y = 230
+  for (const line of lines) {
+    ctx.fillText(line, 72, y)
+    y += 76
+  }
+
+  // 投入 vs 市值雙欄
+  y += 30
+  const colW = (CARD_W - 144 - 32) / 2
+  const cards = [
+    { label: '投入本金', value: fmtTWD(d.invested), color: '#9ca3af' },
+    { label: '期末總值（含股利）', value: fmtTWD(d.marketValue), color: '#22c55e' },
+  ]
+  cards.forEach((c, i) => {
+    const x = 72 + i * (colW + 32)
+    ctx.fillStyle = 'rgba(255,255,255,0.04)'
+    roundRect(ctx, x, y, colW, 220, 20)
+    ctx.fill()
+    ctx.font = `400 30px "${FONT_NAME}"`
+    ctx.fillStyle = '#9ca3af'
+    ctx.fillText(c.label, x + 32, y + 62)
+    ctx.font = `700 52px "${FONT_NAME}"`
+    ctx.fillStyle = c.color
+    ctx.fillText(c.value, x + 32, y + 150)
+  })
+  y += 270
+
+  // 股利再投入加成＋總報酬
+  ctx.font = `400 32px "${FONT_NAME}"`
+  ctx.fillStyle = '#d1d5db'
+  const boost = Number.isFinite(d.divBoostPp) ? `+${d.divBoostPp.toFixed(2)} 百分點` : '—'
+  const total = Number.isFinite(d.totalReturnPct)
+    ? `${d.totalReturnPct >= 0 ? '+' : ''}${d.totalReturnPct.toFixed(2)}%`
+    : '—'
+  ctx.fillText(`股利再投入加成：${boost}`, 72, y)
+  y += 58
+  ctx.fillText(`含股利總報酬：${total}`, 72, y)
+  y += 58
+  ctx.font = `400 26px "${FONT_NAME}"`
+  ctx.fillStyle = '#6b7280'
+  ctx.fillText('歷史回測，不代表未來表現', 72, y)
+
+  drawCtaBottom(ctx)
+  return canvas.toBuffer('image/jpeg', 92)
+}
+
 function renderClassic(ctx: any, data: SocialCardData, maxWidth: number) {
   // ── 主標題（auto-wrap，最多 3 行）─────────────────────────────
   const headline = data.items[0]?.title ?? data.meta.summary ?? '今日市場焦點'
