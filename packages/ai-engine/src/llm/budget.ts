@@ -115,6 +115,92 @@ export function isMetaTransient(status: number, body?: MetaRateLimitBody | null)
   return /fatal/i.test(msg)
 }
 
+// ─── Issue #62：IG 2207051 冷卻延後（疑似洗版，不走熱重試）─────────────
+// 2207051 = The publishing action is suspected to be spam（Graph code=4 系列，
+// 但語義是「洗版嫌疑」而非額度型限流）：命中即停手、記 deferred、下一個
+// 00 UTC edition 才重打。2207085 維持 #59 行為（isMetaTransient → 熱重試），
+// #58 錯峰／#59 分類一律不動。
+
+/** IG 疑似洗版 subcode（code=4＋此 subcode 才走冷卻，其餘 code=4 維持 #58 限流）。 */
+export const META_SPAM_SUBCODE_2207051 = 2207051
+
+/** 命中 2207051 即拋此錯（呼叫端記 deferred＋排冷卻，不進 15s→30s→60s 熱重試）。 */
+export class MetaSpamSuspectedError extends Error {
+  readonly subcode = META_SPAM_SUBCODE_2207051
+  constructor(message: string) {
+    super(message)
+    this.name = 'MetaSpamSuspectedError'
+  }
+}
+
+interface MetaErrorNode {
+  code?: number
+  error_subcode?: number
+  message?: string
+  error?: unknown
+}
+
+/**
+ * 拆出 Graph 錯誤節點（含 wrapped／雙層 error.error 逐層下鑽，最多 4 層）。
+ * 純函數，方便單測斷言。
+ */
+export function extractMetaError(body?: MetaRateLimitBody | null): {
+  code: number | null
+  subcode: number | null
+  message: string
+} {
+  let node: MetaErrorNode | null | undefined = (body as { error?: unknown } | null | undefined)?.error as
+    | MetaErrorNode
+    | null
+    | undefined
+  for (let depth = 0; depth < 4 && node && typeof node === 'object'; depth++) {
+    const inner = node.error
+    if (inner && typeof inner === 'object') {
+      node = inner as MetaErrorNode
+    } else {
+      break
+    }
+  }
+  const code = typeof node?.code === 'number' ? node.code : null
+  const subcode = typeof node?.error_subcode === 'number' ? node.error_subcode : null
+  const message = typeof node?.message === 'string' ? node.message : ''
+  return { code, subcode, message }
+}
+
+/**
+ * 判定是否為 IG 疑似洗版（code=4＋subcode=2207051，含 wrapped 形狀）。
+ * status 僅保留參數對稱性（code＋subcode 即定案，不依 HTTP status）。
+ * 純函數，方便單測斷言。
+ */
+export function isMetaSpamSuspected(_status: number, body?: MetaRateLimitBody | null): boolean {
+  const { code, subcode } = extractMetaError(body)
+  return code === 4 && subcode === META_SPAM_SUBCODE_2207051
+}
+
+// ─── Issue #62：社群降頻一天一次（僅 00 UTC 發社群）────────────────────
+// cron 一天跑 4 個 edition（00／06／12／18 UTC），社群只在 00 UTC 發布＋
+// 重打 deferred；06／12／18 UTC 跳過（不發文、不記 failed、不發告警）。
+
+/**
+ * 是否為社群發布 edition（UTC 小時 == 0）。純函數（now 可注入，方便單測）。
+ */
+export function isSocialEditionTime(now: Date = new Date()): boolean {
+  return now.getUTCHours() === 0
+}
+
+/**
+ * 下一個 00 UTC 到期時刻（嚴格大於 from；冷卻 deferred 到此才重打）。
+ * 例：from=10-12T05:00Z → 10-13T00:00Z；from=10-12T00:00:05Z → 10-13T00:00Z。
+ * 純函數（from 可注入，方便單測）。
+ */
+export function getNextSocialEditionAt(from: Date = new Date()): Date {
+  const next = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate(), 0, 0, 0, 0))
+  if (next.getTime() <= from.getTime()) {
+    next.setUTCDate(next.getUTCDate() + 1)
+  }
+  return next
+}
+
 /**
  * 第 attempt 次限流重試的等待時間（attempt 從 0 起算：首次重試等 base，
  * 之後每次 ×2，封頂 META_RETRY_MAX_MS 再加 jitter 防對齊）。

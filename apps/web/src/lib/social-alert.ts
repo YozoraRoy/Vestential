@@ -121,6 +121,53 @@ export function buildSocialPartialFailMessage(
   })
 }
 
+/**
+ * Issue #62 冷卻延後告警：deferred 不是單純失敗，不走「部分失敗」口徑。
+ * 內文必含 `spam suspected, subcode 2207051`＋停手等冷卻（不寫成單純 rate limit）。
+ */
+export function buildSocialDeferredMessage(
+  editionKey: string,
+  deferred: { platform: SocialAlertPlatform; error?: string | null; nextRetryAt?: string | null }[],
+): string {
+  const detail = deferred
+    .map(
+      (d) =>
+        `- ${socialPlatformLabel(d.platform)}: ${truncateAlertError(d.error ?? 'unknown error')}${d.nextRetryAt ? `（下一個 00 UTC 重打：${d.nextRetryAt}）` : ''}`,
+    )
+    .join('\n')
+  const lines = [
+    `內容：${dailyContentName(editionKey)}（冷卻延後，非單純發布失敗）`,
+    '原因：spam suspected, subcode 2207051（IG 疑似洗版）或內容額度不足：已停手等冷卻，未繼續重打。',
+    '延後：',
+    detail,
+    '後續：下一個 00 UTC edition 到期自動重打一次；重打再失敗即停手等人工 force。',
+    `重試：${SOCIAL_ALERT_RETRY_HINT}`,
+    `edition: ${editionKey}`,
+  ]
+  return truncateAlertText(lines.join('\n'))
+}
+
+/**
+ * Issue #62 重打用罄告警：00 UTC redrive 終態（next_retry_at=null），只剩人工 force。
+ */
+export function buildSocialRedriveExhaustedMessage(
+  editionKey: string,
+  terminal: { platform: SocialAlertPlatform; error?: string | null }[],
+): string {
+  const detail = terminal
+    .map((t) => `- ${socialPlatformLabel(t.platform)}: ${truncateAlertError(t.error ?? 'unknown error')}`)
+    .join('\n')
+  const lines = [
+    `內容：${dailyContentName(editionKey)}（冷卻重打用罄）`,
+    '原因：spam suspected, subcode 2207051 重打再失敗，已停手（終態 deferred），只剩人工 force 可救。',
+    '終態：',
+    detail,
+    `重試：${SOCIAL_ALERT_RETRY_HINT}`,
+    `edition: ${editionKey}`,
+  ]
+  return truncateAlertText(lines.join('\n'))
+}
+
 /** 節慶版：results 為 triggerFestivalPublish 本輪各平台結果。 */
 export function buildFestivalPartialFailMessage(
   festivalId: string,

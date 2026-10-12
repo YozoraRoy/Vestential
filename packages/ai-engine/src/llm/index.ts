@@ -26,5 +26,11 @@ export {
   isMetaRateLimit,
   isMetaTransient,
   getMetaBackoffMs,
+  META_SPAM_SUBCODE_2207051,
+  MetaSpamSuspectedError,
+  extractMetaError,
+  isMetaSpamSuspected,
+  isSocialEditionTime,
+  getNextSocialEditionAt,
 } from './budget.js'
 export type { MetaRateLimitBody } from './budget.js'

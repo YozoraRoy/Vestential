@@ -5909,7 +5909,7 @@ export function listArenaRoundDates(limit: number, cursor?: string): Promise<Arr
 
 // ─── 社群小編 (social_posts) ─────────────────────────────────────
 export type SocialPostPlatform = 'instagram' | 'threads' | 'facebook'
-export type SocialPostStatus = 'pending' | 'container_created' | 'published' | 'failed' | 'dry_run'
+export type SocialPostStatus = 'pending' | 'container_created' | 'published' | 'failed' | 'dry_run' | 'deferred'
 
 export interface SocialPostRow {
   id: number
@@ -5942,6 +5942,16 @@ export interface SocialPostRow {
   first_reply_text?: string | null
   first_reply_checked_at?: string | null
   first_reply_verdict?: string | null
+  /**
+   * Issue #62 冷卻延後重打（social_posts 加欄定案，不另建表）：
+   * - next_retry_at：首次 deferred 記「下一個 00 UTC」到期（ISO UTC）；終態清 NULL。
+   * - retry_count：deferred 記次（含首次＋重打）。
+   * - first_error：保留首次 2207051 根因（error 記末次）。
+   * 舊庫未跑 030 migration 時這些欄位為 undefined，讀取端一律以 ?? 承接。
+   */
+  next_retry_at?: string | null
+  retry_count?: number | null
+  first_error?: string | null
   created_at: string
 }
 
@@ -6026,7 +6036,7 @@ export async function updateSocialPost(
   patch: Partial<
     Pick<
       SocialPostRow,
-      'status' | 'container_id' | 'external_id' | 'error' | 'published_at' | 'image_url' | 'comment_status' | 'comment_external_id' | 'comment_error' | 'first_reply_status' | 'first_reply_external_id' | 'first_reply_error' | 'first_reply_category' | 'first_reply_text' | 'first_reply_checked_at' | 'first_reply_verdict'
+      'status' | 'container_id' | 'external_id' | 'error' | 'published_at' | 'image_url' | 'comment_status' | 'comment_external_id' | 'comment_error' | 'first_reply_status' | 'first_reply_external_id' | 'first_reply_error' | 'first_reply_category' | 'first_reply_text' | 'first_reply_checked_at' | 'first_reply_verdict' | 'next_retry_at' | 'retry_count' | 'first_error'
     >
   >,
 ): Promise<void> {
@@ -6096,6 +6106,18 @@ export async function updateSocialPost(
     sets.push('first_reply_verdict = @first_reply_verdict')
     params.first_reply_verdict = patch.first_reply_verdict
   }
+  if (patch.next_retry_at !== undefined) {
+    sets.push('next_retry_at = @next_retry_at')
+    params.next_retry_at = patch.next_retry_at
+  }
+  if (patch.retry_count !== undefined) {
+    sets.push('retry_count = @retry_count')
+    params.retry_count = patch.retry_count
+  }
+  if (patch.first_error !== undefined) {
+    sets.push('first_error = @first_error')
+    params.first_error = patch.first_error
+  }
   if (sets.length === 0) return
   await dbExecute(`UPDATE social_posts SET ${sets.join(', ')} WHERE id = @id`, params)
 }
@@ -6119,6 +6141,23 @@ export async function deleteSocialPostByEdition(platform: string, editionKey: st
     'DELETE FROM social_posts WHERE platform = @platform AND edition_key = @editionKey',
     { platform, editionKey },
   )
+}
+
+/**
+ * Issue #62：列出已到期待重打的 deferred 列（status='deferred' 且
+ * next_retry_at 到期；終態 next_retry_at=NULL 不撿，只剩人工 force）。
+ * next_retry_at 一律 ISO UTC 字串，字串比較即時間比較（雙後端通用）。
+ */
+export async function listDueDeferredSocialPosts(nowIso: string): Promise<SocialPostRow[]> {
+  try {
+    return await dbQueryAll<SocialPostRow>(
+      `SELECT * FROM social_posts WHERE status = 'deferred' AND next_retry_at IS NOT NULL AND next_retry_at <= @now ORDER BY next_retry_at ASC`,
+      { now: nowIso },
+    )
+  } catch {
+    // 舊庫未跑 030 migration（無 next_retry_at 欄）時回空陣列，不炸整條 job。
+    return []
+  }
 }
 
 // ─── 後台手動發布用的圖卡快照 (social_card_images) ────────────────

@@ -5,9 +5,15 @@ import {
   getMetaBackoffMs,
   isMetaRateLimit,
   isMetaTransient,
+  isMetaSpamSuspected,
+  extractMetaError,
+  MetaSpamSuspectedError,
+  getNextSocialEditionAt,
   META_RETRY_MAX_ATTEMPTS,
 } from '@stock/ai-engine'
 import { IG_DRIVE_COMMENT } from '@/lib/social'
+
+export { MetaSpamSuspectedError }
 
 // ─── IG / Threads / Facebook 發布層 ───────────────────────────────
 // IG/Threads 一律 two-step：建立 container → 輪詢/發布；FB 單步直發。
@@ -143,47 +149,167 @@ async function recordFailure(
   }
 }
 
+// ─── Issue #62：冷卻延後（deferred）───────────────────────────────────
+// 2207051（疑似洗版）或內容額度不足 → 不進熱重試，當場記 deferred：
+// - schedule（首次）：next_retry_at＝下一個 00 UTC，到期由 00 UTC 執行重打；
+// - terminal（重打再失敗）：next_retry_at＝null，只剩人工 force。
+// first_error 保留首次根因，error 記末次。
+
+/** 冷卻記次模式：schedule＝首次延後（排下一個 00 UTC）；terminal＝重打再失敗即停手。 */
+export type SocialDeferMode = 'schedule' | 'terminal'
+
+export interface InstagramPublishOptions {
+  /** 重打 single-shot：跳過 429／暫態退避重打（#58 錯峰 pace 照舊）。 */
+  noRetry?: boolean
+  /** deferred 記次模式（預設 schedule）。 */
+  deferMode?: SocialDeferMode
+}
+
+async function markSocialDeferred(
+  row: SocialPostRow,
+  reason: string,
+  mode: SocialDeferMode,
+): Promise<PublishResult> {
+  const short = reason.slice(0, 1000)
+  const retryCount = (row.retry_count ?? 0) + 1
+  const firstError = (row.first_error ?? short).slice(0, 1000)
+  if (mode === 'terminal') {
+    await updateSocialPost(row.id, {
+      status: 'deferred',
+      next_retry_at: null,
+      retry_count: retryCount,
+      first_error: firstError,
+      error: short,
+    })
+    console.warn(`[Social/instagram] 冷卻重打再失敗即停手（終態 deferred，只剩人工 force）：${short}`)
+  } else {
+    const nextRetryAt = getNextSocialEditionAt().toISOString()
+    await updateSocialPost(row.id, {
+      status: 'deferred',
+      next_retry_at: nextRetryAt,
+      retry_count: retryCount,
+      first_error: firstError,
+      error: short,
+    })
+    console.warn(
+      `[Social/instagram] 冷卻延後（spam suspected, subcode 2207051 或額度不足），下一個 00 UTC 重打 next_retry_at=${nextRetryAt}：${short}`,
+    )
+  }
+  return { platform: 'instagram', status: 'deferred', error: short }
+}
+
+export interface ContentPublishingLimitCheck {
+  ok: boolean
+  reason?: string
+}
+
+function finiteNum(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+/**
+ * Issue #62 發前檢查：GET /{IG_ID}/content_publishing_limit，額度用罄即回
+ * 不足（呼叫端直接 deferred，不打 POST）；端點異常／格式未預期→fail-open
+ * 照發＋warn（避免誤殺正常發布）。
+ */
+export async function checkContentPublishingLimit(
+  igUserId: string,
+  accessToken: string,
+): Promise<ContentPublishingLimitCheck> {
+  const endpoint = `${IG_API}/${igUserId}/content_publishing_limit`
+  let res: Response
+  try {
+    res = await graphFetch(`${endpoint}?access_token=${encodeURIComponent(accessToken)}`)
+  } catch (e: any) {
+    console.warn(`[Social/instagram] content_publishing_limit 查詢異常，fail-open 照發：${e?.message ?? e}`)
+    return { ok: true }
+  }
+  if (!res.ok) {
+    console.warn(`[Social/instagram] content_publishing_limit 回應 HTTP ${res.status}，fail-open 照發`)
+    return { ok: true }
+  }
+  let json: any = null
+  try {
+    json = await res.json()
+  } catch {
+    console.warn('[Social/instagram] content_publishing_limit 非 JSON，fail-open 照發')
+    return { ok: true }
+  }
+  const datum = Array.isArray(json?.data) ? json.data[0] : (json?.data ?? json)
+  const remaining = finiteNum(datum?.remaining ?? datum?.quota_remaining)
+  const used = finiteNum(datum?.quota_used ?? datum?.used ?? datum?.count)
+  const total = finiteNum(datum?.quota_total ?? datum?.total ?? datum?.limit ?? datum?.quota)
+  if (remaining != null) {
+    if (remaining <= 0) {
+      return { ok: false, reason: `IG content_publishing_limit 不足（remaining=${remaining}），停手等冷卻` }
+    }
+    return { ok: true }
+  }
+  if (used != null && total != null) {
+    if (used >= total) {
+      return {
+        ok: false,
+        reason: `IG content_publishing_limit 不足（quota_used=${used}／quota_total=${total}），停手等冷卻`,
+      }
+    }
+    return { ok: true }
+  }
+  console.warn('[Social/instagram] content_publishing_limit 格式未預期，fail-open 照發')
+  return { ok: true }
+}
+
 // ─── Instagram：container → publish ───────────────────────────────
 async function publishInstagram(
   row: SocialPostRow,
   env: NonNullable<PublishConfig['instagram']>,
   imageUrl: string | null,
+  opts: InstagramPublishOptions = {},
 ): Promise<PublishResult> {
-  const accessToken = env.accessToken
-  if (!accessToken) throw new Error('IG_ACCESS_TOKEN 未設定')
+  const deferMode = opts.deferMode ?? 'schedule'
+  const noRetry = opts.noRetry ?? false
+  try {
+    const accessToken = env.accessToken
+    if (!accessToken) throw new Error('IG_ACCESS_TOKEN 未設定')
 
-  // user_id 未提供時，用 /me 解析 token 對應帳號
-  const igUserId = env.userId || (await resolveIgUserId(accessToken))
-  if (!igUserId) throw new Error('無法解析 IG user id（IG_USER_ID 或 /me）')
+    // user_id 未提供時，用 /me 解析 token 對應帳號
+    const igUserId = env.userId || (await resolveIgUserId(accessToken))
+    if (!igUserId) throw new Error('無法解析 IG user id（IG_USER_ID 或 /me）')
 
-  // IG Content Publishing API 不接受純文字貼文，且只接受 JPEG（透過公開 URL）。
-  if (!imageUrl) throw new Error('Instagram 必須提供圖卡（IG 不支援純文字貼文）')
+    // IG Content Publishing API 不接受純文字貼文，且只接受 JPEG（透過公開 URL）。
+    if (!imageUrl) throw new Error('Instagram 必須提供圖卡（IG 不支援純文字貼文）')
 
-  const mediaUrl = `${IG_API}/${igUserId}/media`
-  const createBody: Record<string, string> = {
-    access_token: accessToken,
-    caption: row.content,
-    image_url: imageUrl,
-  }
-  const created = await graphPost(mediaUrl, createBody)
-  const containerId = String(created.id ?? '')
-  await updateSocialPost(row.id, { status: 'container_created', container_id: containerId })
+    // Issue #62：發前先查內容額度，不足直接 deferred（不打 POST）。
+    const limit = await checkContentPublishingLimit(igUserId, accessToken)
+    if (!limit.ok) {
+      return markSocialDeferred(row, limit.reason ?? 'IG content_publishing_limit 不足', deferMode)
+    }
 
-  // 等待 container 準備就緒後發布
-  await waitForContainer(igUserId, containerId, accessToken, 'instagram')
+    const mediaUrl = `${IG_API}/${igUserId}/media`
+    const createBody: Record<string, string> = {
+      access_token: accessToken,
+      caption: row.content,
+      image_url: imageUrl,
+    }
+    const created = await graphPost(mediaUrl, createBody, { noRetry })
+    const containerId = String(created.id ?? '')
+    await updateSocialPost(row.id, { status: 'container_created', container_id: containerId })
 
-  const publishBody: Record<string, string> = {
-    creation_id: containerId,
-    access_token: accessToken,
-  }
-  const pub = await graphPost(`${IG_API}/${igUserId}/media_publish`, publishBody)
-  const externalId = pub.id ? String(pub.id) : null
-  await updateSocialPost(row.id, {
-    status: 'published',
-    external_id: externalId,
-    error: null,
-    published_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
-  })
+    // 等待 container 準備就緒後發布
+    await waitForContainer(igUserId, containerId, accessToken, 'instagram', 60_000, { noRetry })
+
+    const publishBody: Record<string, string> = {
+      creation_id: containerId,
+      access_token: accessToken,
+    }
+    const pub = await graphPost(`${IG_API}/${igUserId}/media_publish`, publishBody, { noRetry })
+    const externalId = pub.id ? String(pub.id) : null
+    await updateSocialPost(row.id, {
+      status: 'published',
+      external_id: externalId,
+      error: null,
+      next_retry_at: null,
+      published_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    })
 
   // 導流放第一則留言（IG caption 網址不可點）。best-effort：失敗不影響貼文本身。
   // 第一則導流留言邏輯（#31：維持不動；首回覆第二則留言走 postInstagramComment 另發）。
@@ -211,6 +337,35 @@ async function publishInstagram(
   }
 
   return { platform: 'instagram', status: 'published', containerId, externalId, commentStatus }
+  } catch (e: any) {
+    // Issue #62：2207051 疑似洗版不進熱重試，當場記 deferred（schedule／terminal 由呼叫端決定）。
+    if (e instanceof MetaSpamSuspectedError) {
+      return markSocialDeferred(row, e.message, deferMode)
+    }
+    throw e
+  }
+}
+
+/**
+ * Issue #62：到期 deferred 列的 single-shot 重打（只在 00 UTC 執行跑）。
+ * 全程不熱重試（noRetry）；任何失敗→終態 deferred（next_retry_at=null，
+ * retry_count＋1，first_error 保留首次，error 記末次），只剩人工 force。
+ */
+export async function republishDeferredPost(row: SocialPostRow): Promise<PublishResult> {
+  const env = platformEnv('instagram')
+  if (!env?.accessToken) {
+    return markSocialDeferred(row, 'missing access token in env（重打）', 'terminal')
+  }
+  try {
+    return await publishInstagram(row, env as NonNullable<PublishConfig['instagram']>, row.image_url, {
+      noRetry: true,
+      deferMode: 'terminal',
+    })
+  } catch (e: any) {
+    const msg = (e?.message || String(e)).slice(0, 1000)
+    console.error('[Social/instagram] redrive error:', msg)
+    return markSocialDeferred(row, msg, 'terminal')
+  }
 }
 
 /**
@@ -339,6 +494,24 @@ export function metaEndpointForLog(url: string): string {
   }
 }
 
+/**
+ * Issue #62 header 可觀測：每次 Meta 回應若帶 x-app-usage／
+ * x-business-use-case-usage 即記一筆 `[MetaUsage]`（dev log 可見）；
+ * 無 header 不打擾。絕不寫 DB、不記 token。
+ */
+export function logMetaUsage(path: string, res: Response): void {
+  try {
+    const appUsage = res.headers?.get?.('x-app-usage')
+    const businessUsage = res.headers?.get?.('x-business-use-case-usage')
+    if (!appUsage && !businessUsage) return
+    console.info(
+      `[MetaUsage] ${path} x-app-usage=${appUsage ?? '-'} x-business-use-case-usage=${businessUsage ?? '-'}`,
+    )
+  } catch {
+    // 觀測絕不拖垮發布
+  }
+}
+
 /** 單次 Meta 失敗摘要（status＋code＋subcode＋detail 片段），供 warn／用罄訊息共用。 */
 function formatMetaErrorPiece(
   status: number,
@@ -383,8 +556,16 @@ function parseRetryAfterMs(res: Response): number | null {
  *   （HTTP 5xx／Graph code -1／Fatal 訊息／is_transient=true）時睡退避再打
  *   （Retry-After 優先，否則 base×2^n 指數退避＋jitter），最多 META_RETRY_MAX_ATTEMPTS 次嘗試；
  *   用罄拋 MetaRateLimitError（Issue #61：訊息同時保留首次根因與末次錯誤，首次在前），真 4xx 照舊直接回傳（呼叫端既有錯誤訊息不變）。
+ * - Issue #62：2207051 疑似洗版不退避重打（code=4 雖屬限流碼但語義是洗版嫌疑），
+ *   直接回傳原 res 交 graphPost 判 spam；noRetry（冷卻重打 single-shot）同樣只打一次。
  */
-async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
+async function graphFetch(
+  url: string,
+  init?: RequestInit,
+  opts?: { noRetry?: boolean },
+): Promise<Response> {
+  const noRetry = opts?.noRetry ?? false
+  const endpoint = metaEndpointForLog(url)
   let firstStatus = 0
   let firstCode: number | null = null
   let firstSubcode: number | null = null
@@ -396,6 +577,7 @@ async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
   for (let attempt = 1; attempt <= META_RETRY_MAX_ATTEMPTS; attempt++) {
     await paceMetaCalls()
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) })
+    logMetaUsage(endpoint, res)
     if (res.ok) return res
     // 用 clone 偷看 body 判限流／暫態（原 res 留給呼叫端照舊讀 json 組錯誤訊息）。
     type RateLimitPeek = {
@@ -420,13 +602,16 @@ async function graphFetch(url: string, init?: RequestInit): Promise<Response> {
     lastCode = code
     lastSubcode = subcode
     lastDetail = detail
+    // Issue #62：疑似洗版（2207051）不退避、不重打，直接回傳原 res。
+    if (isMetaSpamSuspected(res.status, body)) return res
     const rateLimited = isMetaRateLimit(res.status, body)
     const transient = !rateLimited && isMetaTransient(res.status, body)
     if (!rateLimited && !transient) return res
+    // Issue #62 single-shot（冷卻重打）：只打一次，不退避。
+    if (noRetry) return res
     if (attempt >= META_RETRY_MAX_ATTEMPTS) break
     const delay = parseRetryAfterMs(res) ?? getMetaBackoffMs(attempt - 1)
     const reason = rateLimited ? '限流' : '暫態'
-    const endpoint = metaEndpointForLog(url)
     console.warn(
       `[Social] Meta ${reason} endpoint=${endpoint}（HTTP ${res.status}${code != null ? ` code=${code}` : ''}${subcode != null ? ` subcode=${subcode}` : ''}），` +
         `${Math.round(delay / 1000)}s 後退避重打（attempt ${attempt}/${META_RETRY_MAX_ATTEMPTS}）`,
@@ -463,6 +648,7 @@ export async function waitForContainer(
   accessToken: string,
   platform: SocialPostPlatform,
   timeoutMs = 60_000,
+  opts?: { noRetry?: boolean },
 ): Promise<void> {
   const base = platform === 'instagram' ? IG_API : THREADS_API
   // IG 用 status_code / Threads 用 status（Threads 沒有 status_code 欄位）
@@ -472,6 +658,8 @@ export async function waitForContainer(
     await sleep(3000)
     const res = await graphFetch(
       `${base}/${containerId}?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
+      undefined,
+      opts,
     )
     const json = await res.json()
     if (!res.ok) {
@@ -486,15 +674,25 @@ export async function waitForContainer(
   throw new Error(`[${platform}] container not ready (timeout)`)
 }
 
-/** 簡易 Graph POST（回傳 JSON body）。 */
-export async function graphPost(url: string, body: Record<string, string>): Promise<any> {
+/** 簡易 Graph POST（回傳 JSON body）。Issue #62：2207051 拋 MetaSpamSuspectedError（不走熱重試）。 */
+export async function graphPost(
+  url: string,
+  body: Record<string, string>,
+  opts?: { noRetry?: boolean },
+): Promise<any> {
   const res = await graphFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  })
+  }, opts)
   const json = await res.json().catch(() => ({}))
   if (!res.ok) {
+    if (isMetaSpamSuspected(res.status, json)) {
+      const { code, subcode, message } = extractMetaError(json)
+      throw new MetaSpamSuspectedError(
+        `IG suspected spam (spam suspected, subcode 2207051): HTTP ${res.status} code=${code} subcode=${subcode}：${message}`.slice(0, 1000),
+      )
+    }
     throw new Error(
       `Graph POST fail: ${json?.error?.message || json?.error?.error_message || res.status} (${json?.error?.code ?? ''})`,
     )

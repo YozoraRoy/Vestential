@@ -34,7 +34,7 @@ export {
   getArenaTradesByRound, getArenaTradesAllByRound,
   insertArenaDecisionLog, getArenaDecisionLogs, getArenaRoundDecisionLogs,
   saveArenaDiscussion, getArenaDiscussion, listArenaRoundDates,
-  hasSocialPosted, countSocialPublishedPosts, createSocialPost, updateSocialPost, listSocialPosts, deleteSocialPostByEdition, getSocialPost,
+  hasSocialPosted, countSocialPublishedPosts, createSocialPost, updateSocialPost, listSocialPosts, deleteSocialPostByEdition, getSocialPost, listDueDeferredSocialPosts,
   saveSocialCardImage, getSocialCardImage,
   getAgentSetting, setAgentSetting, listAgentSettings,
   getUserUsageReport,

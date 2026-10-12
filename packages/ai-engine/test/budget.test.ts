@@ -20,6 +20,12 @@ import {
   isMetaRateLimit,
   isMetaTransient,
   getMetaBackoffMs,
+  META_SPAM_SUBCODE_2207051,
+  MetaSpamSuspectedError,
+  extractMetaError,
+  isMetaSpamSuspected,
+  isSocialEditionTime,
+  getNextSocialEditionAt,
 } from '../src/llm/budget.js'
 
 // ─── FALLBACK_SAFE_MAX_TOKENS ────────────────────────────────────
@@ -269,4 +275,83 @@ test('isMetaTransient - 真 4xx（190／100／2207040）一律 false', () => {
   assert.equal(isMetaTransient(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
   assert.equal(isMetaTransient(400, { error: { code: 100, message: 'Invalid parameter' } }), false)
   assert.equal(isMetaTransient(400, { error: { code: 2207040, message: 'Content violates policy' } }), false)
+})
+
+// ─── Issue #62：2207051 疑似洗版分類（走冷卻，不走熱重試）─────────────
+
+test('META_SPAM_SUBCODE_2207051 equals 2207051', () => {
+  assert.equal(META_SPAM_SUBCODE_2207051, 2207051)
+})
+
+test('isMetaSpamSuspected - code=4＋subcode=2207051 即判 true', () => {
+  assert.equal(
+    isMetaSpamSuspected(403, { error: { code: 4, error_subcode: 2207051, message: 'suspected spam' } }),
+    true,
+  )
+  assert.equal(isMetaSpamSuspected(400, { error: { code: 4, error_subcode: 2207051 } }), true)
+})
+
+test('isMetaSpamSuspected - wrapped／雙層 error.error 照樣命中', () => {
+  const wrapped = { error: { error: { code: 4, error_subcode: 2207051, message: 'suspected spam' } } }
+  assert.equal(isMetaSpamSuspected(403, wrapped as never), true)
+  const extracted = extractMetaError(wrapped as never)
+  assert.equal(extracted.code, 4)
+  assert.equal(extracted.subcode, 2207051)
+})
+
+test('isMetaSpamSuspected - 其餘 code=4（無／錯 subcode）一律 false（維持 #58 限流）', () => {
+  assert.equal(isMetaSpamSuspected(403, { error: { code: 4, message: 'Application request limit reached' } }), false)
+  assert.equal(isMetaSpamSuspected(403, { error: { code: 4, error_subcode: 2207085 } }), false)
+  assert.equal(isMetaSpamSuspected(400, { error: { code: -1, message: 'Fatal' } }), false)
+  assert.equal(isMetaSpamSuspected(400, { error: { code: 190, message: 'Invalid OAuth access token' } }), false)
+  assert.equal(isMetaSpamSuspected(400, null), false)
+  assert.equal(isMetaSpamSuspected(200), false)
+})
+
+test('isMetaSpamSuspected - 2207085 不命中（維持 #59 熱重試）', () => {
+  assert.equal(isMetaSpamSuspected(400, { error: { code: -1, error_subcode: 2207085, message: 'Fatal' } }), false)
+})
+
+test('MetaSpamSuspectedError - name/subcode 正確', () => {
+  const err = new MetaSpamSuspectedError('spam suspected, subcode 2207051')
+  assert.ok(err instanceof Error)
+  assert.equal(err.name, 'MetaSpamSuspectedError')
+  assert.equal(err.subcode, 2207051)
+  assert.match(err.message, /2207051/)
+})
+
+test('extractMetaError - 平面／空 body 不報錯', () => {
+  assert.deepEqual(extractMetaError(null), { code: null, subcode: null, message: '' })
+  assert.deepEqual(extractMetaError({ error: { code: 4 } }), { code: 4, subcode: null, message: '' })
+})
+
+// ─── Issue #62：社群降頻（僅 00 UTC）＋下一 00 UTC 到期 ────────────────
+
+test('isSocialEditionTime - 僅 UTC 0 時回 true', () => {
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T00:00:00Z')), true)
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T00:59:59Z')), true)
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T06:00:00Z')), false)
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T12:00:00Z')), false)
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T18:00:00Z')), false)
+  assert.equal(isSocialEditionTime(new Date('2026-10-13T23:59:59Z')), false)
+})
+
+test('getNextSocialEditionAt - 下一個 00 UTC（嚴格大於 from）', () => {
+  assert.equal(
+    getNextSocialEditionAt(new Date('2026-10-12T05:00:00Z')).toISOString(),
+    '2026-10-13T00:00:00.000Z',
+  )
+  assert.equal(
+    getNextSocialEditionAt(new Date('2026-10-12T23:59:00Z')).toISOString(),
+    '2026-10-13T00:00:00.000Z',
+  )
+  // 00 UTC 執行中產生的 deferred 排到「明天」，不會被同一輪 redrive 撿走
+  assert.equal(
+    getNextSocialEditionAt(new Date('2026-10-13T00:00:05Z')).toISOString(),
+    '2026-10-14T00:00:00.000Z',
+  )
+  assert.equal(
+    getNextSocialEditionAt(new Date('2026-10-13T00:00:00.000Z')).toISOString(),
+    '2026-10-14T00:00:00.000Z',
+  )
 })

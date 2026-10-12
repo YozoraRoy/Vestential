@@ -37,6 +37,25 @@ vi.mock('@stock/ai-engine', () => ({
     body?.error?.code === -1 ||
     body?.error?.is_transient === true ||
     /fatal/i.test(body?.error?.message ?? ''),
+  // Issue #62：本檔不斷言 spam，一律回 false（維持既有熱重試行為）；spam 專測另見 social-cooldown.test.ts
+  isMetaSpamSuspected: () => false,
+  extractMetaError: (body?: { error?: { code?: number; error_subcode?: number; message?: string } } | null) => ({
+    code: body?.error?.code ?? null,
+    subcode: body?.error?.error_subcode ?? null,
+    message: body?.error?.message ?? '',
+  }),
+  MetaSpamSuspectedError: class MetaSpamSuspectedError extends Error {
+    readonly subcode = 2207051
+    constructor(message: string) {
+      super(message)
+      this.name = 'MetaSpamSuspectedError'
+    }
+  },
+  getNextSocialEditionAt: (from: Date = new Date()) => {
+    const next = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate(), 0, 0, 0, 0))
+    if (next.getTime() <= from.getTime()) next.setUTCDate(next.getUTCDate() + 1)
+    return next
+  },
   META_RETRY_MAX_ATTEMPTS: 3,
 }))
 

@@ -1,10 +1,10 @@
-import { getMarketFocusMeta, getMarketFocus, getAgentSetting, saveSocialCardImage, getSocialCardImage } from '@stock/database'
-import { sleep, getChainPaceMs } from '@stock/ai-engine'
+import { getMarketFocusMeta, getMarketFocus, getAgentSetting, saveSocialCardImage, getSocialCardImage, listDueDeferredSocialPosts, getSocialPost } from '@stock/database'
+import { sleep, getChainPaceMs, isSocialEditionTime } from '@stock/ai-engine'
 import type { SocialPostPlatform } from '@stock/database'
 import { generateSocialCaptions, generateMemeConcept, IG_DRIVE_COMMENT, type SocialCaptions } from '@/lib/social'
 import { renderSocialCard, type SocialCardStyle } from '@/lib/social-canvas'
 import { generateSocialBackgroundImage, generateSocialArtworkImage } from '@/lib/social-ai-image'
-import { publishSocialPost, alreadyPosted, postInstagramComment } from '@/lib/social-publish'
+import { publishSocialPost, alreadyPosted, postInstagramComment, republishDeferredPost } from '@/lib/social-publish'
 import { publishThreadsReply } from '@/lib/threads-reply'
 import {
   generateFirstReplyQuestion,
@@ -16,12 +16,63 @@ import {
   type FirstReplyQuestion,
 } from '@/lib/social-first-reply'
 import { sendMarketFocusAlert } from '@/lib/email'
-import { buildFirstReplyFailMessage, buildSocialPartialFailMessage } from '@/lib/social-alert'
+import { buildFirstReplyFailMessage, buildSocialPartialFailMessage, buildSocialDeferredMessage, buildSocialRedriveExhaustedMessage } from '@/lib/social-alert'
 
 // ─── 社群發布協調層 ───────────────────────────────────────────────
 // 供 market-focus/refresh 尾端內嵌觸發，也可由 publish route 獨立呼叫。
 
 const SITE_BASE = process.env.AUTH_BASE_URL ?? 'https://vestential.com'
+
+/**
+ * Issue #62 社群降頻：一天只發一次，僅 00 UTC edition 觸發社群發布＋重打；
+ * 06／12／18 UTC 跳過（不發文、不記 failed、不發告警、不跑 redrive）。
+ * force（admin 手動）跳過此 gate。dryRun（預覽）不受 gate 影響。
+ */
+export function isSocialEdition(now: Date = new Date()): boolean {
+  return isSocialEditionTime(now)
+}
+
+export interface SocialRedriveSummary {
+  checked: number
+  published: { platform: SocialPostPlatform; editionKey: string }[]
+  terminal: { platform: SocialPostPlatform; editionKey: string; error?: string | null }[]
+}
+
+/**
+ * Issue #62：撿起已到期的 deferred 列，single-shot 重打（全程不熱重試）。
+ * 只由 00 UTC 非 force 執行呼叫；06／12／18 UTC 與 force 不跑。
+ * 成功→published；再失敗→終態 deferred（next_retry_at=null，只剩人工 force）。
+ */
+export async function redriveDueDeferredPosts(now: Date = new Date()): Promise<SocialRedriveSummary> {
+  const summary: SocialRedriveSummary = { checked: 0, published: [], terminal: [] }
+  const due = await listDueDeferredSocialPosts(now.toISOString()).catch((e) => {
+    console.error('[Social] redrive list failed:', e)
+    return []
+  })
+  const igDue = due.filter((r) => r.platform === 'instagram')
+  if (due.length > igDue.length) {
+    console.log(`[Social] redrive skip: ${due.length - igDue.length} 筆非 IG deferred，略過`)
+  }
+  if (igDue.length === 0) return summary
+  console.log(`[Social] redrive: ${igDue.length} 筆到期 deferred，00 UTC single-shot 重打`)
+  summary.checked = igDue.length
+  for (const row of igDue) {
+    try {
+      const res = await republishDeferredPost(row)
+      if (res.status === 'published') {
+        console.log(`[Social] redrive published: ${row.platform} ${row.edition_key}`)
+        summary.published.push({ platform: row.platform, editionKey: row.edition_key })
+      } else {
+        summary.terminal.push({ platform: row.platform, editionKey: row.edition_key, error: res.error })
+      }
+    } catch (e: any) {
+      const msg = (e?.message || String(e)).slice(0, 1000)
+      console.error('[Social] redrive error:', msg)
+      summary.terminal.push({ platform: row.platform, editionKey: row.edition_key, error: msg })
+    }
+  }
+  return summary
+}
 
 export interface SocialPublishOutcome {
   triggered: boolean
@@ -71,6 +122,8 @@ export async function triggerSocialPublish(
     imageUrl?: string | null
     imageUrls?: Partial<Record<SocialPostPlatform, string | null>>
     captions?: SocialCaptions
+    /** Issue #62：執行時刻（預設 now；單測可注入 00／06／12／18 UTC）。 */
+    now?: Date
   } = {},
 ): Promise<SocialPublishOutcome> {
   const dryRun = options.dryRun ?? false
@@ -139,6 +192,30 @@ export async function triggerSocialPublish(
   }
 
   // 發布：去重與發布綁定。force 重發時清除去重紀錄並全部重跑；否則只處理未發布過的平台。
+  // Issue #62 降頻 gate：只在去重檢查「之前」擋非 00 UTC（且不寫任何列、不發告警）。
+  const now = options.now ?? new Date()
+  if (!dryRun && !force && !isSocialEdition(now)) {
+    console.log(
+      `[Social] skip: 非 00 UTC edition（社群降頻一天一次，UTC hour=${now.getUTCHours()}，不發文、不記 failed、不發告警）`,
+    )
+    return {
+      triggered: false,
+      skipped: true,
+      editionKey,
+      message: 'skip: 非 00 UTC edition（社群降頻一天一次，06/12/18 UTC 不發文）',
+    }
+  }
+
+  // Issue #62：00 UTC 非 force 先重打到期 deferred（single-shot），再走本版發布。
+  let redrive: SocialRedriveSummary = { checked: 0, published: [], terminal: [] }
+  if (!dryRun && !force) {
+    try {
+      redrive = await redriveDueDeferredPosts(now)
+    } catch (e: any) {
+      console.error('[Social] redrive failed:', e?.message ?? e)
+    }
+  }
+
   const unresolved = force
     ? platforms.map((p) => ({ platform: p, posted: false }))
     : (
@@ -239,6 +316,30 @@ export async function triggerSocialPublish(
   if (failed.length > 0) {
     // Issue #57：告警內文改由 social-alert.ts 純函式組裝（含內容名／成功／失敗＋錯誤原文／重試／edition）。
     await sendMarketFocusAlert('社群發布部分失敗', buildSocialPartialFailMessage(editionKey!, results))
+  }
+
+  // Issue #62：deferred（疑似洗版／額度型冷卻）不走「部分失敗」口徑，另發冷卻告警
+  //（含 `spam suspected, subcode 2207051`＋停手等冷卻，不寫成單純 rate limit）。
+  const deferred = results.filter((r) => r.status === 'deferred')
+  if (deferred.length > 0) {
+    const items = await Promise.all(
+      deferred.map(async (r) => ({
+        platform: r.platform,
+        error: r.error,
+        nextRetryAt:
+          (await getSocialPost(r.platform, editionKey!).catch(() => null))?.next_retry_at ?? null,
+      })),
+    )
+    await sendMarketFocusAlert('社群 IG 冷卻延後（疑似洗版／額度型）', buildSocialDeferredMessage(editionKey!, items))
+  }
+
+  // Issue #62：redrive 終態（重打再失敗）另發「等人工 force」信。
+  if (redrive.terminal.length > 0) {
+    const redriveEdition = redrive.terminal[0]?.editionKey ?? editionKey!
+    await sendMarketFocusAlert(
+      '社群冷卻重打用罄，等人工 force',
+      buildSocialRedriveExhaustedMessage(redriveEdition, redrive.terminal),
+    )
   }
 
   return { triggered: true, editionKey, dryRun: false, results }

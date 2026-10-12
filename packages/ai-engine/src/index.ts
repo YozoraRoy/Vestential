@@ -41,6 +41,12 @@ export {
   isMetaRateLimit,
   isMetaTransient,
   getMetaBackoffMs,
+  META_SPAM_SUBCODE_2207051,
+  MetaSpamSuspectedError,
+  extractMetaError,
+  isMetaSpamSuspected,
+  isSocialEditionTime,
+  getNextSocialEditionAt,
 } from './llm/budget.js'
 export type { MetaRateLimitBody } from './llm/budget.js'
 export { FallbackClient, isSamePool, checkFallbackPoolDiversity } from './llm/fallback-client.js'

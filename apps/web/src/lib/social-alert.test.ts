@@ -6,6 +6,8 @@ import {
   buildFestivalPartialFailMessage,
   buildFirstReplyFailMessage,
   buildSocialPartialFailMessage,
+  buildSocialDeferredMessage,
+  buildSocialRedriveExhaustedMessage,
   succeededPlatforms,
   truncateAlertError,
   truncateAlertText,
@@ -104,5 +106,33 @@ describe('LINE 截斷規則', () => {
       { platform: 'instagram', status: 'failed', error: combined },
     ])
     expect(out).toContain('首次 HTTP 403 code=4')
+  })
+})
+
+describe('Issue #62：冷卻延後／重打用罄告警改字', () => {
+  it('buildSocialDeferredMessage 含 spam suspected, subcode 2207051＋停手等冷卻，不寫成單純 rate limit', () => {
+    const out = buildSocialDeferredMessage('2026-10-13T00:00:00.000Z', [
+      {
+        platform: 'instagram',
+        error: 'IG suspected spam (spam suspected, subcode 2207051): HTTP 403',
+        nextRetryAt: '2026-10-14T00:00:00.000Z',
+      },
+    ])
+    expect(out).toContain('spam suspected, subcode 2207051')
+    expect(out).toContain('停手等冷卻')
+    expect(out).toContain('2026-10-14T00:00:00.000Z')
+    expect(out).toContain(SOCIAL_ALERT_RETRY_HINT)
+    expect(out).toContain('edition: 2026-10-13T00:00:00.000Z')
+    expect(out).not.toContain('部分失敗')
+  })
+
+  it('buildSocialRedriveExhaustedMessage 含等人工 force', () => {
+    const out = buildSocialRedriveExhaustedMessage('2026-10-12T00:00:00.000Z', [
+      { platform: 'instagram', error: 'second 2207051 bang' },
+    ])
+    expect(out).toContain('spam suspected, subcode 2207051')
+    expect(out).toContain('force')
+    expect(out).toContain('IG: second 2207051 bang')
+    expect(out).toContain('edition: 2026-10-12T00:00:00.000Z')
   })
 })
