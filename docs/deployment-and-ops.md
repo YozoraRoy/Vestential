@@ -77,7 +77,7 @@
 
 ## 3. 定時自動化排程
 
-系統以 GitHub Actions **10 個 workflow**（皆以台灣時間表示）維持行情、健康狀態與社群發布：
+系統以 GitHub Actions **11 個 workflow**（9 個定時排程＋部署＋靜態閘門；時間皆以台灣時間表示）維持行情、健康狀態與社群發布：
 
 1. **零股行情同步 (`sync-oddlot.yml`)**：
    - 時間：台灣時間每個工作日 **15:10**（TWSE 盤後零股公布後）。
@@ -109,6 +109,9 @@
 10. **持倉現價＋除息快取同步 (`sync-portfolio-prices.yml`)**：
     - 時間：每個交易日台灣時間 **16:00**（`0 8 * * 1-5` UTC；假日由 API 內 `isTwseTradingDay` 再擋一次）。
     - 行為：呼叫 `POST /api/portfolio/sync`（`SYNC_TOKEN` 驗證）全掃持倉現價；**順帶更新當年除息快取**（TWSE `TWT48U` 每日 CSV → `twse_dividends` 表，缺檔才抓、同日不重抓）＋**5 年殖利率回填**（`ensureYieldHistoryBackfill`，每輪上限 30 天、斷點續抓；失敗不擋主流程＋告警沿用既有機制）。資料源與當年／5 年殖利率規則見 `docs/features-guide.md` §1.8。
+11. **靜態閘門 (`typecheck.yml`，Issue #68 防漏網)**：
+    - 觸發：push 至 `main`＋所有 pull_request。
+    - 行為：先建依賴 workspaces（core→market-data→database→ai-engine，避免 stale dist）再跑 `npm run typecheck` 全量檢查；`NODE_OPTIONS=--max-old-space-size=6144`（web tsc 需約 6GB，見 §5 Q5）。
 
 ---
 
@@ -254,6 +257,15 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 - **原因**：Groq qwen tier OTPM 硬上限 1000 且按「已用＋本次請求」擋；`market_focus.summary_max_tokens` 生產 DB 值若為 1000（code 預設 450，後台可調——先檢查後台設定值），加上 pipeline 前段呼叫已燒 ~800，1000 一進就爆。另查主備是否同 key 同池（2026-09-23 前即如此，已分池）。
 - **排除**：到 GitHub 該次 `sync-market-focus` run 看錯誤明細；查 `llm_usage_logs`（`getLlmUsageReport`）還原每分鐘用量尖峰；確認 deploy 的 tier1/tier2 用不同 secret。
 - **長期**：錯峰＋退避已內建（不動靜態參數）；用量儀表板（Issue-B 規劃）上線後可直接看分鐘級水位；仍頻繁爆再考慮調參或升級 Groq Dev Tier。
+
+### Q5：本地 `npm run typecheck` 報 TS2305（`@stock/database` 缺成員）或 OOM exit 134？
+- **症狀**：`apps/web` 出現 `Module "@stock/database" has no exported member deleteOddLotByDate / listOddLotDateCounts`（Issue #68，commit 5a41d65 之後）；或 `tsc --noEmit` 被 OOM killer 終止（exit 134）。
+- **原因**：stale dist——源碼函式本體存在（`packages/database/src/fetchers/twse-odd-lot.ts`），但 `apps/web` 經 `@stock/database` 解析到的是 gitignored 的 tsup 產物（`packages/database/dist/`），本地 dist 過舊即斷鏈；另 `apps/web` tsc 需約 6GB 堆，預設堆不夠。
+- **排除**：
+  1. 重建即解：`npm run build --workspace=packages/database` 後 `grep deleteOddLotByDate packages/database/dist/index.js` 應有命中，web tsc 即零 TS2305。
+  2. 常態免手動：根目錄 `npm run typecheck` 會先跑 `pretypecheck` 自動重建依賴 workspaces（core→market-data→database→ai-engine）；單跑 web 也會經 `apps/web` 的 `pretypecheck` 先建 database。
+  3. OOM：`apps/web` 的 `typecheck` 已固定 `node --max-old-space-size=6144`，直接跑即可；CI（`typecheck.yml`）另設同值 `NODE_OPTIONS`。
+- **長期**：`typecheck.yml`（push main＋PR）先 build 依賴再全量 typecheck，同類斷鏈合併前即攔下；生產部署走 `deploy.yml` 的 `local-build`（先建 database 再建 web），不受影響。
 
 ---
 
