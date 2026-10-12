@@ -11,7 +11,7 @@
     "local-build": "npm run build --workspace=packages/core && npm run build --workspace=packages/market-data && npm run build --workspace=packages/database && npm run build --workspaces --if-present",
     "build": "echo 'Bypassing Cloud Build'",
     "lint": "npm run lint --workspaces --if-present",
-    "pretypecheck": "npm run build --workspace=packages/core && npm run build --workspace=packages/market-data && npm run build --workspace=packages/database && npm run build --workspace=packages/ai-engine",
+    "pretypecheck": "npm run build --workspace=packages/core && npm run build --workspace=packages/market-data && npm run build --workspace=packages/database && npm run build --workspace=packages/backtest && npm run build --workspace=packages/cycle-entry && npm run build --workspace=packages/ai-engine",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces --if-present",
     "seed": "npm run seed --workspace=packages/database",

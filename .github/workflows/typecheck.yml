@@ -28,7 +28,9 @@ jobs:
         run: npm ci
 
       - name: Build workspace dependencies (avoid stale dist)
-        run: npm run build --workspace=packages/core && npm run build --workspace=packages/market-data && npm run build --workspace=packages/database && npm run build --workspace=packages/ai-engine
+        # 注意：此清單需與根 package.json 的 pretypecheck 保持同步
+        #（依賴序：core → market-data → database/backtest/cycle-entry → ai-engine）。
+        run: npm run build --workspace=packages/core && npm run build --workspace=packages/market-data && npm run build --workspace=packages/database && npm run build --workspace=packages/backtest && npm run build --workspace=packages/cycle-entry && npm run build --workspace=packages/ai-engine
 
       - name: Typecheck all workspaces
         run: npm run typecheck
