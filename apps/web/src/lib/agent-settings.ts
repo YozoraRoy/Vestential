@@ -99,6 +99,25 @@ export const DEFAULT_AGENT_SETTINGS: Record<string, AgentSettingMeta> = {
     defaultValue: '0.6',
     help: '台股手續費折讓（0~1；0.6＝6 折 0.0855%）。試算頁淨損益即時生效；美股不收稅費不受影響。',
   },
+  // 主力籌碼雷達（Issue #71：异常閾值後台可調；改值後下輪榜單即生效，讀時即算）
+  'chip.consec_days': {
+    category: 'chip',
+    label: '連買/賣天數門檻',
+    defaultValue: '3',
+    help: '連買或連賣達幾天才列入異常榜（2~5；預設 3）。改值後下輪榜單即生效。',
+  },
+  'chip.ratio_pct': {
+    category: 'chip',
+    label: '法人佔比門檻％',
+    defaultValue: '5',
+    help: '當日法人合計買賣超金額佔成交額達幾％才列入異常榜（預設 5）。改值後下輪榜單即生效。',
+  },
+  'chip.margin_diverge_on': {
+    category: 'chip',
+    label: '融資背離標籤開關',
+    defaultValue: 'on',
+    help: 'on＝融資大減＋股價上漲掛背離標籤；本期無融資源（未含融資）故永不觸發，第二期接源即生效。',
+  },
   // 競技場
   'arena.slippage': {
     category: 'arena',

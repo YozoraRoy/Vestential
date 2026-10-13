@@ -439,6 +439,130 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
   return sendMailCore(`⚠️ Vestential 系統異常通知 — ${topic}`, text, html)
 }
 
+// ─── ②a 籌碼雷達異常榜 digest（Issue #71，email-only） ──────────
+// 沿 sendMarketFocusSummary 扇出模式：NOTIFY_TO＋既有 market_focus_subscribers
+//（active；個人化退訂連結沿 buildUnsubscribeBlock），不新增任何渠道；
+// 每日一榜：agent_settings `email.last_chip_edition` 記 asOf，同日不重寄。
+
+export interface ChipDigestItem {
+  symbol: string
+  name: string
+  direction: 'buy' | 'sell'
+  days: number
+  netShares: number
+  ratioPct: number
+}
+
+function fmtShares(n: number): string {
+  const a = Math.abs(n)
+  if (a >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}億股`
+  if (a >= 10_000) return `${(n / 10_000).toFixed(1)}萬股`
+  return `${n.toLocaleString('en-US')}股`
+}
+
+function buildChipDigestText(asOf: string, items: ChipDigestItem[], scanned: number): string {
+  const lines = items
+    .slice(0, 20)
+    .map(
+      (it, i) =>
+        `${i + 1}. ${it.symbol} ${it.name}：法人${it.direction === 'buy' ? '連買' : '連賣'}${it.days}天，` +
+        `當日淨${it.netShares >= 0 ? '買超' : '賣超'}${fmtShares(it.netShares)}，佔成交額 ${it.ratioPct.toFixed(2)}%`,
+    )
+    .join('\n')
+  const more = items.length > 20 ? `\n…等共 ${items.length} 檔（完整榜單請見網站）` : ''
+  return `========================================
+Vestential · 主力籌碼雷達（法人連買賣異常榜）
+資料時間：${asOf}（盤後初值；上市；未含融資）
+掃描：${scanned} 檔
+========================================
+
+${lines}${more}
+
+----------------------------------------
+查看完整榜單：${SITE_BASE}/chip-radar
+
+※ 法人＝外資合計＋投信（TWT38U＋TWT44U）；佔比＝|淨超×收盤|／成交額。
+※ 統計訊號非投資建議；使用即代表同意服務條款 ${SITE_BASE}/terms。
+========================================`
+}
+
+/** 異常榜 digest（讀時順帶 best-effort；同 asOf 已寄即略過；回傳是否寄出）。 */
+export async function sendChipRadarDigest(
+  asOf: string,
+  items: ChipDigestItem[],
+  scanned: number,
+): Promise<boolean> {
+  if (!asOf || items.length === 0) return false
+  try {
+    const lastSent = await getAgentSetting('email.last_chip_edition').catch(() => null)
+    if (lastSent === asOf) return false
+
+    const subject = `📡 主力籌碼雷達 ${asOf} — 法人連買賣異常 ${items.length} 檔（盤後初值）`
+    const text = buildChipDigestText(asOf, items, scanned)
+    const listHtml = items
+      .slice(0, 20)
+      .map(
+        (it, i) =>
+          `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin:8px 0;background:#ffffff;font-size:14px;color:#0f172a;">` +
+          `<b>${i + 1}. ${escapeHtml(it.symbol)} ${escapeHtml(it.name)}</b>：` +
+          `法人${it.direction === 'buy' ? '連買' : '連賣'}${it.days}天，` +
+          `當日淨${it.netShares >= 0 ? '買超' : '賣超'}${escapeHtml(fmtShares(it.netShares))}，` +
+          `佔成交額 ${it.ratioPct.toFixed(2)}%</div>`,
+      )
+      .join('\n')
+    const moreHtml = items.length > 20 ? `<div style="font-size:13px;color:#64748b;">…等共 ${items.length} 檔（完整榜單請見網站）。</div>` : ''
+    const html = `
+    <div style="background:#f1f5f9;padding:24px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Microsoft JhengHei,sans-serif;">
+      <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+        <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-weight:800;font-size:16px;">📡 主力籌碼雷達 — 法人連買賣異常榜</div>
+        <div style="padding:20px 24px;font-size:13px;color:#64748b;">資料時間：${escapeHtml(asOf)}（盤後初值；上市；未含融資）· 掃描 ${scanned} 檔</div>
+        <div style="padding:0 24px 8px;">${listHtml}${moreHtml}</div>
+        <div style="text-align:center;margin:16px 0 20px;">
+          <a href="${escapeHtml(SITE_BASE)}/chip-radar" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 28px;border-radius:9999px;">查看完整榜單 →</a>
+        </div>
+        <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 24px;font-size:12px;color:#64748b;line-height:1.8;">
+          法人＝外資合計＋投信（TWT38U＋TWT44U）；佔比＝|淨超×收盤|／成交額。<br/>
+          統計訊號非投資建議；使用即代表同意<a href="${escapeHtml(SITE_BASE)}/terms" style="color:#64748b;text-decoration:underline;">服務條款</a>。
+        </div>
+      </div>
+    </div>`
+
+    const adminOk = await sendMailCore(subject, text, html)
+    const subscribers = await listActiveMarketFocusSubscribers().catch(() => [])
+    const mailTasks = subscribers
+      .map((sub) => {
+        const to = sub.email
+        if (!to || !to.includes('@')) return null
+        const unsub = buildUnsubscribeBlock({ email: to, token: sub.token })
+        const htmlWithUnsub = unsub ? html.replace('服務條款</a>。', `服務條款</a>。${unsub}`) : html
+        const textWithUnsub = unsub
+          ? `${text}\n\n不想再收到電子報？退訂：${SITE_BASE}/api/market-focus/unsubscribe?email=${encodeURIComponent(to)}&token=${encodeURIComponent(sub.token)}`
+          : text
+        return sendMailCore(subject, textWithUnsub, htmlWithUnsub, to)
+      })
+      .filter((t): t is Promise<boolean> => t !== null)
+    const results = await Promise.allSettled(mailTasks)
+    const sentTo = results.filter((r) => r.status === 'fulfilled' && r.value).length
+    if (subscribers.length > 0) {
+      console.log(`[Notify] chip digest 已寄出 ${sentTo}/${subscribers.length} 位訂閱者`)
+    }
+    if (adminOk) {
+      await setAgentSetting({
+        key: 'email.last_chip_edition',
+        value: asOf,
+        category: 'email',
+        label: '籌碼雷達 digest 最後寄送資料日',
+      }).catch((e) => {
+        console.warn('[Notify] 記錄 email.last_chip_edition 失敗:', e)
+      })
+    }
+    return adminOk
+  } catch (e) {
+    console.error('[Notify] chip digest failed (non-blocking):', e)
+    return false
+  }
+}
+
 // ─── ③ 健康覆盤告警信 ───────────────────────────────────────────
 const HEALTH_ALERT_THROTTLE_MS = 6 * 60 * 60 * 1000
 let lastHealthAlertAt = 0
