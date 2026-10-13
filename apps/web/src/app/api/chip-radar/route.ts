@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { migrate } from '@stock/database'
 import { isTwseTradingDay, taipeiTodayStr } from '../../../lib/twse-calendar'
-import { ensureChipRadar, MARGIN_DIVERGE_AVAILABLE } from '../../../lib/chip-radar'
+import { ensureChipRadar, isTodayOnlyPartial, taipeiHourOf, MARGIN_DIVERGE_AVAILABLE } from '../../../lib/chip-radar'
 import { alertChipDigest, alertChipFetchFailed } from '../../../lib/chip-alerts'
 
 export const runtime = 'nodejs'
@@ -28,12 +28,18 @@ export async function GET() {
     await migrate()
     const today = taipeiTodayStr()
     const isTradingDay = isTwseTradingDay(today)
-    const snap = await ensureChipRadar(today)
+    // #71 後續（夜間誤報修復）：窗構造與分級共用同一小時，避免 19 點邊界競態。
+    const snap = await ensureChipRadar(today, { taipeiHour: taipeiHourOf() })
 
     // 讀時順帶通知（皆 best-effort＋30 分鐘去重，不新增渠道／cron）：
-    // - 降級（缺日／無報價／可用日不足）：告警信；
+    // - 降級（缺日／無報價／可用日不足）：告警信；但 partial 僅缺今日單日
+    //   （盤後公布前尚未有檔，非真異常）→ 不寄信，缺過去日照常寄（縱深防禦）；
     // - 有榜：當日 digest 寄既有訂閱者（日別去重由 sendChipRadarDigest 把關）。
-    if (snap.degraded && snap.degradedReason !== 'non-trading-day') {
+    if (
+      snap.degraded &&
+      snap.degradedReason !== 'non-trading-day' &&
+      !isTodayOnlyPartial(snap.degradedReason, today)
+    ) {
       void alertChipFetchFailed(`${snap.degradedReason ?? 'unknown'}（資料時間 ${snap.asOf ?? '無'}）`)
     }
     if (snap.asOf && snap.items.length > 0 && !snap.degradedReason?.startsWith('insufficient')) {

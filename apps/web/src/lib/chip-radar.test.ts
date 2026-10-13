@@ -1,18 +1,27 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildChipAnomalies,
+  buildChipWindowDays,
   chipRatioPct,
   cleanChipCode,
+  clearChipRadarCache,
+  ensureChipRadar,
   isChipAnomaly,
+  isTodayOnlyPartial,
   parseChipThresholds,
   parseStockDayAll,
   parseTwt38u,
   parseTwt44u,
   parseTwseNum,
+  taipeiHourOf,
   trailingStreak,
+  CHIP_PUBLISH_HOUR_TAIPEI,
   DEFAULT_CHIP_THRESHOLDS,
   type ChipAnomalyInput,
+  type ChipForeignRow,
+  type ChipQuote,
 } from './chip-radar'
+import { isTwseTradingDay } from './twse-calendar'
 
 // Issue #71 主力籌碼雷達引擎單測（純函式，手算可重現）。
 // 3 檔手算錨點＝TWSE 官方日報 2026-10-12（TWT38U 外資合計超＋TWT44U 投信超
@@ -184,5 +193,154 @@ describe('buildChipAnomalies', () => {
   it('趨勢序列為近 5 日升冪原樣', () => {
     const rows = buildChipAnomalies(input, DEFAULT_CHIP_THRESHOLDS)
     expect(rows.find((r) => r.symbol === '2409')?.trend).toEqual([-212135842, -87070778, -76214749, -59453941, -26300905])
+  })
+})
+
+// ─── #71 後續：夜間誤報修復（法人日報約 19 點後公布） ───
+// 日期錨點：2026-10-13（週二，交易日；10-09 國慶補假休市、10-10/11 週末）。
+// 故公布前窗＝[10-05,10-06,10-07,10-08,10-12]，公布後窗＝[10-06,10-07,10-08,10-12,10-13]。
+describe('公布時點窗（buildChipWindowDays）', () => {
+  const TODAY = '2026-10-13'
+
+  it('公布時點常數為 19，taipeiHourOf 回傳 0–23 整數（不依賴真實時鐘斷言固定值）', () => {
+    expect(CHIP_PUBLISH_HOUR_TAIPEI).toBe(19)
+    const h = taipeiHourOf()
+    expect(Number.isInteger(h)).toBe(true)
+    expect(h).toBeGreaterThanOrEqual(0)
+    expect(h).toBeLessThanOrEqual(23)
+  })
+
+  it('① 未滿 19 點窗不含今日（起點往前挪一天）', () => {
+    expect(buildChipWindowDays(TODAY, 10, isTwseTradingDay)).toEqual([
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+      '2026-10-12',
+    ])
+    // 邊界：18 點仍排除今日
+    const edge = buildChipWindowDays(TODAY, 18, isTwseTradingDay)
+    expect(edge).not.toContain(TODAY)
+    expect(edge[edge.length - 1]).toBe('2026-10-12')
+  })
+
+  it('≥19 點窗含今日', () => {
+    expect(buildChipWindowDays(TODAY, 19, isTwseTradingDay)).toEqual([
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+      '2026-10-12',
+      '2026-10-13',
+    ])
+    expect(buildChipWindowDays(TODAY, 23, isTwseTradingDay)).toContain(TODAY)
+  })
+})
+
+describe('isTodayOnlyPartial（告警分級）', () => {
+  const TODAY = '2026-10-13'
+  it('僅缺今日單日 → true（route 抑制寄信）', () => {
+    expect(isTodayOnlyPartial('partial-days:2026-10-13', TODAY)).toBe(true)
+  })
+  it('缺過去日照常寄 → false', () => {
+    expect(isTodayOnlyPartial('partial-days:2026-10-12', TODAY)).toBe(false)
+    expect(isTodayOnlyPartial('partial-days:2026-10-12,2026-10-13', TODAY)).toBe(false)
+    expect(isTodayOnlyPartial('partial-days:2026-10-13,2026-10-12', TODAY)).toBe(false)
+  })
+  it('非 partial 原因 → false', () => {
+    expect(isTodayOnlyPartial(null, TODAY)).toBe(false)
+    expect(isTodayOnlyPartial('insufficient-days', TODAY)).toBe(false)
+    expect(isTodayOnlyPartial('no-quotes', TODAY)).toBe(false)
+    expect(isTodayOnlyPartial('non-trading-day', TODAY)).toBe(false)
+  })
+})
+
+describe('ensureChipRadar 公布時點整合（抓取以注入代替打網）', () => {
+  const TODAY = '2026-10-13'
+  const foreignOf =
+    (byDay: Record<string, number>) =>
+    async (d: string): Promise<Map<string, ChipForeignRow>> => {
+      const v = byDay[d]
+      if (v == null) return new Map()
+      return new Map([['2330', { name: '台積電', foreignNet: v }]])
+    }
+  const emptyTrust = async (): Promise<Map<string, number>> => new Map()
+  // 佔比＝|1000×1000|／100000×100＝1000%，任何合法閾值下皆達標
+  const quotesOf = async (): Promise<Map<string, ChipQuote>> =>
+    new Map([['2330', { close: 1000, tradeValue: 100_000 }]])
+
+  it('② ≥19 點缺今日照常 partial（真異常，不吞；分級判為僅缺今日）', async () => {
+    clearChipRadarCache()
+    const snap = await ensureChipRadar(TODAY, {
+      taipeiHour: 20,
+      fetchForeignDay: foreignOf({
+        '2026-10-06': 1000,
+        '2026-10-07': 1000,
+        '2026-10-08': 1000,
+        '2026-10-12': 1000,
+        // '2026-10-13' 公布後仍無今日檔
+      }),
+      fetchTrustDay: emptyTrust,
+      fetchQuotes: quotesOf,
+    })
+    expect(snap.windowDays).toContain(TODAY)
+    expect(snap.degraded).toBe(true)
+    expect(snap.degradedReason).toBe('partial-days:2026-10-13')
+    expect(isTodayOnlyPartial(snap.degradedReason, TODAY)).toBe(true)
+  })
+
+  it('③ streak 不受未公布日污染（公布前窗止於昨日、asOf 為昨日、無 partial）', async () => {
+    clearChipRadarCache()
+    const snap = await ensureChipRadar(TODAY, {
+      taipeiHour: 10,
+      fetchForeignDay: foreignOf({
+        '2026-10-05': 1000,
+        '2026-10-06': 1000,
+        '2026-10-07': 1000,
+        '2026-10-08': 1000,
+        '2026-10-12': 1000,
+      }),
+      fetchTrustDay: emptyTrust,
+      fetchQuotes: quotesOf,
+    })
+    expect(snap.windowDays).toEqual([
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+      '2026-10-12',
+    ])
+    expect(snap.asOf).toBe('2026-10-12')
+    expect(snap.degraded).toBe(false)
+    expect(snap.degradedReason).toBeNull()
+    expect(snap.items.find((i) => i.symbol === '2330')).toMatchObject({
+      direction: 'buy',
+      days: 5,
+    })
+    // 對照：若把未公布今日補 0 納入，streak 會被斷成 none（舊 bug 行為）
+    expect(trailingStreak([1000, 1000, 1000, 1000, 1000, 0])).toEqual({
+      direction: 'none',
+      days: 0,
+    })
+  })
+
+  it('④ 休市分支不變（hour 無關、不打 TWSE）', async () => {
+    const sunday = '2026-10-11'
+    const boom = async (): Promise<never> => {
+      throw new Error('must not fetch on closed day')
+    }
+    for (const h of [10, 20]) {
+      clearChipRadarCache()
+      const snap = await ensureChipRadar(sunday, {
+        taipeiHour: h,
+        fetchForeignDay: boom,
+        fetchTrustDay: boom,
+        fetchQuotes: boom,
+      })
+      expect(snap.status).toBe('closed')
+      expect(snap.isTradingDay).toBe(false)
+      expect(snap.degradedReason).toBe('non-trading-day')
+      expect(snap.asOf).toBe('2026-10-08')
+      expect(snap.windowDays).toEqual([])
+    }
   })
 })

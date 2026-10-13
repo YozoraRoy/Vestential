@@ -41,6 +41,32 @@ export const CHIP_TOP_N = 50
 /** 程序內快取 TTL（讀時即算 best-effort；同日 10 分鐘內不重打 TWSE）。 */
 export const CHIP_CACHE_TTL_MS = 10 * 60 * 1000
 
+/**
+ * #71 後續（夜間誤報修復）：三大法人日報為盤後公布（約 19 點後才有今日檔）。
+ * 公布前今日檔不存在 → 舊窗含今日會把「尚未公布」誤判為缺檔 partial、
+ * 缺日補 0 切斷連買 streak（榜單系統性偏空）、讀時順帶寄出夜間信。
+ * 故交易日當天 Taipei hour < 此值 → 回看窗排除今日（不打 TWSE、不進
+ * partial、streak 不受污染）；≥ 此值含今日（仍缺→照常 partial 真異常）。
+ */
+export const CHIP_PUBLISH_HOUR_TAIPEI = 19
+
+/**
+ * 台北時區當前小時（0–23；沿 `twse-calendar.ts taipeiTodayStr` 的
+ * `Intl … Asia/Taipei` 模式，就地以 Intl 取 hour 並註明；
+ * hour12:false 在午夜可能回傳 24，一律正規化為 0）。
+ */
+export function taipeiHourOf(now: Date = new Date()): number {
+  const h = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Taipei',
+      hour: 'numeric',
+      hour12: false,
+    }).format(now),
+  )
+  if (!Number.isFinite(h)) return 0
+  return h === 24 ? 0 : h
+}
+
 /** 融資背離第二期：本單無融資源，一律 false（AC 以「未含融資」交付）。 */
 export const MARGIN_DIVERGE_AVAILABLE = false
 
@@ -355,6 +381,47 @@ function addDaysStr(iso: string, n: number): string {
     .toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
 }
 
+/**
+ * 回看窗構造（純，可單測；#71 後續夜間誤報修復）：
+ * - today 是交易日且 hour < `CHIP_PUBLISH_HOUR_TAIPEI` → 錨點往前挪一天
+ *   （排除今日：不打 TWSE、不進 partial、streak 不受未公布日污染）；
+ * - 否則錨點即 today（含今日；公布後仍缺→照常 partial 真異常）。
+ * 由錨點往舊找 `CHIP_LOOKBACK_DAYS` 個交易日，回傳升冪。
+ * 休市分支由 `ensureChipRadar` 另行處理（closed，不調用本函式取窗）。
+ */
+export function buildChipWindowDays(
+  today: string,
+  taipeiHour: number,
+  isTradingDay: (d: string) => boolean,
+): string[] {
+  const excludeToday = isTradingDay(today) && taipeiHour < CHIP_PUBLISH_HOUR_TAIPEI
+  const anchor = excludeToday ? addDaysStr(today, -1) : today
+  const days: string[] = []
+  for (let i = 0; i < 14 && days.length < CHIP_LOOKBACK_DAYS; i++) {
+    const d = addDaysStr(anchor, -i)
+    if (isTradingDay(d)) days.push(d)
+  }
+  days.sort()
+  return days
+}
+
+/**
+ * 告警分級（#71 後續縱深防禦；route 層使用）：
+ * `partial-days:X` 僅含今日單日且等於 today（盤後公布前尚未有檔，
+ * 非真異常）→ 呼叫端不寄信；缺過去日照常寄。
+ * （註：實際 reason 日格式為 YYYY-MM-DD，故以「單日＋等於 today」判定，
+ * 格式無關；`insufficient-days`／`no-quotes` 一律回 false。）
+ */
+export function isTodayOnlyPartial(reason: string | null, today: string): boolean {
+  if (!reason || !reason.startsWith('partial-days:')) return false
+  const days = reason
+    .slice('partial-days:'.length)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return days.length === 1 && days[0] === today
+}
+
 function isRateLimitedLike(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e ?? '')
   return /429|rate.?limit|too many/i.test(msg)
@@ -374,8 +441,29 @@ export function clearChipRadarCache(): void {
  * - 任一日缺檔（空 Map）視為該日無資料併入（nets 缺日補 0）；可用日 <3 即
  *   `insufficient-days` 空榜（不斷言，避免誤榜）。
  */
-export async function ensureChipRadar(today: string): Promise<ChipRadarSnapshot> {
-  const cached = snapshotCache.get(today)
+export interface EnsureChipRadarOptions {
+  /**
+   * 台北小時（0–23；測試可注入，預設取真實時鐘 `taipeiHourOf()`）。
+   * 未滿 `CHIP_PUBLISH_HOUR_TAIPEI` 且 today 為交易日時回看窗排除今日。
+   */
+  taipeiHour?: number
+  /**
+   * 單日抓取覆寫（測試注入免打網；預設走 TWSE；有任一覆寫即 bypass 快取）。
+   */
+  fetchForeignDay?: typeof fetchTwt38uDay
+  fetchTrustDay?: typeof fetchTwt44uDay
+  fetchQuotes?: typeof fetchStockDayAll
+}
+
+export async function ensureChipRadar(
+  today: string,
+  opts?: EnsureChipRadarOptions,
+): Promise<ChipRadarSnapshot> {
+  const useTestDeps = Boolean(opts?.fetchForeignDay ?? opts?.fetchTrustDay ?? opts?.fetchQuotes)
+  // 快取鍵含公布前／後相位（同日 19 點前後窗不同，不可共用快取）。
+  const phaseHour = opts?.taipeiHour ?? taipeiHourOf()
+  const cacheKey = `${today}:${phaseHour < CHIP_PUBLISH_HOUR_TAIPEI ? 'pre' : 'post'}`
+  const cached = useTestDeps ? undefined : snapshotCache.get(cacheKey)
   if (cached && Date.now() - cached.at < CHIP_CACHE_TTL_MS) return cached.data
 
   const thresholds = await getChipThresholds()
@@ -412,25 +500,23 @@ export async function ensureChipRadar(today: string): Promise<ChipRadarSnapshot>
         degraded: true,
         degradedReason: 'non-trading-day',
       }
-      snapshotCache.set(today, { at: Date.now(), data: snap })
+      if (!useTestDeps) snapshotCache.set(cacheKey, { at: Date.now(), data: snap })
       return snap
     }
 
-    // 近 5 交易日（含今日，由新往舊找；週末＋正源假日皆跳過）。
-    const days: string[] = []
-    for (let i = 0; i < 14 && days.length < CHIP_LOOKBACK_DAYS; i++) {
-      const d = addDaysStr(today, -i)
-      if (isTwseTradingDay(d)) days.push(d)
-    }
-    days.sort()
+    // 近 5 交易日（#71 後續：公布前排除今日，見 `buildChipWindowDays`；
+    // 休市分支已在上方 return，本窗只處理交易日）。
+    const days = buildChipWindowDays(today, phaseHour, isTwseTradingDay)
     base.windowDays = days
 
     const dayForeign: Map<string, ChipForeignRow>[] = []
     const dayTrust: Map<string, number>[] = []
     const partial: string[] = []
+    const fetchF = opts?.fetchForeignDay ?? fetchTwt38uDay
+    const fetchT = opts?.fetchTrustDay ?? fetchTwt44uDay
     for (const d of days) {
       try {
-        const [f, t] = await Promise.all([fetchTwt38uDay(d), fetchTwt44uDay(d)])
+        const [f, t] = await Promise.all([fetchF(d), fetchT(d)])
         dayForeign.push(f)
         dayTrust.push(t)
         if (f.size === 0) partial.push(d)
@@ -451,13 +537,13 @@ export async function ensureChipRadar(today: string): Promise<ChipRadarSnapshot>
         degradedReason: 'insufficient-days',
         scanned: 0,
       }
-      snapshotCache.set(today, { at: Date.now(), data: snap })
+      if (!useTestDeps) snapshotCache.set(cacheKey, { at: Date.now(), data: snap })
       return snap
     }
 
     let quotes = new Map<string, ChipQuote>()
     try {
-      quotes = await fetchStockDayAll()
+      quotes = await (opts?.fetchQuotes ?? fetchStockDayAll)()
     } catch (e) {
       console.error('[ChipRadar] STOCK_DAY_ALL failed (non-blocking):', e)
     }
@@ -502,7 +588,7 @@ export async function ensureChipRadar(today: string): Promise<ChipRadarSnapshot>
       items,
       scanned: universe.size,
     }
-    snapshotCache.set(today, { at: Date.now(), data: snap })
+    if (!useTestDeps) snapshotCache.set(cacheKey, { at: Date.now(), data: snap })
     return snap
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'chip radar failed'

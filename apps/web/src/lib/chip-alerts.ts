@@ -25,10 +25,25 @@ function shouldSend(key: string): boolean {
 }
 
 /** 法人抓取失敗／快取降級時告警（30 分鐘去重）。 */
-export async function alertChipFetchFailed(reason: string): Promise<void> {
+export interface ChipFetchFailedOptions {
+  /**
+   * #71 後續文案分流：true 表「今日法人日報尚未公布」情境
+   * （route 傳入對應 reason 時），文案為「晚間再看」不提排程檢查；
+   * 省略／false＝真缺數，保留「請檢查同步排程」。
+   * 去重鍵與真缺數分開，軟文案不吃掉真異常的告警額度。
+   */
+  todayNotPublished?: boolean
+}
+
+export async function alertChipFetchFailed(reason: string, opts?: ChipFetchFailedOptions): Promise<void> {
   try {
-    if (!shouldSend('chip-radar:fetch-failed')) return
-    await sendMarketFocusAlert('籌碼雷達抓取降級', `TWT38U/TWT44U 籌碼抓取降級顯示（${reason}）；頁面已標註資料時間，請檢查同步排程。`)
+    const notPublished = opts?.todayNotPublished === true
+    const key = notPublished ? 'chip-radar:fetch-failed:not-published' : 'chip-radar:fetch-failed'
+    if (!shouldSend(key)) return
+    const body = notPublished
+      ? `TWT38U/TWT44U 今日法人日報尚未公布（${reason}）；晚間再看，頁面已標註資料時間。`
+      : `TWT38U/TWT44U 籌碼抓取降級顯示（${reason}）；頁面已標註資料時間，請檢查同步排程。`
+    await sendMarketFocusAlert('籌碼雷達抓取降級', body)
   } catch (e) {
     console.error('[ChipAlert] fetch-failed alert failed (non-blocking):', e)
   }
