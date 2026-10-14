@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState, Fragment } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, CalendarDays, ChevronDown, Info, Radar } from 'lucide-react'
+import { AlertTriangle, CalendarDays, ChevronDown, ExternalLink, Info, Radar } from 'lucide-react'
 import { TableSkeleton } from '@/components/table-skeleton'
+import { googleStockSearchUrl } from '@/lib/stock-search-url'
 import { sortChipRows, type ChipSortDir, type ChipSortKey } from '@/lib/chip-sort'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
@@ -323,6 +324,17 @@ function FragmentRow({
         onClick={onToggle}
       >
         <td className="px-3 py-2.5">
+          <a
+            href={googleStockSearchUrl(it.symbol, it.name)}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`${it.symbol}${it.name} Google 搜尋（另開新頁）`}
+            title={`${it.symbol}${it.name} Google 搜尋`}
+            onClick={(e) => e.stopPropagation()}
+            className="mr-1 inline-flex align-middle text-[var(--text-secondary)] opacity-60 hover:opacity-100 hover:text-[var(--accent)] transition"
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
           <span className="font-semibold">{it.symbol}</span>
           <span className="ml-1.5 text-xs text-[var(--text-secondary)]">{it.name}</span>
         </td>
