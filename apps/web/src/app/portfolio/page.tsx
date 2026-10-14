@@ -20,6 +20,8 @@ import {
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { parseJsonSafe, parseSseJson } from '@/lib/safe-parse'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 function formatLLMError(raw: string, llmRateLimited: string): string {
   if (/rate.?limit|429|tokens per minute|TPM|exhausted/i.test(raw)) {
@@ -172,6 +174,7 @@ export default function PortfolioPage() {
   const { dict } = useI18n()
   const ui = dict.portfolio
   const STRATEGIES = useMemo(() => buildStrategies(ui), [ui])
+  const typo = useTableTypography()
   // #23：safe-parse 友善文案（i18n 三語），傳給 parseJsonSafe。
   const safeMsg = useMemo(
     () => ({ connectionInterrupted: ui.errConnectionInterrupted, serverBusy: ui.errServerBusy }),
@@ -1488,9 +1491,9 @@ export default function PortfolioPage() {
                   </p>
                 )}
                 <div className="overflow-x-auto rounded-xl border border-white/10">
-                  <table className="w-full text-xs min-w-[720px]">
+                  <table className={tableClass(typo, 'w-full min-w-[720px]', 'text-xs')}>
                     <thead>
-                      <tr className="text-left text-[var(--text-secondary)] border-b border-white/10 bg-[var(--bg-secondary)]/50">
+                      <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10 bg-[var(--bg-secondary)]/50', '')}>
                         <th className="px-2 py-2 font-medium">{ui.colIndex}</th>
                         <th className="px-2 py-2 font-medium">{ui.colMarket}</th>
                         <th className="px-2 py-2 font-medium">{ui.colSymbol}</th>
@@ -2134,9 +2137,9 @@ export default function PortfolioPage() {
           </div>
         ) : effectiveRecordsView === 'table' ? (
           <div className="hidden md:block overflow-x-auto rounded-xl border border-white/5 bg-[var(--bg-card)]">
-            <table className="w-full min-w-[1500px] text-sm">
+            <table className={tableClass(typo, 'w-full min-w-[1500px]')}>
               <thead>
-                <tr className="text-left text-xs text-[var(--text-secondary)] border-b border-white/10">
+                <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
                   {visibleColumns.rating && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colRating}</th>}
                   {visibleColumns.name && (
                     <th className="px-3 py-2 whitespace-nowrap font-medium">

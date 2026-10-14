@@ -118,6 +118,13 @@ export const DEFAULT_AGENT_SETTINGS: Record<string, AgentSettingMeta> = {
     defaultValue: 'on',
     help: 'on＝融資大減＋股價上漲掛背離標籤；本期無融資源（未含融資）故永不觸發，第二期接源即生效。',
   },
+  // 全站表格字級（Issue #75：v2 新方案預設／v1 舊方案；前台經 /api/ui-config 即時切換）
+  'ui.table_typography': {
+    category: 'ui',
+    label: '表格字級方案',
+    defaultValue: 'v2',
+    help: 'v2＝新字級（表頭 text-sm 粗體、內文 13px，預設）；v1＝舊字級（表頭 text-xs、內文 text-sm）。存檔後前台表格下次載入即生效，免改碼。',
+  },
   // 競技場
   'arena.slippage': {
     category: 'arena',

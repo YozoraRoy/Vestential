@@ -132,3 +132,4 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 - subagent 起長駐程式必須 detach（見 §4）；起完立即回傳 pid，由 observer 負責 Ready／port／停機，分工才不會卡。
 - 主 agent 用 Start-Process 起 server 若 hang 到 tool timeout（回了 pid 也算）：不要重試，改走 §3b WMI 備案；重試同一招只會再殺掉一台剛起好的 server。
 - QA task 時間預算 25–30 分鐘，超時由主 agent 取消重派（重派前清殘留 server）；QA 超時／失聯改走降級驗收（typecheck＋lint＋diff 核對放行，runtime 標 UNVERIFIED），詳見 `dev-loop.md`「QA 派單 SOP」與「降級驗收」。
+- 表格 UI 規範（排序／字級／loading／信站一致／佔位欄禁令／免責四件套）：見 `docs/ui-table-checklist.md`（Issue #75）。

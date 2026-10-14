@@ -3,6 +3,8 @@ import remarkGfm from 'remark-gfm'
 import { TrendingUp, AlertTriangle, Newspaper, BarChart3, Target, Gauge, Languages, Settings2, HelpCircle } from 'lucide-react'
 import { AGENT_KEYS } from '@stock/core'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 /** 綜合評級旁的「？」說明 tooltip：解釋每種評級代表的意思與建議動作。 */
 function RatingHelp() {
@@ -106,6 +108,7 @@ const SECTION_LABELS: Record<'market' | 'sentiment' | 'news' | 'fundamentals', '
 export function AnalysisCard({ analysis }: AnalysisCardProps) {
   const { dict } = useI18n()
   const ui = dict.analysisCard
+  const typo = useTableTypography()
   const color = RATING_COLORS[analysis.signal] ?? 'text-[var(--text-primary)]'
   const bg = RATING_BG[analysis.signal] ?? 'bg-[var(--bg-card)]'
   const reportLang = analysis.language === 'en' ? dict.ai.en : analysis.language === 'ja' ? dict.ai.ja : dict.ai.zhTW
@@ -201,9 +204,9 @@ export function AnalysisCard({ analysis }: AnalysisCardProps) {
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className={tableClass(typo, 'w-full')}>
                 <thead>
-                  <tr className="text-left text-xs text-[var(--text-secondary)] border-b border-white/5">
+                  <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/5')}>
                     <th className="py-2 pr-4 font-medium">{ui.colAgent}</th>
                     <th className="py-2 pr-4 font-medium">{ui.colModel}</th>
                     <th className="py-2 pr-4 font-medium text-right">{ui.colPrompt}</th>

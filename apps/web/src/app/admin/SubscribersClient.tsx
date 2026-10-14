@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { btnGhost, Card, getJson, post, ResultBanner, SectionPageWrapper, type Result } from './_components'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 interface Subscriber {
   id: number
@@ -33,6 +35,7 @@ export function SubscribersClient() {
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, pending: 0, unsubscribed: 0 })
   const [result, setResult] = useState<Result>(null)
   const [busy, setBusy] = useState(false)
+  const typo = useTableTypography()
 
   const refresh = async () => {
     const r = await getJson('/api/admin/subscribers')
@@ -84,9 +87,9 @@ export function SubscribersClient() {
       </div>
       <Card title="名單">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className={tableClass(typo, 'w-full')}>
             <thead>
-              <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+              <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                 <th className="py-2 pr-4">Email</th>
                 <th className="py-2 pr-4">狀態</th>
                 <th className="py-2 pr-4">訂閱時間</th>

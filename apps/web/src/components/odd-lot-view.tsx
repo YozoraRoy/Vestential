@@ -27,6 +27,8 @@ import {
   formatTradingDayWithWeekday,
 } from '@/utils/taiwan-calendar'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 export interface OddLotItem {
   date: string
@@ -470,6 +472,7 @@ interface OddLotViewProps {
 export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddLotViewProps) {
   const { dict } = useI18n()
   const ui = dict.oddLot
+  const typo = useTableTypography()
 
   const [selectedCategory, setSelectedCategory] = useState<GiftCategory>('ALL')
   const [searchQuery, setSearchQuery] = useState(initialQuery)
@@ -1021,9 +1024,9 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
           </div>
 
           <div className="w-full overflow-x-auto rounded-2xl border border-white/5 bg-[var(--bg-card)]">
-            <table className="min-w-max w-full text-sm text-left">
+            <table className={tableClass(typo, 'min-w-max w-full text-left')}>
               <thead>
-                <tr className="border-b border-white/10 bg-white/[0.02] text-xs text-[var(--text-secondary)]">
+                <tr className={headTrClass(typo, 'border-b border-white/10 bg-white/[0.02] text-[var(--text-secondary)]')}>
                   <th
                     onClick={() => handleSort('default')}
                     className="px-4 py-3.5 font-semibold cursor-pointer hover:text-white transition-colors"

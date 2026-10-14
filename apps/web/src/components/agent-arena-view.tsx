@@ -35,6 +35,8 @@ import {
   latestArenaSnapshot,
   unifiedArenaReturn,
 } from '@/lib/arena-return'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 type Division = 'season' | 'open'
 type Tone = 'aggressive' | 'neutral' | 'conservative'
@@ -234,6 +236,7 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
   const { dict } = useI18n()
   const router = useRouter()
   const d = dict.agentArena
+  const typo = useTableTypography()
 
   const [data, setData] = useState<StateData | null>(null)
   const [my, setMy] = useState<MyData | null>(null)
@@ -1225,9 +1228,9 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
               {lbAsOf ? d.snapshotAsOf.replace('{date}', lbAsOf) : d.cashEstimateNote}
             </p>
             <div className="overflow-x-auto rounded-xl border border-white/5">
-              <table className="w-full text-sm">
+              <table className={tableClass(typo, 'w-full')}>
                 <thead>
-                  <tr className="text-left text-xs text-[var(--text-secondary)] border-b border-white/5">
+                  <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/5')}>
                     <th className="px-3 py-2.5 font-medium">{d.colRank}</th>
                     <th className="px-3 py-2.5 font-medium">{d.colAgent}</th>
                     <th className="px-3 py-2.5 font-medium hidden sm:table-cell">{d.colStrategy}</th>
@@ -1520,9 +1523,9 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                         </div>
                       ) : (
                         <div className="overflow-x-auto rounded-xl border border-white/5">
-                          <table className="w-full text-sm">
+                          <table className={tableClass(typo, 'w-full')}>
                             <thead>
-                              <tr className="text-left text-xs text-[var(--text-secondary)] bg-white/[0.02] border-b border-white/5">
+                              <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] bg-white/[0.02] border-b border-white/5')}>
                                 <th className="px-3 py-2 font-medium">{d.colSymbol}</th>
                                 <th className="px-3 py-2 font-medium">名稱</th>
                                 <th className="px-3 py-2 font-medium text-right">{d.colShares}</th>

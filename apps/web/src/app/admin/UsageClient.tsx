@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { Card, getJson, Help, SectionPageWrapper } from './_components'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 interface UsageUser {
   userId: number
@@ -16,6 +18,7 @@ interface UsageUser {
 export function UsageClient() {
   const [users, setUsers] = useState<UsageUser[]>([])
   const [error, setError] = useState('')
+  const typo = useTableTypography()
 
   useEffect(() => {
     let alive = true
@@ -33,9 +36,9 @@ export function UsageClient() {
     <SectionPageWrapper title="使用者用量報表" subtitle="各使用者的 API 呼叫與照片辨識次數。辨識＝照片辨識（OCR）。">
       <Card title="用量">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className={tableClass(typo, 'w-full')}>
             <thead>
-              <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+              <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                 <th className="py-2 pr-4">ID</th>
                 <th className="py-2 pr-4">名稱</th>
                 <th className="py-2 pr-4">Email</th>

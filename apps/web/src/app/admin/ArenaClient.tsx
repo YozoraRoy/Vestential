@@ -16,6 +16,8 @@ import {
   type Result,
 } from './_components'
 import { MarkdownText } from '@/components/markdown-text'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 // ── 型別 ───────────────────────────────────────────────────────────
 interface ProgressData {
@@ -112,6 +114,7 @@ export function ArenaClient() {
   const [round, setRound] = useState<RoundData | null>(null)
   const [agentDetail, setAgentDetail] = useState<Record<number, AgentHistoryDetail>>({})
   const [openHistory, setOpenHistory] = useState<Record<number, boolean>>({})
+  const typo = useTableTypography()
 
 interface LeaderRow {
   agent_id: number
@@ -290,9 +293,9 @@ const lbById = useMemo(() => {
         <div className="mt-5">
           <h3 className="text-xs font-semibold text-[var(--text-secondary)] mb-2 uppercase tracking-wide">排行榜（最新輪次）</h3>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className={tableClass(typo, 'w-full')}>
               <thead>
-                <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+                <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                   <th className="py-2 pr-4">Agent</th>
                   <th className="py-2 pr-4">擁有者</th>
                   <th className="py-2 pr-4 text-right">權益</th>
@@ -511,6 +514,7 @@ const lbById = useMemo(() => {
 }
 
 function AgentHistoryBody({ logs, trades }: { logs: RoundDecision[]; trades: AgentHistoryDetail['trades'] }) {
+  const typo = useTableTypography()
   if (logs.length === 0 && trades.length === 0) {
     return <p className="text-sm text-[var(--text-secondary)]">此輪無決策／交易紀錄</p>
   }
@@ -543,9 +547,9 @@ function AgentHistoryBody({ logs, trades }: { logs: RoundDecision[]; trades: Age
           <p className="text-[var(--text-secondary)]">無成交</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className={tableClass(typo, 'w-full')}>
               <thead>
-                <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+                <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                   <th className="py-1 pr-3">動作</th>
                   <th className="py-1 pr-3">標的</th>
                   <th className="py-1 pr-3 text-right">股數</th>

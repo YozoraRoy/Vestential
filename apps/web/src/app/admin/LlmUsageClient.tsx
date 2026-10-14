@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Card, getJson, SectionPageWrapper } from './_components'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 interface AgentReport {
   agent: string
@@ -104,6 +106,7 @@ export function LlmUsageClient() {
   const [report, setReport] = useState<LlmReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const typo = useTableTypography()
 
   const applyPreset = useCallback((label: string) => {
     const today = todayStr()
@@ -283,9 +286,9 @@ export function LlmUsageClient() {
 
       <Card title="依 Agent 聚合">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className={tableClass(typo, 'w-full')}>
             <thead>
-              <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+              <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                 <th className="py-2 pr-4">Agent</th>
                 <th className="py-2 pr-4 text-right">呼叫</th>
                 <th className="py-2 pr-4">模型分佈</th>
@@ -344,9 +347,9 @@ export function LlmUsageClient() {
           日界為 Asia/Taipei；跟隨上方期間篩選。後端區間上限 31 天、單次最多讀取 20000 筆原始記錄（超過請縮小範圍）。
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className={tableClass(typo, 'w-full')}>
             <thead>
-              <tr className="text-left text-xs text-[var(--text-secondary)] uppercase tracking-wide">
+              <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] uppercase tracking-wide')}>
                 <th className="py-2 pr-4">日期</th>
                 <th className="py-2 pr-4">Agent</th>
                 <th className="py-2 pr-4 text-right">呼叫</th>

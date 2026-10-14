@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, CalendarDays, ChevronDown, Copy, Info } from 'lucide-react'
+import { TableSkeleton } from '@/components/table-skeleton'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 // Issue #67：AI 填息王 /ex-dividend（MVP 純統計，免 AI）。
 // 文案紅線：僅歷史統計＋免責，禁「預測/保證」字眼；機率＝過去填息事件佔比。
@@ -86,6 +89,7 @@ export default function ExDividendPage() {
   const [sortBy, setSortBy] = useState<'date' | 'score'>('date')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [copied, setCopied] = useState(false)
+  const typo = useTableTypography()
 
   useEffect(() => {
     let cancelled = false
@@ -163,9 +167,7 @@ export default function ExDividendPage() {
       </div>
 
       {loading && (
-        <div className="rounded-xl bg-[var(--bg-card)] border border-white/5 p-6 text-sm text-[var(--text-secondary)]">
-          載入中…
-        </div>
+        <TableSkeleton message="載入除權息資料中…" hint="首次載入需彙整預告與歷史回測，約需數秒，請稍候" />
       )}
 
       {!loading && error && (
@@ -316,9 +318,9 @@ export default function ExDividendPage() {
                           )}
                           {st && st.events.length > 0 && (
                             <div className="overflow-x-auto -mx-1 px-1">
-                              <table className="w-full text-[11px] whitespace-nowrap">
+                              <table className={tableClass(typo, 'w-full whitespace-nowrap', 'text-[11px]')}>
                                 <thead>
-                                  <tr className="text-[var(--text-secondary)] text-left">
+                                  <tr className={headTrClass(typo, 'text-[var(--text-secondary)] text-left', '')}>
                                     <th className="py-1 pr-3 font-medium">除息日</th>
                                     <th className="py-1 pr-3 font-medium">除息前收盤</th>
                                     <th className="py-1 pr-3 font-medium">填息</th>

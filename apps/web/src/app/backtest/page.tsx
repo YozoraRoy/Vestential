@@ -17,6 +17,8 @@ import { searchStocks, StockCandidateList, type StockCandidate } from '@/compone
 import { buildBacktestInsight } from '@/lib/backtest-interpret'
 import { useI18n } from '@/i18n/LanguageProvider'
 import type { Dict } from '@/i18n/dictionaries'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 interface SeriesPoint {
   date: number
@@ -231,6 +233,7 @@ export default function BacktestPage() {
   const { dict, locale } = useI18n()
   const ui = dict.backtest
   const columnHelp = getColumnHelp(dict)
+  const typo = useTableTypography()
   const [symbol, setSymbol] = useState('')
   const [stockName, setStockName] = useState('')
   const [holdingDays, setHoldingDays] = useState('252')
@@ -1138,9 +1141,9 @@ export default function BacktestPage() {
                 )}
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className={tableClass(typo, 'w-full')}>
                   <thead>
-                    <tr className="text-[var(--text-secondary)] text-xs border-b border-white/5">
+                    <tr className={headTrClass(typo, 'text-[var(--text-secondary)] border-b border-white/5')}>
                       <HeaderCell
                         label={ui.tableHeaderThreshold}
                         sortable
@@ -1213,9 +1216,9 @@ export default function BacktestPage() {
                               <td colSpan={4} className="px-4 py-3">
                                   {row.trades && row.trades.length > 0 ? (
                                     <div className="overflow-x-auto">
-                                      <table className="w-full text-xs">
+                                      <table className={tableClass(typo, 'w-full', 'text-xs')}>
                                         <thead>
-                                          <tr className="text-[var(--text-secondary)]">
+                                          <tr className={headTrClass(typo, 'text-[var(--text-secondary)]', '')}>
                                             <th className="px-3 py-1.5 text-left">{ui.tableHeaderEntryDate}</th>
                                             <th className="px-3 py-1.5 text-left">{ui.tableHeaderEntryPrice}</th>
                                             <th className="px-3 py-1.5 text-left">{ui.tableHeaderResult}</th>

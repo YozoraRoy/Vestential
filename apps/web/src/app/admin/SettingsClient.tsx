@@ -18,6 +18,7 @@ const GROUPS: Array<{ key: string; label: string }> = [
   { key: 'market-focus', label: '市場焦點小編' },
   { key: 'social', label: '社群小編' },
   { key: 'arena', label: '競技場' },
+  { key: 'ui', label: '介面顯示' },
   { key: 'custom', label: '自訂' },
 ]
 

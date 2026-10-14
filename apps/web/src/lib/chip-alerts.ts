@@ -50,12 +50,17 @@ export async function alertChipFetchFailed(reason: string, opts?: ChipFetchFaile
 }
 
 /** 當日異常榜 digest（有榜才寄；程序內 30 分鐘去重＋日別去重由 sendChipRadarDigest 把關）。 */
-export async function alertChipDigest(asOf: string, items: ChipDigestItem[], scanned: number): Promise<void> {
+export async function alertChipDigest(
+  asOf: string,
+  items: ChipDigestItem[],
+  scanned: number,
+  thresholds?: { consecDays: number; ratioPct: number },
+): Promise<void> {
   try {
     const list = (items ?? []).filter((i) => i?.symbol)
     if (!asOf || list.length === 0) return
     if (!shouldSend(`chip-radar:digest:${asOf}`)) return
-    await sendChipRadarDigest(asOf, list, scanned)
+    await sendChipRadarDigest(asOf, list, scanned, thresholds)
   } catch (e) {
     console.error('[ChipAlert] digest alert failed (non-blocking):', e)
   }

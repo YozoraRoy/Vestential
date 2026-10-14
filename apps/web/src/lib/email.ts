@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer'
 import type { MarketFocusItem, MarketFocusMeta } from '@stock/database'
 import { getMarketFocus, getMarketFocusMeta, listActiveMarketFocusSubscribers, getAgentSetting, setAgentSetting } from '@stock/database'
 import { getTaiwanDateStr } from '@/lib/auth'
+import { DEFAULT_CHIP_THRESHOLDS } from './chip-radar'
 
 export const FALLBACK_SUMMARY_PREFIX = '當日市場焦點：'
 
@@ -460,7 +461,15 @@ function fmtShares(n: number): string {
   return `${n.toLocaleString('en-US')}股`
 }
 
-function buildChipDigestText(asOf: string, items: ChipDigestItem[], scanned: number): string {
+/** Issue #75 單測用：digest 內文（門檻行／排序註／前20註／快照聲明四要素）。 */
+export function buildChipDigestText(
+  asOf: string,
+  items: ChipDigestItem[],
+  scanned: number,
+  thresholds?: { consecDays: number; ratioPct: number },
+): string {
+  const consecDays = thresholds?.consecDays ?? DEFAULT_CHIP_THRESHOLDS.consecDays
+  const ratioPct = thresholds?.ratioPct ?? DEFAULT_CHIP_THRESHOLDS.ratioPct
   const lines = items
     .slice(0, 20)
     .map(
@@ -469,11 +478,11 @@ function buildChipDigestText(asOf: string, items: ChipDigestItem[], scanned: num
         `當日淨${it.netShares >= 0 ? '買超' : '賣超'}${fmtShares(it.netShares)}，佔成交額 ${it.ratioPct.toFixed(2)}%`,
     )
     .join('\n')
-  const more = items.length > 20 ? `\n…等共 ${items.length} 檔（完整榜單請見網站）` : ''
+  const more = items.length > 20 ? `\n…等共 ${items.length} 檔（信內僅列前 20，完整榜單請見網站）` : ''
   return `========================================
 Vestential · 主力籌碼雷達（法人連買賣異常榜）
 資料時間：${asOf}（盤後初值；上市；未含融資）
-掃描：${scanned} 檔
+門檻：連買／賣 ≥${consecDays} 天且佔比 ≥${ratioPct}%（後台可調）· 依佔比排序 · 掃描 ${scanned} 檔
 ========================================
 
 ${lines}${more}
@@ -481,6 +490,8 @@ ${lines}${more}
 ----------------------------------------
 查看完整榜單：${SITE_BASE}/chip-radar
 
+※ 榜單依佔比排序${items.length > 20 ? '，信內僅列前 20 檔' : ''}。
+※ 本信為寄送時快照（${asOf}），若已隔日重算以網站即時為準。
 ※ 法人＝外資合計＋投信（TWT38U＋TWT44U）；佔比＝|淨超×收盤|／成交額。
 ※ 統計訊號非投資建議；使用即代表同意服務條款 ${SITE_BASE}/terms。
 ========================================`
@@ -491,6 +502,7 @@ export async function sendChipRadarDigest(
   asOf: string,
   items: ChipDigestItem[],
   scanned: number,
+  thresholds?: { consecDays: number; ratioPct: number },
 ): Promise<boolean> {
   if (!asOf || items.length === 0) return false
   try {
@@ -498,7 +510,9 @@ export async function sendChipRadarDigest(
     if (lastSent === asOf) return false
 
     const subject = `📡 主力籌碼雷達 ${asOf} — 法人連買賣異常 ${items.length} 檔（盤後初值）`
-    const text = buildChipDigestText(asOf, items, scanned)
+    const text = buildChipDigestText(asOf, items, scanned, thresholds)
+    const consecDays = thresholds?.consecDays ?? DEFAULT_CHIP_THRESHOLDS.consecDays
+    const ratioPct = thresholds?.ratioPct ?? DEFAULT_CHIP_THRESHOLDS.ratioPct
     const listHtml = items
       .slice(0, 20)
       .map(
@@ -510,18 +524,20 @@ export async function sendChipRadarDigest(
           `佔成交額 ${it.ratioPct.toFixed(2)}%</div>`,
       )
       .join('\n')
-    const moreHtml = items.length > 20 ? `<div style="font-size:13px;color:#64748b;">…等共 ${items.length} 檔（完整榜單請見網站）。</div>` : ''
+    const moreHtml = items.length > 20 ? `<div style="font-size:13px;color:#64748b;">…等共 ${items.length} 檔（信內僅列前 20，完整榜單請見網站）。</div>` : ''
     const html = `
     <div style="background:#f1f5f9;padding:24px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Microsoft JhengHei,sans-serif;">
       <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
         <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-weight:800;font-size:16px;">📡 主力籌碼雷達 — 法人連買賣異常榜</div>
-        <div style="padding:20px 24px;font-size:13px;color:#64748b;">資料時間：${escapeHtml(asOf)}（盤後初值；上市；未含融資）· 掃描 ${scanned} 檔</div>
+        <div style="padding:20px 24px;font-size:13px;color:#64748b;">資料時間：${escapeHtml(asOf)}（盤後初值；上市；未含融資）· 掃描 ${scanned} 檔<br/>門檻：連買／賣 ≥${consecDays} 天且佔比 ≥${ratioPct}%（後台可調）· 依佔比排序</div>
         <div style="padding:0 24px 8px;">${listHtml}${moreHtml}</div>
         <div style="text-align:center;margin:16px 0 20px;">
           <a href="${escapeHtml(SITE_BASE)}/chip-radar" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 28px;border-radius:9999px;">查看完整榜單 →</a>
         </div>
         <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 24px;font-size:12px;color:#64748b;line-height:1.8;">
           法人＝外資合計＋投信（TWT38U＋TWT44U）；佔比＝|淨超×收盤|／成交額。<br/>
+          榜單依佔比排序${items.length > 20 ? '，信內僅列前 20 檔' : ''}。<br/>
+          本信為寄送時快照（${escapeHtml(asOf)}），若已隔日重算以網站即時為準。<br/>
           統計訊號非投資建議；使用即代表同意<a href="${escapeHtml(SITE_BASE)}/terms" style="color:#64748b;text-decoration:underline;">服務條款</a>。
         </div>
       </div>

@@ -1,12 +1,16 @@
 'use client'
 
-import { useEffect, useState, Fragment } from 'react'
+import { useEffect, useMemo, useState, Fragment } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, CalendarDays, ChevronDown, Info, Radar } from 'lucide-react'
+import { TableSkeleton } from '@/components/table-skeleton'
+import { sortChipRows, type ChipSortDir, type ChipSortKey } from '@/lib/chip-sort'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 // Issue #71：主力籌碼雷達 /chip-radar（MVP 純統計，免 AI）。
 // 文案紅線：僅歷史統計＋免責「統計訊號非投資建議」，禁「預測/必漲」字眼；
-// 融資未含（PoC FAIL）：融資欄固定「未含融資」，diverge 永不掛標籤（第二期）。
+// 融資未含（PoC FAIL）：融資變動欄已刪（全同值放註腳），diverge 永不掛標籤（第二期）。
 // 版面：手機優先（360px 無橫向溢出：max-w-3xl＋表格 overflow-x-auto，沿 ex-dividend 頁）。
 
 interface ChipAnomalyRow {
@@ -81,6 +85,10 @@ export default function ChipRadarPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  // Issue #75：四欄排序（預設佔比↓＝引擎 ratioPct desc＝API／信件順序）。
+  const [sortKey, setSortKey] = useState<ChipSortKey>('ratioPct')
+  const [sortDir, setSortDir] = useState<ChipSortDir>('desc')
+  const typo = useTableTypography()
 
   useEffect(() => {
     let cancelled = false
@@ -101,6 +109,22 @@ export default function ChipRadarPage() {
       cancelled = true
     }
   }, [])
+
+  const toggleSort = (key: ChipSortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    // 新欄預設方向：代號 asc／方向 asc（連買在前）／淨超與佔比 desc。
+    setSortKey(key)
+    setSortDir(key === 'symbol' || key === 'direction' ? 'asc' : 'desc')
+  }
+
+  // 排序只重排主列；展開列以代號 key 維持，不受影響。
+  const sortedItems = useMemo(
+    () => (data ? sortChipRows(data.items, sortKey, sortDir) : []),
+    [data, sortKey, sortDir],
+  )
 
   const toggle = (symbol: string) => {
     setExpanded((prev) => {
@@ -125,7 +149,7 @@ export default function ChipRadarPage() {
       </p>
 
       {loading ? (
-        <p className="text-sm text-[var(--text-secondary)]">載入中…</p>
+        <TableSkeleton message="載入籌碼雷達資料中…" hint="盤後榜單讀時即算，約需數秒，請稍候" />
       ) : error ? (
         <div className="rounded-xl border border-[var(--accent-red)]/30 bg-[var(--accent-red)]/5 px-4 py-3 text-sm text-[var(--text-primary)] flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--accent-red)]" />
@@ -137,7 +161,7 @@ export default function ChipRadarPage() {
           <div className="flex flex-wrap items-center gap-2 mb-4 text-xs text-[var(--text-secondary)]">
             <span className="flex items-center gap-1.5">
               <CalendarDays className="w-3.5 h-3.5" />
-              資料時間：{fmtDate(data.as_of)}
+              資料時間：{fmtDate(data.as_of)}（盤後初值；上市；未含融資）
             </span>
             <span className="px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-300 border border-amber-400/20">盤後初值</span>
             {data.degraded && data.degraded_reason !== 'non-trading-day' ? (
@@ -167,21 +191,47 @@ export default function ChipRadarPage() {
           ) : (
             <>
               <p className="text-xs text-[var(--text-secondary)] mb-3">
-                門檻：連買／賣 ≥{data.thresholds.consec_days} 天且佔比 ≥{data.thresholds.ratio_pct}%（後台可調）· 掃描 {data.scanned} 檔 · 點列展開近 5 日趨勢
+                門檻：連買／賣 ≥{data.thresholds.consec_days} 天且佔比 ≥{data.thresholds.ratio_pct}%（後台可調）·
+                依佔比排序 · 掃描 {data.scanned} 檔 · 點列展開近 5 日趨勢（趨勢軸僅站上提供，信內無）
               </p>
               <div className="overflow-x-auto rounded-xl border border-white/5 mb-6">
-                <table className="w-full text-sm min-w-[560px]">
+                <table className={tableClass(typo, 'w-full min-w-[560px]')}>
                   <thead>
-                    <tr className="text-left text-xs text-[var(--text-secondary)] bg-white/5">
-                      <th className="px-3 py-2.5 font-medium">代號</th>
-                      <th className="px-3 py-2.5 font-medium">方向</th>
-                      <th className="px-3 py-2.5 font-medium text-right">當日淨超</th>
-                      <th className="px-3 py-2.5 font-medium text-right">佔比</th>
-                      <th className="px-3 py-2.5 font-medium">融資變動</th>
+                    <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] bg-white/5')}>
+                      <SortTh
+                        label="代號"
+                        sortKey="symbol"
+                        activeKey={sortKey}
+                        dir={sortDir}
+                        onToggle={() => toggleSort('symbol')}
+                      />
+                      <SortTh
+                        label="方向"
+                        sortKey="direction"
+                        activeKey={sortKey}
+                        dir={sortDir}
+                        onToggle={() => toggleSort('direction')}
+                      />
+                      <SortTh
+                        label="當日淨超"
+                        sortKey="netShares"
+                        activeKey={sortKey}
+                        dir={sortDir}
+                        onToggle={() => toggleSort('netShares')}
+                        align="right"
+                      />
+                      <SortTh
+                        label="佔比"
+                        sortKey="ratioPct"
+                        activeKey={sortKey}
+                        dir={sortDir}
+                        onToggle={() => toggleSort('ratioPct')}
+                        align="right"
+                      />
                     </tr>
                   </thead>
                   <tbody>
-                    {data.items.map((it) => {
+                    {sortedItems.map((it) => {
                       const isOpen = expanded.has(it.symbol)
                       return (
                         <FragmentRow
@@ -214,6 +264,43 @@ export default function ChipRadarPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+/** Issue #75 可排序表頭：button 切換 asc/desc，aria-sort 落在 th。 */
+function SortTh({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onToggle,
+  align,
+}: {
+  label: string
+  sortKey: ChipSortKey
+  activeKey: ChipSortKey
+  dir: ChipSortDir
+  onToggle: () => void
+  align?: 'right'
+}) {
+  const active = activeKey === sortKey
+  return (
+    <th
+      aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={`px-3 py-2.5 font-medium${align === 'right' ? ' text-right' : ''}`}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={active ? `${label}（${dir === 'asc' ? '升冪' : '降冪'}，點按切換）` : `${label}（點按排序）`}
+        className="inline-flex items-center gap-1 hover:text-[var(--text-primary)] transition"
+      >
+        {label}
+        <span aria-hidden className={`text-[10px] ${active ? 'text-[var(--accent)]' : 'opacity-30'}`}>
+          {active ? (dir === 'asc' ? '▲' : '▼') : '▲▼'}
+        </span>
+      </button>
+    </th>
   )
 }
 
@@ -253,11 +340,10 @@ function FragmentRow({
           {it.netShares >= 0 ? '+' : '−'}{fmtShares(Math.abs(it.netShares))}
         </td>
         <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{it.ratioPct.toFixed(2)}%</td>
-        <td className="px-3 py-2.5 text-xs text-[var(--text-secondary)]">未含融資</td>
       </tr>
       {isOpen ? (
         <tr className="border-t border-white/5 bg-white/[0.02]">
-          <td colSpan={5} className="px-3 py-2">
+          <td colSpan={4} className="px-3 py-2">
             <MiniTrend trend={it.trend} days={windowDays} />
             <p className="text-[11px] text-[var(--text-secondary)] pb-1">
               近 5 日法人合計淨超（外資＋投信，股數）{it.diverge ? '' : '· 無背離標籤（未含融資）'}

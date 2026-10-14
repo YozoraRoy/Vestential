@@ -38,6 +38,8 @@ import {
   shortSymbol,
   type CycleEntryDict,
 } from './cycle-entry-view'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 interface DetailResponse {
   success: boolean
@@ -100,6 +102,7 @@ function smaSeries(closes: number[], windowLen: number): (number | null)[] {
 }
 
 export function CycleEntryDetailModal({ signal, dict, onClose }: Props) {
+  const typo = useTableTypography()
   const [tab, setTab] = useState<Tab>('chart')
   const [chartTab, setChartTab] = useState<ChartTab>('price')
   const [detail, setDetail] = useState<DetailResponse | null>(null)
@@ -469,9 +472,9 @@ export function CycleEntryDetailModal({ signal, dict, onClose }: Props) {
                   ) : showTrades ? (
                     <>
                       <div className="overflow-x-auto rounded-xl border border-white/10">
-                        <table className="w-full text-sm min-w-full">
+                        <table className={tableClass(typo, 'w-full min-w-full')}>
                           <thead>
-                            <tr className="border-b border-white/10 text-left text-xs text-[var(--text-secondary)]">
+                            <tr className={headTrClass(typo, 'border-b border-white/10 text-left text-[var(--text-secondary)]')}>
                               <th className="px-3 py-2.5 font-medium whitespace-nowrap">{dict.colSignalDate}</th>
                               <th className="px-3 py-2.5 font-medium whitespace-nowrap">{dict.colEntryDate}</th>
                               <th className="px-3 py-2.5 font-medium whitespace-nowrap">{dict.colExitDate}</th>

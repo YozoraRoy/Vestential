@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { LayoutGrid, LayoutList, LineChart, Sparkles, HelpCircle } from 'lucide-react'
 import type { CycleEntrySignalRow } from '@stock/database'
 import { resolveStockName } from '@stock/cycle-entry'
+import { headTrClass, tableClass } from '@/lib/table-typography'
+import { useTableTypography } from '@/lib/use-table-typography'
 
 export interface CycleEntryDict {
   viewModeList: string
@@ -147,6 +149,7 @@ interface Props {
 
 export function CycleEntryView({ signals, dict, onSelect }: Props) {
   const [mode, setMode] = useState<ViewMode>('list')
+  const typo = useTableTypography()
 
   const btnClass = (active: boolean) =>
     `inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -179,9 +182,9 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
 
       {mode === 'list' ? (
         <div className="overflow-x-auto rounded-xl border border-white/10">
-          <table className="w-full text-sm min-w-full">
+          <table className={tableClass(typo, 'w-full min-w-full')}>
             <thead>
-              <tr className="border-b border-white/10 text-left text-xs text-[var(--text-secondary)]">
+              <tr className={headTrClass(typo, 'border-b border-white/10 text-left text-[var(--text-secondary)]')}>
                 <th className="px-3 py-2.5 font-medium">{dict.colRank}</th>
                 <th className="px-3 py-2.5 font-medium">{dict.colName}</th>
                 <th className="px-3 py-2.5 font-medium">{dict.colStage}</th>

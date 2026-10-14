@@ -54,6 +54,8 @@ export async function GET() {
           ratioPct: i.ratioPct,
         })),
         snap.scanned,
+        // Issue #75：digest 門檻行用後台值（讀時即算同一份 thresholds）。
+        { consecDays: snap.thresholds.consecDays, ratioPct: snap.thresholds.ratioPct },
       )
     }
 
