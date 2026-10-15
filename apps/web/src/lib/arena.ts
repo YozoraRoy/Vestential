@@ -361,6 +361,17 @@ export function arenaTickWatchdogMinutes(phase?: string | null): number {
   return ARENA_TICK_WATCHDOG_MIN.full
 }
 
+/**
+ * 背景 job 總時限（分鐘；env ARENA_TICK_HARD_CAP_MIN，預設 25，與 GH 25min
+ * 輪詢窗對齊）。Issue #80：idle 看門狗只殺「無進展」，總時限兜底「有進展
+ * 但拖太久」（如下游 LLM 全面緩慢），保證 job 必終止、workflow 必見終態。
+ */
+export function arenaTickHardCapMinutes(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.ARENA_TICK_HARD_CAP_MIN)
+  if (Number.isFinite(n) && n >= 5) return Math.floor(n)
+  return 25
+}
+
 /** 背景 job 的 result/error 寫入上限（防爆 DB 欄位與 log）。 */
 export const ARENA_TICK_ERROR_MAX_CHARS = 2000
 export const ARENA_TICK_RESULT_MAX_CHARS = 200_000
@@ -510,27 +521,47 @@ export async function startArenaTickJob(
   void (async () => {
     let settled = false
     let hb: ReturnType<typeof setInterval> | undefined
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
     const finish = async (patch: { status: 'done' | 'failed'; result?: string; error?: string }) => {
       if (settled) return
       settled = true
       if (hb) clearInterval(hb)
+      if (idleTimer) clearTimeout(idleTimer)
+      if (hardTimer) clearTimeout(hardTimer)
       await updateArenaTickJob(jobId, patch)
     }
 
-    const timer = setTimeout(() => {
-      void finish({ status: 'failed', error: `執行逾時（watchdog ${arenaTickWatchdogMinutes(phase ?? 'full')} min）` })
-    }, watchdogMs)
-    timer.unref?.()
+    // Issue #80：舊 wall-clock 固定看門狗會砍掉「有進展但總耗時長」的健康
+    // job。改為滑動 idle 看門狗——只在 engine 進展時重置（onProgress），
+    // 60s 兜底心跳只刷新 DB 不重置（否則 idle 永不觸發）；另設硬上限兜底。
+    const armIdle = () => {
+      if (settled) return
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        void finish({ status: 'failed', error: `執行逾時（watchdog ${arenaTickWatchdogMinutes(phase ?? 'full')} min 無進展）` })
+      }, watchdogMs)
+      idleTimer.unref?.()
+    }
+    const hardCapMs = arenaTickHardCapMinutes() * 60 * 1000
+    const hardTimer = setTimeout(() => {
+      void finish({ status: 'failed', error: `執行逾時（總時限 ${arenaTickHardCapMinutes()} min）` })
+    }, hardCapMs)
+    hardTimer.unref?.()
+    armIdle()
 
     // Issue #56 心跳（#39 stage 心跳模式）：engine 每完成一段/agent 即 touch
     // updated_at；另加 interval 兜底單次超長 LLM call 的空窗。touch 只在未
     // settle 時發生（status:'running' 原地重寫，只刷新 updated_at），故
     // settle／watchdog 觸發後心跳即停——stale 判定仍然有效（實例回收
     // = 心跳停止 = 超過 watchdog 即判 stale）。
+    // Issue #80：idle 看門狗重置權只給 engine 進展（onProgress→armIdle），
+    // 兜底心跳不重置；另有總時限硬上限，保證必終止。
     const touch = () => {
       if (settled) return
       void updateArenaTickJob(jobId, { status: 'running' }).catch(() => {})
     }
+    // 60s 兜底心跳：只刷新 DB（覆蓋單次超長 LLM call 空窗），不重置 idle
+    // 看門狗——否則「無進展」永遠判不出來。
     hb = setInterval(touch, arenaTickHeartbeatMs())
     hb.unref?.()
 
@@ -542,6 +573,7 @@ export async function startArenaTickJob(
         onProgress: (stage) => {
           console.log(`[Arena/Tick] job ${jobId} progress: ${stage}`)
           touch()
+          armIdle()
         },
       })
       await finish({ status: 'done', result: sanitizeArenaTickResult(result) })
@@ -549,7 +581,8 @@ export async function startArenaTickJob(
       const msg = String(e?.message ?? e).slice(0, ARENA_TICK_ERROR_MAX_CHARS)
       await finish({ status: 'failed', error: msg || '執行失敗' })
     } finally {
-      clearTimeout(timer)
+      clearTimeout(hardTimer)
+      if (idleTimer) clearTimeout(idleTimer)
     }
   })()
 

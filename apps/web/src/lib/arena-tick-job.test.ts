@@ -32,6 +32,7 @@ import {
   startArenaTickJob,
   arenaTickWatchdogMinutes,
   arenaTickHeartbeatMs,
+  arenaTickHardCapMinutes,
   ARENA_TICK_WATCHDOG_MIN,
   ARENA_TICK_ERRORS_MAX,
   ARENA_TICK_ERROR_ITEM_MAX_CHARS,
@@ -474,4 +475,15 @@ describe('startArenaTickJob 心跳（Issue #56）', () => {
     }
   })
 }) // ── describe('startArenaTickJob 心跳（Issue #56）') end
+
+// ─── Issue #80 總時限硬上限（idle 看門狗＋硬上限雙層）──────────────
+describe('arenaTickHardCapMinutes（總時限）', () => {
+  it('預設 25（與 GH 25min 輪詢窗對齊）；env 可覆寫；低於 5min 鉗制回預設', () => {
+    delete process.env.ARENA_TICK_HARD_CAP_MIN
+    expect(arenaTickHardCapMinutes()).toBe(25)
+    expect(arenaTickHardCapMinutes({ ARENA_TICK_HARD_CAP_MIN: '30' } as unknown as NodeJS.ProcessEnv)).toBe(30)
+    expect(arenaTickHardCapMinutes({ ARENA_TICK_HARD_CAP_MIN: '3' } as unknown as NodeJS.ProcessEnv)).toBe(25)
+    expect(arenaTickHardCapMinutes({ ARENA_TICK_HARD_CAP_MIN: 'abc' } as unknown as NodeJS.ProcessEnv)).toBe(25)
+  })
+})
 })

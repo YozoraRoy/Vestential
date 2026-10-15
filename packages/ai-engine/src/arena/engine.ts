@@ -89,6 +89,46 @@ function envBool(key: string, defaultValue = false): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on'
 }
 
+/**
+ * slot 段 decide 並行度（env ARENA_SLOT_CONCURRENCY，預設 3，上限 8）。
+ * 背景：slot 曾是逐 agent 串行，單 call 含 5 次重試×180s 逾時上限，
+ * 5 個 agent 串行即超過 12min slot watchdog（Issue #80 三連掛）。
+ */
+export function arenaSlotConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.ARENA_SLOT_CONCURRENCY)
+  if (Number.isFinite(n)) return Math.min(Math.max(1, Math.floor(n)), 8)
+  return 3
+}
+
+/** 單 agent decide 超時（ms；env ARENA_AGENT_TIMEOUT_MS，預設 150s，下限 1s）。逾時記 HOLD＋error，不拖死整段。 */
+export function arenaAgentTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.ARENA_AGENT_TIMEOUT_MS)
+  if (Number.isFinite(n) && n >= 1000) return Math.floor(n)
+  return 150_000
+}
+
+function withAgentTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`agent decide timed out after ${Math.round(ms / 1000)}s`)), ms)
+    timer.unref?.()
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+async function mapConcurrent<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++
+      results[idx] = await fn(items[idx])
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 function entryText(e: ArenaLedgerEntry): string {
   const sym = `${e.symbol ?? ''}${e.symbolName ? ' ' + e.symbolName : ''}`
   const qty = e.shares ? ` ${e.shares}股` : ''
@@ -275,7 +315,10 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
       errors.push(`saveIntradayPrices(slot${slotIndex}) failed: ${(err as Error).message}`)
     }
 
-    for (const agent of agents) {
+    // decide 並行（限流防 429 級聯）、persist 串行（DB 寫入安全）。
+    // Issue #80：串行＋無單 agent 超時是三連掛主因；逾時 agent 記 HOLD＋error 繼續。
+    const agentTimeoutMs = arenaAgentTimeoutMs()
+    const decided = await mapConcurrent(agents, arenaSlotConcurrency(), async (agent) => {
       const ctx: ArenaDecisionContext = {
         agent: { id: agent.id, name: agent.name, strategyId: agent.strategyId, tone: agent.tone },
         strategyName: agent.strategyId,
@@ -296,27 +339,36 @@ export async function runArenaRound(params: RunArenaRoundParams): Promise<RunAre
         strategyParams: agent.strategyParams,
         customPrompt,
       }
-      let decision: import('./types.js').ArenaDecision
-      let model: string | undefined
-      let fallbackUsed = false
-      let decisionError: string | undefined
       const t0 = Date.now()
       try {
-        const res = await strategist.decide(ctx)
-        model = res.model
-        fallbackUsed = res.fallbackUsed ?? false
-        decisionError = res.error
-        decision = res.decision
+        const res = await withAgentTimeout(strategist.decide(ctx), agentTimeoutMs)
         modelCalls++
         console.log(
-          `[Arena][phase=slot][slot=${slotIndex}][agent#${agent.id}] decide done in ${((Date.now() - t0) / 1000).toFixed(1)}s (model=${model ?? 'unknown'} fallback=${fallbackUsed})`,
+          `[Arena][phase=slot][slot=${slotIndex}][agent#${agent.id}] decide done in ${((Date.now() - t0) / 1000).toFixed(1)}s (model=${res.model ?? 'unknown'} fallback=${res.fallbackUsed ?? false})`,
         )
         report(`slot:${slotIndex}:agent:${agent.id}`)
+        return {
+          agent,
+          decision: res.decision,
+          model: res.model as string | undefined,
+          fallbackUsed: res.fallbackUsed ?? false,
+          decisionError: res.error,
+        }
       } catch (err) {
-        errors.push(`agent#${agent.id} slot${slotIndex} decide failed: ${(err as Error).message}`)
-        decision = { actions: [] }
+        const msg = (err as Error).message
+        errors.push(`agent#${agent.id} slot${slotIndex} decide failed: ${msg}`)
+        return {
+          agent,
+          decision: { actions: [] },
+          model: undefined as string | undefined,
+          fallbackUsed: false,
+          decisionError: msg,
+        }
       }
-      await persistSlot(agent, slotIndex, slotTimes[slotIndex] ?? `${slotIndex + 1}`, decision, model, fallbackUsed, decisionError, mark)
+    })
+
+    for (const d of decided) {
+      await persistSlot(d.agent, slotIndex, slotTimes[slotIndex] ?? `${slotIndex + 1}`, d.decision, d.model, d.fallbackUsed, d.decisionError, mark)
     }
 
     return {

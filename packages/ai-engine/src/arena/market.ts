@@ -3,20 +3,30 @@ import { registry } from '@stock/market-data'
 import { DEFAULT_ARENA_UNIVERSE, type ArenaDayOhlc, type ArenaHistory, type ArenaPrice, type ArenaUniverseItem } from './types.js'
 
 /** 移植自 engine.ts 的台股代號解析：純數字代號依序試 .TW / .TWO。 */
+const resolvedCache = new Map<string, string>()
+
 export async function resolveTwSymbol(raw: string): Promise<string> {
   const trimmed = raw.trim().toUpperCase()
   if (trimmed.endsWith('.TW') || trimmed.endsWith('.TWO')) return trimmed
   if (!/^\d{4,6}$/.test(trimmed)) return trimmed
 
+  const cached = resolvedCache.get(trimmed)
+  if (cached) return cached
+
   const provider = registry.get('yahoo-finance')
   for (const suffix of ['TW', 'TWO']) {
     try {
       const q = await provider.getQuote(`${trimmed}.${suffix}`, 'TW')
-      if (q && q.price > 0) return `${trimmed}.${suffix}`
+      if (q && q.price > 0) {
+        const hit = `${trimmed}.${suffix}`
+        resolvedCache.set(trimmed, hit)
+        return hit
+      }
     } catch {
       /* try next */
     }
   }
+  resolvedCache.set(trimmed, trimmed)
   return trimmed
 }
 
