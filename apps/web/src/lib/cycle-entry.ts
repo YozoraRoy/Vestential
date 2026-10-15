@@ -149,7 +149,7 @@ export function toSignalRow(c: CycleCandidate): Omit<CycleEntrySignalRow, 'editi
 
 export const RULE_LABELS: Record<string, string> = {
   R1: '回檔到位',
-  R2: '均線支撐',
+  R2: '站上均線',
   R3: '超賣反轉',
   R4: '量能收斂',
   R5: '動能翻正',
@@ -161,13 +161,22 @@ const NOTE_SYSTEM_PROMPT = `你是 Vestential 的資深台股分析師。以下�
 2. 嚴禁說教、嚴禁風險提醒或投資建議句（免責由平台統一呈現）、嚴禁出現「值得注意的是」等贅詞。
 3. 只輸出純文字一句話，不要 JSON、不要引號、不要標點以外的多餘符號。`
 
-const SUMMARY_SYSTEM_PROMPT = `你是 Vestential 的週期進場模型主筆。今天是台灣交易日盤後，模型掃描市值前 100 大台股後，篩出通過進場門檻的標的。請撰寫一段「今日進場點總覽」（繁體中文，150~250 字）。
+export const SUMMARY_SYSTEM_PROMPT = `你是 Vestential 的週期進場模型主筆。今天是台灣交易日盤後，模型掃描市值前 100 大台股後，篩出通過進場門檻的標的。請撰寫一段「今日進場點總覽」（繁體中文，150~250 字）。
 原則：
 1. 開門見山，第一句直接點出今日通過門檻的標的數量與大方向（例如「今日共 X 檔……」）。
-2. 觀察標的分佈：提及共同特徵（如多數屬回檔到位、或集中在某族群），點出具代表性的 1~2 檔。
+2. 觀察標的分佈：user 訊息末尾附有程式算好的「規則覆蓋率」，直接引用、嚴禁重算。「共同特徵」一詞僅限覆蓋率 100%（N/N）的規則；其餘一律寫「N 檔中有 M 檔…」；禁用「一致」「全體」「都」「共同交集」描述非 100% 規則。舉例 1~2 檔時，被舉例者必須確實觸發所描述的規則。
 3. 禁絕說教與投資建議（風險與免責由平台統一呈現）；說人話，直陳事實。
 4. 自然收尾，禁止「總結來說」「賺錢機會」等套版。
 5. 只輸出 JSON：{"summary":"..."}`
+
+/**
+ * Issue #86 防幻覺：規則覆蓋率由程式先算好（R1..R5 各幾檔觸發／共幾檔），
+ * 餵給 LLM 直接引用，LLM 不再心算交集。純函式，可單測。
+ */
+export function ruleCoverage(matchedList: string[][], order: string[] = ['R1', 'R2', 'R3', 'R4', 'R5']): string {
+  const total = matchedList.length
+  return order.map((r) => `${r} ${matchedList.filter((m) => m.includes(r)).length}/${total}`).join('、')
+}
 
 /** 為候選標的生成 LLM 評述；失敗回 null（不整批失敗）。 */
 export async function generateLlmNotes(candidates: CycleCandidate[]): Promise<(string | null)[]> {
@@ -213,7 +222,11 @@ export async function generateEditionSummary(candidates: CycleCandidate[]): Prom
         return `${i + 1}. ${c.name ?? c.symbol}（${c.symbol}）距高 ${(c.pctOff52wHigh * 100).toFixed(0)}%，規則 ${rules}`
       })
       .join('\n')
-    const raw = await llm.generate(SUMMARY_SYSTEM_PROMPT, `今日通過門檻標的（共 ${candidates.length} 檔）：\n${list}`)
+    const coverage = ruleCoverage(candidates.map((c) => c.matchedRules))
+    const raw = await llm.generate(
+      SUMMARY_SYSTEM_PROMPT,
+      `今日通過門檻標的（共 ${candidates.length} 檔）：\n${list}\n規則覆蓋率（已算好，直接引用勿重算）：${coverage}`,
+    )
     const cleaned = raw.replace(/```json[\s\S]*?```/g, (m) => m.slice(7, -3)).trim()
     const parsed = JSON.parse(cleaned) as { summary?: string }
     const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim() : ''
