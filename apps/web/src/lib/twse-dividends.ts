@@ -150,23 +150,95 @@ export async function fetchTwt48uDay(dateStr: string): Promise<Twt48uParseResult
   return parseTwt48uCsv(text)
 }
 
-// ─── #44：5 年殖利率回填（lazy＋封頂＋斷點續抓）────────────────────
+// ─── TWT49U 除權除息計算結果表（Issue #90：真歷史區間查詢）────────────
+// 背景：TWT48U `?date=` 無視日期、永遠只回當期預告 → 以它做歷史回填會無限空轉
+// （同批反覆重抓、cursor 凍結）。歷史改走 TWT49U `startDate/endDate` 區間。
+// 現金股利＝除權息前收盤 − 減除股利參考價（息/權息皆適用；純權無現金→≤0 略過）。
+// 月粒度：2022-01 起到當月（含）；已覆蓋月（當月有筆即跳過）不重抓；
+// 每輪上限 6 個月；單月失敗不擋整輪（下輪重試該月）；TWT48U 每日累積（往未來）照舊。
+const TWT49U_URL = 'https://www.twse.com.tw/exchangeReport/TWT49U'
+
+/** TWT49U 單月抓取超時（月資料約數百列；逾時 throw 由呼叫端逐月 best-effort）。 */
+export const TWT49U_FETCH_TIMEOUT_MS = 20000
+
+export interface Twt49uParseResult {
+  rows: TwseDividendInput[]
+  /** 略過列數（日期/代號非法／無現金）；供 log 觀察。 */
+  skipped: number
+}
+
+function parseNumLoose(raw: unknown): number | null {
+  const t = String(raw ?? '').replace(/,/g, '').trim()
+  if (!t) return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * 解析 TWT49U JSON data 列：
+ * [資料日期ROC, 代號, 名稱, 前收, 參考價, 權值+息值, 權/息, 漲停, 跌停,
+ *  開盤競價基準, 減除股利參考價, ...]。純函式，可單測。
+ */
+export function parseTwt49uRows(data: unknown[][]): Twt49uParseResult {
+  const rows: TwseDividendInput[] = []
+  let skipped = 0
+  for (const cols of data ?? []) {
+    const exDate = parseRocDateToIso(String((cols as unknown[])?.[0] ?? ''))
+    const symbol = cleanTwseCode(String((cols as unknown[])?.[1] ?? ''))
+    const prevClose = parseNumLoose((cols as unknown[])?.[3])
+    const deductRef = parseNumLoose((cols as unknown[])?.[10])
+    const cash =
+      prevClose != null && deductRef != null ? Math.round((prevClose - deductRef) * 10000) / 10000 : null
+    if (!symbol || !exDate || cash == null || cash <= 0) {
+      skipped++
+      continue
+    }
+    rows.push({ symbol, ex_date: exDate, cash_dividend: cash })
+  }
+  return { rows, skipped }
+}
+
+/** 抓 TWT49U 單月（YYYY-MM）；stat 非 OK 即 throw（呼叫端逐月 best-effort）。 */
+export async function fetchTwt49uMonth(month: string): Promise<Twt49uParseResult> {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error(`invalid month: ${month}`)
+  const y = Number(month.slice(0, 4))
+  const m = Number(month.slice(5, 7))
+  const lastDay = new Date(y, m, 0).getDate()
+  const mm = String(m).padStart(2, '0')
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TWT49U_FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(
+      `${TWT49U_URL}?response=json&startDate=${y}${mm}01&endDate=${y}${mm}${String(lastDay).padStart(2, '0')}`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          Referer: 'https://www.twse.com.tw/',
+        },
+        signal: ctrl.signal,
+      },
+    )
+    if (!res.ok) throw new Error(`TWSE TWT49U error: ${res.status} (${month})`)
+    const body: any = await res.json()
+    if (body?.stat !== 'OK') throw new Error(`TWSE TWT49U stat!=OK (${month}): ${String(body?.stat ?? '').slice(0, 80)}`)
+    return parseTwt49uRows(Array.isArray(body?.data) ? body.data : [])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ─── #44：5 年殖利率回填（lazy＋封頂；Issue #90 改月粒度 TWT49U）───────
 // 背景：twse_dividends 由每日 ensureTodayDividends 逐日累積，當年齊全；
-// 過去年份冷啟動時整年缺檔，5 年平均需回填歷史 TWT48U。
+// 過去年份冷啟動時整年缺檔，5 年平均需回填歷史。
 //
-// 上限值（實作註明）：YIELD_BACKFILL_MAX_DAYS_PER_RUN＝30（每輪最多抓 30 個
-// 交易日；TWT48U 單日回全市場檔，故每檔均攤同一上限，無需逐檔配額）。
-// 斷點續抓：agent_settings `twse_dividends.backfill_cursor` 記「下次起抓日」
-// （由新往舊掃；掃完記 'done'；年份窗滾動時自動失效重掃）。
+// 上限值（實作註明）：YIELD_BACKFILL_MAX_MONTHS_PER_RUN＝6（TWT49U 單月回全市場
+// 數百列；每月約數百筆寫入，配額遠低於舊逐日 30 天）。
+// 進度追蹤：DB 即 cursor——已覆蓋月（當月有筆即跳過）不重抓，無限空轉不可能
+// （舊 TWT48U 日粒度＋agent_settings cursor 已移除；舊 key 殘留無害）。
 // 呼叫時機：同步鈕＋排程順帶（沿用既有 ensureTodayDividends 位置），
 // best-effort 永不 throw；/dividends 讀取端唯讀不觸發。
-//
-// MOPS 選邊註明：TWT48U 的 ?date= 歷史檔僅 TWSE 保留近期才有；若舊年份
-// 連續回空／HTTP 錯（實測待確認），改用 MOPS「股利分派表」逐檔查
-// （未實作：需另接 MOPS API＋欄位對映，本輪先以 TWT48U＋年份不全註記覆蓋）。
 export const YIELD_BACKFILL_YEARS = 5
-export const YIELD_BACKFILL_MAX_DAYS_PER_RUN = 30
-export const TWSE_DIVIDENDS_BACKFILL_CURSOR = 'twse_dividends.backfill_cursor'
+export const YIELD_BACKFILL_MAX_MONTHS_PER_RUN = 6
 
 export type YieldBackfillStatus = 'done' | 'advanced' | 'failed'
 
@@ -179,150 +251,96 @@ export interface YieldBackfillYear {
 export interface YieldBackfillResult {
   status: YieldBackfillStatus
   years: YieldBackfillYear[]
-  /** 本輪實際抓取交易日數（≤ 上限 30）。 */
+  /** 本輪實際抓取月數（≤ 上限 6；沿用欄位名，語意為月）。 */
   fetchedDays: number
   /** 本輪寫入筆數。 */
   written: number
-  /** 斷點 cursor（下次起抓日／'done'）。 */
+  /** 觀測用 cursor（下輪最舊已抓月／'done'；真進度以 DB 覆蓋集為準）。 */
   cursor: string | null
   /** 失敗／空檔說明；正常時為 null。 */
   reason: string | null
 }
 
-function backfillTargetYears(today: string): string[] {
+/** 回填月份窗（當年往前推滿 5 年之 1 月起，到當月；由新往舊）。 */
+export function backfillMonthWindow(today: string, windowYears: number = YIELD_BACKFILL_YEARS): string[] {
   const y = Number(today.slice(0, 4))
-  if (!Number.isInteger(y)) return []
+  const m = Number(today.slice(5, 7))
+  if (!Number.isInteger(y) || !Number.isInteger(m) || m < 1 || m > 12) return []
   const out: string[] = []
-  // 過去 4 個完整年（當年由每日 ensureTodayDividends 負責，不列入回填）。
-  for (let i = YIELD_BACKFILL_YEARS - 1; i >= 1; i--) out.push(String(y - i))
-  return out
-}
-
-/** 某年交易日清單（由新往舊；週末必休＋已知國定假日表；更早年份僅週末判斷，見註明）。 */
-async function listYearTradingDaysDesc(year: string): Promise<string[]> {
-  const { isTwseTradingDay } = await import('./twse-calendar')
-  const days: string[] = []
-  const d = new Date(`${year}-12-31T12:00:00+08:00`)
-  if (Number.isNaN(d.getTime())) return days
-  const start = new Date(`${year}-01-01T12:00:00+08:00`).getTime()
-  for (let t = d.getTime(); t >= start; t -= 24 * 3600 * 1000) {
-    const s = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
-    if (isTwseTradingDay(s)) days.push(s)
+  let cy = y
+  let cm = m
+  const stop = `${y - windowYears + 1}-01`
+  while (`${cy}-${String(cm).padStart(2, '0')}` >= stop) {
+    out.push(`${cy}-${String(cm).padStart(2, '0')}`)
+    cm--
+    if (cm < 1) {
+      cm = 12
+      cy--
+    }
   }
-  return days
+  return out
 }
 
 export async function ensureYieldHistoryBackfill(
   today: string,
-  opts?: { maxDays?: number },
+  opts?: { maxMonths?: number },
 ): Promise<YieldBackfillResult> {
-  const maxDays = opts?.maxDays ?? YIELD_BACKFILL_MAX_DAYS_PER_RUN
+  const maxMonths = opts?.maxMonths ?? YIELD_BACKFILL_MAX_MONTHS_PER_RUN
   const empty: YieldBackfillResult = {
     status: 'failed', years: [], fetchedDays: 0, written: 0, cursor: null, reason: null,
   }
   try {
-    const { getAgentSetting, setAgentSetting, getTwseDividendsByYear, upsertTwseDividends } =
-      await import('@stock/database')
+    const { getTwseDividendsByYear, upsertTwseDividends } = await import('@stock/database')
 
-    const targetYears = backfillTargetYears(today)
-    if (targetYears.length === 0) return { ...empty, reason: 'invalid-today' }
+    const months = backfillMonthWindow(today)
+    if (months.length === 0) return { ...empty, reason: 'invalid-today' }
 
-    // 覆蓋檢查：整年 0 筆＝缺年（需回填）；有筆即視為齊全（逐日冪等，不重掃）。
+    // 覆蓋檢查：DB 有該月任一筆即視為已覆蓋（TWT49U 單月回全市場，不會有半月）。
+    const covered = new Set<string>()
     const years: YieldBackfillYear[] = []
-    for (const year of targetYears) {
-      let rows = 0
+    const seenYears = [...new Set(months.map((mo) => mo.slice(0, 4)))]
+    for (const year of seenYears) {
+      let rows: Array<{ ex_date: string }> = []
       try {
-        rows = (await getTwseDividendsByYear(year)).length
+        rows = await getTwseDividendsByYear(year)
       } catch {
-        rows = 0
+        rows = []
       }
-      years.push({ year, rows, missing: rows === 0 })
+      for (const r of rows) {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(r.ex_date)) covered.add(r.ex_date.slice(0, 7))
+      }
+      years.push({ year, rows: rows.length, missing: rows.length === 0 })
     }
-    const missingYears = years.filter((y) => y.missing).map((y) => y.year)
-    // Issue #84：當年缺口（1/1 起到已快取最早 ex_date；無快取則含 today）。
-    // 回填本來只掃過去 4 完整年、當年假設每日累積有收到——2026 旺季斷層證明為錯，
-    // 故當年缺口併入候選（與過去年份共用 30 天/輪上限；upsert 冪等重抓安全）。
-    const curYear = today.slice(0, 4)
-    let curYearRows: Array<{ ex_date: string }> = []
-    try {
-      curYearRows = await getTwseDividendsByYear(curYear)
-    } catch {
-      curYearRows = []
-    }
-    const gapUpper = currentYearGapUpperBound(curYearRows.map((r) => r.ex_date))
-    const curGapDays = (await listYearTradingDaysDesc(curYear)).filter(
-      (d) => d >= `${curYear}-01-01` && d <= today && d < gapUpper,
-    )
-    years.push({ year: curYear, rows: curYearRows.length, missing: curGapDays.length > 0 })
-    if (missingYears.length === 0 && curGapDays.length === 0) {
+
+    const pending = months.filter((mo) => !covered.has(mo))
+    if (pending.length === 0) {
       return { status: 'done', years, fetchedDays: 0, written: 0, cursor: 'done', reason: null }
     }
 
-    // 斷點：cursor 為「下次起抓日」（含）；'done' 但窗內又有缺年 → 視為失效重掃。
-    let cursor: string | null = null
-    try {
-      cursor = await getAgentSetting(TWSE_DIVIDENDS_BACKFILL_CURSOR)
-    } catch {
-      cursor = null
-    }
-    const needRescan = cursor === 'done'
-
-    // 候選日：缺年交易日由新往舊；cursor 有效時只取 ≤cursor 者（已抓過的不重抓）。
-    // Issue #84：當年缺口日豁免 cursor 過濾（缺口比 cursor 新是常態）並優先掃。
-    const candidates: string[] = [...curGapDays]
-    for (const year of missingYears) {
-      const days = await listYearTradingDaysDesc(year)
-      for (const day of days) {
-        if (!needRescan && cursor && cursor !== 'done' && day > cursor) continue
-        candidates.push(day)
-      }
-    }
-    candidates.sort().reverse()
-    if (candidates.length === 0) {
-      try {
-        await setAgentSetting({
-          key: TWSE_DIVIDENDS_BACKFILL_CURSOR,
-          value: 'done',
-          category: 'sync',
-          label: 'TWT48U 5 年回填斷點（下次起抓日；done＝窗內齊全）',
-        })
-      } catch {}
-      return { status: 'done', years, fetchedDays: 0, written: 0, cursor: 'done', reason: null }
-    }
-
-    // 每輪封頂：只抓前 maxDays 天（TWT48U 單日回全市場，逐日 best-effort）。
-    const batch = candidates.slice(0, Math.max(1, maxDays))
+    // 每輪封頂：只抓最新 maxMonths 個月；單月失敗不中斷（下輪重試該月）。
+    const batch = pending.slice(0, Math.max(1, maxMonths))
     let written = 0
-    let okDays = 0
+    let okMonths = 0
     let lastError: string | null = null
-    for (const day of batch) {
+    for (const mo of batch) {
       try {
-        const { rows } = await fetchTwt48uDay(day)
-        okDays++
+        const { rows } = await fetchTwt49uMonth(mo)
+        okMonths++
         try {
           written += await upsertTwseDividends(rows)
         } catch (e) {
           console.error('[TwseDividends] backfill upsert failed (non-blocking):', e)
         }
       } catch (e: unknown) {
-        // 單日失敗不中斷整輪（舊年份 TWSE 可能已無檔；連續失敗由 reason 揭露）。
-        lastError = e instanceof Error ? e.message : 'TWT48U history fetch failed'
+        lastError = e instanceof Error ? e.message : 'TWT49U month fetch failed'
       }
     }
 
     const oldestAttempted = batch[batch.length - 1]
-    const remaining = candidates.length - batch.length
-    // 斷點＝已抓最舊日的前一日（下輪由該日起抓；無剩餘即 done）。
-    const nextCursor = remaining <= 0 ? 'done' : prevDayStr(oldestAttempted)
-    try {
-      await setAgentSetting({
-        key: TWSE_DIVIDENDS_BACKFILL_CURSOR,
-        value: nextCursor,
-        category: 'sync',
-        label: 'TWT48U 5 年回填斷點（下次起抓日；done＝窗內齊全）',
-      })
-    } catch {}
-    if (okDays === 0) {
+    const remaining = pending.length - batch.length
+    // cursor 僅供觀測（DB 覆蓋集才是真進度）：下輪最舊已抓月／done。
+    const nextCursor = remaining <= 0 ? 'done' : oldestAttempted
+    if (okMonths === 0) {
       return {
         status: 'failed', years, fetchedDays: 0, written: 0, cursor: nextCursor,
         reason: lastError ?? 'empty-history',
@@ -338,26 +356,6 @@ export async function ensureYieldHistoryBackfill(
     console.error('[TwseDividends] backfill failed (non-blocking):', message)
     return { ...empty, reason: message }
   }
-}
-
-/** 前一日 'YYYY-MM-DD'（斷點 cursor 用；非法回 null 由呼叫端視為 done）。 */
-function prevDayStr(dateStr: string): string {
-  const t = new Date(`${dateStr}T12:00:00+08:00`).getTime()
-  if (Number.isNaN(t)) return 'done'
-  return new Date(t - 24 * 3600 * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
-}
-
-/**
- * Issue #84：當年缺口上界（exclusive）＝已快取最早 ex_date；無快取回 '9999-12-31'
- * （呼叫端再以 today 截斷）。純函式，可單測。
- */
-export function currentYearGapUpperBound(exDates: Array<string | null | undefined>): string {
-  let min: string | null = null
-  for (const d of exDates ?? []) {
-    if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue
-    if (min == null || d < min) min = d
-  }
-  return min ?? '9999-12-31'
 }
 
 // ─── 缺檔才抓（同步鈕＋16:00 排程順帶更新）─────────────────────────
