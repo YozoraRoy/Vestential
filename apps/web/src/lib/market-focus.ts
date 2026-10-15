@@ -893,6 +893,25 @@ export class MarketFocusStageTimeoutError extends Error {
   }
 }
 
+/**
+ * Issue #83：crawl 結果合併（含逾時降級）。crawled 為 null（整段逾時被降級吞掉）
+ * 時全篇 content=null／source_url=null，後續摘要段以無全文 fallback 繼續；
+ * 單篇 rejected 同視為缺全文（與既有 `!it.content` warn 行為一致）。
+ */
+export function mergeCrawledContent(
+  items: MarketFocusItem[],
+  crawled: PromiseSettledResult<{ content: string | null; sourceUrl: string | null }>[] | null,
+): MarketFocusItem[] {
+  return items.map((it, i) => {
+    const r = crawled?.[i]
+    return {
+      ...it,
+      content: r?.status === 'fulfilled' ? r.value.content : null,
+      source_url: r?.status === 'fulfilled' ? r.value.sourceUrl : null,
+    }
+  })
+}
+
 /** 段切換監聽：runMarketFocusPipeline 每進一段即回報，供 job 更新 job.stage。 */
 export type MarketFocusStageListener = (stage: MarketFocusStage) => void
 
@@ -1149,7 +1168,7 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
       crawlSettled[i] = true
     }),
   )
-  let crawled: PromiseSettledResult<{ content: string | null; sourceUrl: string | null }>[]
+  let crawled: PromiseSettledResult<{ content: string | null; sourceUrl: string | null }>[] | null = null
   try {
     crawled = await runPipelineStage('crawl', () => Promise.allSettled(crawlTracked), { onStage })
   } catch (e) {
@@ -1163,14 +1182,15 @@ async function runMarketFocusPipeline(dryRun: boolean, onStage?: MarketFocusStag
         `[MarketFocus][stage=crawl] timeout after ${elapsedSec}s pending=${pendingUrls.length} pendingDomains=[${pendingHosts.join(', ')}] pendingUrls=[${pendingUrls.join(', ')}]`,
       )
       e.message += ` pending=${pendingUrls.length} pendingDomains=[${shownHosts.join(', ')}]`
+      // Issue #83 降級成功：pending 文章記 content=null 繼續（摘要段有無全文 fallback），版次照出，不整批陪葬。
+      console.warn(
+        `[MarketFocus][stage=crawl] 降級繼續：${pendingUrls.length} 篇全文缺失（content=null），後續管線照跑`,
+      )
+    } else {
+      throw e
     }
-    throw e
   }
-  const enriched: MarketFocusItem[] = items.map((it, i) => ({
-    ...it,
-    content: crawled[i].status === 'fulfilled' ? crawled[i].value.content : null,
-    source_url: crawled[i].status === 'fulfilled' ? crawled[i].value.sourceUrl : null,
-  }))
+  const enriched: MarketFocusItem[] = mergeCrawledContent(items, crawled)
   for (const it of enriched) {
     if (!it.content) console.warn(`[MarketFocus] no article content saved for: ${it.title} (${it.source_url ?? it.url})`)
   }

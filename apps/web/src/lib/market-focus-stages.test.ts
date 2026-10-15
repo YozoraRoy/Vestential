@@ -3,9 +3,11 @@ import {
   MARKET_FOCUS_STAGE_TIMEOUTS_MS,
   MarketFocusStageTimeoutError,
   fetchMultiSourceCandidates,
+  mergeCrawledContent,
   runPipelineStage,
   type MarketFocusStage,
 } from './market-focus'
+import type { MarketFocusItem } from '@stock/database'
 
 // ─── mocks（沿 social-first-reply.test.ts 慣例隔離 workspace 相依） ──
 const mocks = vi.hoisted(() => ({
@@ -112,6 +114,27 @@ describe('Issue #39 pipeline 分段上限', () => {
     await expect(
       runPipelineStage('filter', () => Promise.reject(new Error('LLM boom')), { timeoutMs: 1000 }),
     ).rejects.toThrow('LLM boom')
+  })
+})
+
+describe('Issue #83 crawl 逾時降級合併', () => {
+  const item = (url: string): MarketFocusItem =>
+    ({ url, title: url, source: 'test', reason: 'test' }) as MarketFocusItem
+
+  it('crawled=null（整段逾時被吞）→ 全篇 content/source_url 為 null，不炸', () => {
+    const out = mergeCrawledContent([item('https://a.com/1'), item('https://b.com/2')], null)
+    expect(out.length).toBe(2)
+    expect(out[0]).toMatchObject({ url: 'https://a.com/1', content: null, source_url: null })
+    expect(out[1]).toMatchObject({ url: 'https://b.com/2', content: null, source_url: null })
+  })
+
+  it('混合 fulfilled/rejected → fulfilled 取值、rejected 取 null（舊行為不變）', () => {
+    const out = mergeCrawledContent([item('https://a.com/1'), item('https://b.com/2')], [
+      { status: 'fulfilled', value: { content: '全文A', sourceUrl: 'https://a.com/1' } },
+      { status: 'rejected', reason: new Error('nope') },
+    ])
+    expect(out[0]).toMatchObject({ content: '全文A', source_url: 'https://a.com/1' })
+    expect(out[1]).toMatchObject({ content: null, source_url: null })
   })
 })
 
