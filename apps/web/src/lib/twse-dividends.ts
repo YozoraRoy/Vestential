@@ -239,7 +239,22 @@ export async function ensureYieldHistoryBackfill(
       years.push({ year, rows, missing: rows === 0 })
     }
     const missingYears = years.filter((y) => y.missing).map((y) => y.year)
-    if (missingYears.length === 0) {
+    // Issue #84：當年缺口（1/1 起到已快取最早 ex_date；無快取則含 today）。
+    // 回填本來只掃過去 4 完整年、當年假設每日累積有收到——2026 旺季斷層證明為錯，
+    // 故當年缺口併入候選（與過去年份共用 30 天/輪上限；upsert 冪等重抓安全）。
+    const curYear = today.slice(0, 4)
+    let curYearRows: Array<{ ex_date: string }> = []
+    try {
+      curYearRows = await getTwseDividendsByYear(curYear)
+    } catch {
+      curYearRows = []
+    }
+    const gapUpper = currentYearGapUpperBound(curYearRows.map((r) => r.ex_date))
+    const curGapDays = (await listYearTradingDaysDesc(curYear)).filter(
+      (d) => d >= `${curYear}-01-01` && d <= today && d < gapUpper,
+    )
+    years.push({ year: curYear, rows: curYearRows.length, missing: curGapDays.length > 0 })
+    if (missingYears.length === 0 && curGapDays.length === 0) {
       return { status: 'done', years, fetchedDays: 0, written: 0, cursor: 'done', reason: null }
     }
 
@@ -253,7 +268,8 @@ export async function ensureYieldHistoryBackfill(
     const needRescan = cursor === 'done'
 
     // 候選日：缺年交易日由新往舊；cursor 有效時只取 ≤cursor 者（已抓過的不重抓）。
-    const candidates: string[] = []
+    // Issue #84：當年缺口日豁免 cursor 過濾（缺口比 cursor 新是常態）並優先掃。
+    const candidates: string[] = [...curGapDays]
     for (const year of missingYears) {
       const days = await listYearTradingDaysDesc(year)
       for (const day of days) {
@@ -329,6 +345,19 @@ function prevDayStr(dateStr: string): string {
   const t = new Date(`${dateStr}T12:00:00+08:00`).getTime()
   if (Number.isNaN(t)) return 'done'
   return new Date(t - 24 * 3600 * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
+}
+
+/**
+ * Issue #84：當年缺口上界（exclusive）＝已快取最早 ex_date；無快取回 '9999-12-31'
+ * （呼叫端再以 today 截斷）。純函式，可單測。
+ */
+export function currentYearGapUpperBound(exDates: Array<string | null | undefined>): string {
+  let min: string | null = null
+  for (const d of exDates ?? []) {
+    if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue
+    if (min == null || d < min) min = d
+  }
+  return min ?? '9999-12-31'
 }
 
 // ─── 缺檔才抓（同步鈕＋16:00 排程順帶更新）─────────────────────────
