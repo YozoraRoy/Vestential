@@ -35,6 +35,7 @@ export interface CycleEntryDict {
   winRateLegend?: string
   colBacktestTooltip?: string
   openBacktestLab: string
+  openYahooQuote: string
   detailTitle: string
   detailSubtitle: string
   detailClose: string
@@ -108,6 +109,13 @@ export function ruleList(matchedRules: string, dict: CycleEntryDict) {
 
 export function shortSymbol(symbol: string) {
   return symbol.replace(/\.(TW|TWO)$/, '')
+}
+
+/** Yahoo 股市報價連結（Issue #81）：上櫃 .TWO 其餘 .TW，另開新頁。 */
+export function yahooQuoteUrl(symbol: string) {
+  const bare = shortSymbol(symbol.trim())
+  const suffix = /\.TWO$/i.test(symbol.trim()) ? '.TWO' : '.TW'
+  return `https://tw.stock.yahoo.com/quote/${encodeURIComponent(bare)}${suffix}`
 }
 
 export function fmt(n: number | null | undefined, digits = 1) {

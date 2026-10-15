@@ -902,6 +902,7 @@ export const zhTW: Dict = {
     btDiffNoticeDesc: '• 本頁歷史回測：鎖定近 5 年歷史，僅統計完全觸發 R1～R5 多重規則共振（如均線+量縮+動能翻正）的嚴選訊號日，勝率與達成天數反映同複合條件的事實表現。\n• 回測實驗室（/backtest）：採用 5 年～15 年歷史長區間，以單一「季線負乖離率閥值」進行全域網格尋優（Grid Search），觸發次數更多，尋找長期數學期望值最高之參數，兩者可相互參照印證。',
     colBacktestTooltip: '近 5 年多規則（R1~R5）共振歷史回測，與回測實驗室的長區間季線乖離率算法不同',
     openBacktestLab: '開啟回測實驗室',
+    openYahooQuote: 'Yahoo 股市報價',
     detailTitle: '標的詳情',
     detailSubtitle: '週期進場模型 · 近 5 年歷史回測',
     detailClose: '關閉',

@@ -853,6 +853,7 @@ export interface Dict {
     btDiffNoticeDesc: string
     colBacktestTooltip: string
     openBacktestLab: string
+    openYahooQuote: string
     detailTitle: string
     detailSubtitle: string
     detailClose: string

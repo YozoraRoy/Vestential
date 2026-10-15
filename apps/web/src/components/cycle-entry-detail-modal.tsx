@@ -36,6 +36,7 @@ import {
   fmt,
   ruleList,
   shortSymbol,
+  yahooQuoteUrl,
   type CycleEntryDict,
 } from './cycle-entry-view'
 import { headTrClass, tableClass } from '@/lib/table-typography'
@@ -239,12 +240,14 @@ export function CycleEntryDetailModal({ signal, dict, onClose }: Props) {
             <div className="min-w-0">
               <h2 className="text-base font-bold truncate">{resolvedName}</h2>
               <p className="text-xs text-[var(--text-secondary)]">{dict.detailSubtitle}</p>
-              {/* Issue #19（A1）點子卡一鍵帶參數跳回測：?symbol=&preset=，回測頁自動帶入 */}
+              {/* Issue #81：改連 Yahoo 股市報價（另開新頁）；回測實驗室入口留給頁面底部大卡片 */}
               <a
-                href={`/backtest?symbol=${encodeURIComponent(shortSymbol(signal.symbol))}&preset=short`}
+                href={yahooQuoteUrl(signal.symbol)}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--accent)] hover:underline"
               >
-                {dict.openBacktestLab} →
+                {dict.openYahooQuote} ↗
               </a>
             </div>
           </div>

@@ -902,6 +902,7 @@ export const ja: Dict = {
     btDiffNoticeDesc: '• 本ページ（履歴バックテスト）：直近 5 年間のデータから、R1〜R5 の複数複合ルールに厳格に合致したシグナル日のみを対象として客観的な履歴実績を反映。\n• バックテストラボ（/backtest）：過去 5〜15 年間の長期データから、単一の「四半期移動平均乖離率」グリッドサーチを行い、数理的に最適なパラメータを算出。',
     colBacktestTooltip: '直近 5 年の複数複合ルール合致バックテスト。バックテストラボの乖離率グリッド最適化とは算出方法が異なります。',
     openBacktestLab: 'バックテストラボを開く',
+    openYahooQuote: 'Yahoo ファイナンス',
     detailTitle: '銘柄詳細',
     detailSubtitle: 'サイクル参入モデル · 直近 5 年の履歴バックテスト',
     detailClose: '閉じる',

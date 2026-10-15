@@ -81,6 +81,7 @@ export default async function CycleEntryPage() {
     winRateLegend: ce.winRateLegend,
     colBacktestTooltip: ce.colBacktestTooltip,
     openBacktestLab: ce.openBacktestLab,
+    openYahooQuote: ce.openYahooQuote,
     detailTitle: ce.detailTitle,
     detailSubtitle: ce.detailSubtitle,
     detailClose: ce.detailClose,

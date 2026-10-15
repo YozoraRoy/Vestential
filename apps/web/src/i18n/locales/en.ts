@@ -902,6 +902,7 @@ export const en: Dict = {
     btDiffNoticeDesc: '• This page (Historical Backtest): Evaluates strictly matching R1–R5 multi-rule resonance over the past 5 years (selective signals), reflecting multi-rule historical behavior.\n• Backtest Lab (/backtest): Runs a grid search over 5–15 years on single quarterly-MA bias thresholds to identify mathematically optimal entry levels.',
     colBacktestTooltip: '5-year multi-rule resonance backtest. Differs from the Backtest Lab bias grid search methodology.',
     openBacktestLab: 'Open Backtest Lab',
+    openYahooQuote: 'Yahoo Finance Quote',
     detailTitle: 'Stock details',
     detailSubtitle: 'Cycle entry model · 5-year historical backtest',
     detailClose: 'Close',
