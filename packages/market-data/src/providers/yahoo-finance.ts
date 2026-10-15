@@ -153,7 +153,9 @@ export const yahooFinanceProvider: MarketDataProvider = {
     let query = 'range=1y&interval=1d'
     if (start) {
       const p1 = Math.floor(new Date(start).getTime() / 1000)
-      const p2 = end ? Math.floor(new Date(end).getTime() / 1000) : ''
+      // Issue #87：Yahoo period2 為 exclusive 上界；舊寫法取 end 當日 00:00，
+      // 當日整根被排除（每日掃描永遠少一天，如 cycle 顯示前收）。改 +86400 含入 end 當日全天。
+      const p2 = end ? Math.floor(new Date(end).getTime() / 1000) + 86400 : ''
       query = `period1=${p1}${p2 ? `&period2=${p2}` : ''}&interval=1d`
     }
 
