@@ -31,29 +31,34 @@ interface YahooResult {
   }
 }
 
-async function yahooFetch(path: string): Promise<any> {
-  const url = `https://query1.finance.yahoo.com/v8/finance${path}`
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 10000)
+const CHROME_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 
-  try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-      },
-      signal: controller.signal,
-    })
-    if (!res.ok) throw new MarketDataError(`Yahoo Finance API error: ${res.status}`)
-    return await res.json()
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      throw new MarketDataError(`Yahoo Finance request timeout for ${path}`)
+async function yahooFetch(path: string): Promise<any> {
+  // Issue #88：query1 被擋時換 query2 重試一次（10s timeout 不變；錯誤形狀不變）。
+  let lastErr: unknown = null
+  for (const host of ['query1', 'query2']) {
+    const url = `https://${host}.finance.yahoo.com/v8/finance${path}`
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000)
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+        },
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new MarketDataError(`Yahoo Finance API error: ${res.status}`)
+      return await res.json()
+    } catch (err: any) {
+      lastErr = err?.name === 'AbortError' ? new MarketDataError(`Yahoo Finance request timeout for ${path}`) : err
+    } finally {
+      clearTimeout(timeoutId)
     }
-    throw err
-  } finally {
-    clearTimeout(timeoutId)
   }
+  throw lastErr
 }
 
 /**
@@ -125,6 +130,37 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<BatchQuote[]>
   return out
 }
 
+/** Issue #88：v11 quoteSummary 取數本體（crumb 優先、裸 fetch 兜底；全失敗回 null 由呼叫端三態）。 */
+async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
+  const base = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${symbol}?modules=price,summaryDetail`
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { cookies, crumb } = await getCrumb()
+      if (!crumb) break
+      const res = await fetch(`${base}&crumb=${encodeURIComponent(crumb)}`, {
+        headers: { 'User-Agent': CHROME_AGENT, Cookie: cookies, Accept: 'application/json' },
+      })
+      if (res.status === 401 || res.status === 403) {
+        crumbCache.clear()
+        continue
+      }
+      if (!res.ok) break
+      const data: any = await res.json()
+      if (data?.quoteSummary?.result?.[0]) return data
+      break
+    } catch {
+      break
+    }
+  }
+  try {
+    const res = await fetch(base, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 export const yahooFinanceProvider: MarketDataProvider = {
   name: 'yahoo-finance',
 
@@ -190,9 +226,9 @@ export const yahooFinanceProvider: MarketDataProvider = {
   },
 
   async getFundamentals(symbol: string): Promise<Fundamentals> {
-    const url = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${symbol}?modules=price,summaryDetail`
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    const data: any = await res.json()
+    // Issue #88：v11 quoteSummary 無 crumb 易被擋（裸 fetch 常回空）；
+    // 先走 crumb 流程（401/403 清快取換新 crumb 重試一次），仍失敗才降級舊裸 fetch。
+    const data = await fetchFundamentalsRaw(symbol)
     const price = data?.quoteSummary?.result?.[0]?.price ?? {}
     const summary = data?.quoteSummary?.result?.[0]?.summaryDetail ?? {}
 
