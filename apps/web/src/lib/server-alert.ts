@@ -89,7 +89,7 @@ export async function reportServerError(report: ServerErrorReport): Promise<bool
 
   const ts = formatTaipeiNow()
   const env = process.env.NODE_ENV ?? 'development'
-  const subject = `⚠️ Vestential 後端異常 — ${report.route} (${report.status})`
+  const subject = `⚠️ Vestential 後端告警 — ${report.route} (${report.status})`
   const text = `Vestential 後端錯誤告警
 
 時間（台北）: ${ts}
@@ -100,9 +100,9 @@ export async function reportServerError(report: ServerErrorReport): Promise<bool
 
 （此信已去重：同 route＋status＋摘要 30 分鐘內只發一封）`
   const html = `
-    <div style="background:#fef2f2;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
-      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fecaca;border-radius:12px;overflow:hidden;">
-        <div style="background:#b91c1c;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">⚠️ Vestential 後端錯誤告警</div>
+    <div style="background:#fffbeb;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:12px;overflow:hidden;">
+        <div style="background:#b45309;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">⚠️ Vestential 後端錯誤告警</div>
         <div style="padding:20px 24px;font-size:14px;color:#374151;line-height:1.8;">
           <div><b>時間（台北）</b>: ${escapeHtml(ts)}</div>
           <div><b>路由</b>: ${escapeHtml(report.route)}</div>

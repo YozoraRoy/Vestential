@@ -415,7 +415,7 @@ export async function sendMarketFocusSummary(forcedEditionKey?: string, force = 
 export async function sendMarketFocusAlert(topic: string, message: string): Promise<boolean> {
   const ts = formatTwDateTime(new Date().toISOString())
   const env = process.env.NODE_ENV ?? 'development'
-  const text = `Vestential 系統異常通知
+  const text = `Vestential 系統告警通知
 
 時間 : ${ts}
 類型 : ${topic}
@@ -425,9 +425,9 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
 建議 : 查看 GitHub Actions run 或 Azure 容器 log
        ${SITE_LINK}`
   const html = `
-    <div style="background:#fef2f2;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
-      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fecaca;border-radius:12px;overflow:hidden;">
-        <div style="background:#b91c1c;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">⚠️ Vestential 系統異常通知</div>
+    <div style="background:#fffbeb;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:12px;overflow:hidden;">
+        <div style="background:#b45309;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">⚠️ Vestential 系統告警通知</div>
         <div style="padding:20px 24px;font-size:14px;color:#374151;line-height:1.8;">
           <div><b>時間</b>: ${escapeHtml(ts)}</div>
           <div><b>類型</b>: ${escapeHtml(topic)}</div>
@@ -437,7 +437,7 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
         </div>
       </div>
     </div>`
-  return sendMailCore(`⚠️ Vestential 系統異常通知 — ${topic}`, text, html)
+  return sendMailCore(`⚠️ Vestential 系統告警通知 — ${topic}`, text, html)
 }
 
 // ─── ②a 籌碼雷達異常榜 digest（Issue #71，email-only） ──────────
@@ -600,7 +600,7 @@ export async function sendHealthAlert(report: {
   const env = process.env.NODE_ENV ?? 'development'
   const issueLines = report.issues.map((i) => `- [${i.severity}] ${i.code}: ${i.message}`).join('\n')
   const repairLines = report.repairs.length ? report.repairs.map((r) => `- ${r.action}: ${r.done ? 'done' : 'failed/未執行'}`).join('\n') : '無'
-  const text = `Vestential 健康覆盤異常 (${report.kind})
+  const text = `Vestential 健康覆盤告警 (${report.kind})
 
 時間   : ${ts}
 環境   : ${env}
@@ -615,14 +615,14 @@ ${repairLines}
 建議查看 GitHub Actions run「health-report」或 Azure 容器 log:
 ${SITE_LINK}`
   const html = `
-    <div style="background:#fef2f2;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
-      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fecaca;border-radius:12px;overflow:hidden;">
-        <div style="background:#b45309;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">🩺 Vestential 健康覆盤異常 (${escapeHtml(report.kind)})</div>
+    <div style="background:#fffbeb;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #fde68a;border-radius:12px;overflow:hidden;">
+        <div style="background:#b45309;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">🩺 Vestential 健康覆盤告警 (${escapeHtml(report.kind)})</div>
         <div style="padding:20px 24px;font-size:14px;color:#374151;line-height:1.9;">
           <div><b>時間</b>: ${escapeHtml(ts)}</div>
           <div><b>環境</b>: ${escapeHtml(env)}</div>
           <div style="margin-top:10px;"><b>問題 (${report.issues.length})</b></div>
-          <ul style="margin-top:4px;padding-left:20px;color:#b91c1c;">
+          <ul style="margin-top:4px;padding-left:20px;color:#92400e;">
             ${report.issues.map((i) => `<li>[${escapeHtml(i.severity)}] ${escapeHtml(i.code)} — ${escapeHtml(i.message)}</li>`).join('\n')}
           </ul>
           <div style="margin-top:10px;"><b>已執行修復</b></div>
@@ -633,5 +633,5 @@ ${SITE_LINK}`
         </div>
       </div>
     </div>`
-  return sendMailCore(`🩺 Vestential 健康覆盤異常 — ${report.issues.length} 項`, text, html)
+  return sendMailCore(`🩺 Vestential 健康覆盤告警 — ${report.issues.length} 項`, text, html)
 }
