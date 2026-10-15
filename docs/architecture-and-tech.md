@@ -16,6 +16,7 @@ flowchart TB
         Cron_Health["health-report<br/>健康檢查與自動修復"]
         Cron_ARENA["arena-tick + in-process<br/>競技場五階段"]
         Cron_SOCIAL["check-social-tokens<br/>每日 03:30 檢查社群憑證"]
+        Cron_MISC["sync-data / sync-cycle-entry<br/>sync-portfolio-prices / social-festival<br/>（簡圖，其餘排程見 deployment-and-ops.md §3）"]
     end
 
     subgraph Web["核心應用 (Next.js 15 App Router)"]

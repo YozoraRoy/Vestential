@@ -5,7 +5,7 @@
 ## 1. 排序
 - 可排序欄用 `<th aria-sort>`＋內嵌 `<button>`（範例：`app/chip-radar/page.tsx` `SortTh`）。
 - 當前欄 `aria-sort="ascending|descending"`，其餘 `"none"`；表頭有 ▲▼ 指示（作用中高亮）。
-- 預設順序＝資料源順序（chip：佔比↓＝引擎 `ratioPct desc`＝API＝信件；穩定排序，重新整理不亂跳）。
+- 預設順序＝資料源順序（chip：佔比↓＝引擎 `ratioPct desc`＝API＝信件；穩定排序，重新整理不亂跳）。**例外**：cycle-entry 列表預設勝率↓（Issue #82 使用者指定；表頭按鈕可切換，null 沉底）——此例外不得擴散，新表仍以資料源順序為預設。
 - 排序只重排主列；展開列（colSpan 明細）不受影響。
 - 手機 360px：表格包 `overflow-x-auto`＋`min-w`，不橫向溢出到頁面。
 

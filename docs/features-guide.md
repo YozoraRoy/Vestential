@@ -49,7 +49,7 @@
 ### 1.8 當年殖利率＋5 年平均殖利率（TWSE 真源；#44 取代手填股息）
 - **當年殖利率（僅台股）**：公式 `當年殖利率＝今年每股現金合計 ÷ 現價 ×100%`，與 `twse_dividends` 今年加總手算一致（除息真源為 TWSE 除權除息預告表 `TWT48U` 每日 CSV，落庫 `twse_dividends` 表逐日累積）；美股無真源，顯示 —。
 - **5 年平均殖利率**：公式 `5 年平均＝（有資料年份每股合計之平均）÷ 現價 ×100%`（當年＋前 4 年窗）；缺年（整年 0 筆快取）不補 0、不計入平均，UI 加註「年份不全」。冷啟動年份不全屬預期（lazy 回填完成前）。
-- **回填機制（lazy＋封頂＋斷點續抓）**：`ensureYieldHistoryBackfill`（`lib/twse-dividends.ts`）針對整年缺檔的過去年份，由新往舊抓 TWT48U 歷史日；**每輪每檔封頂 30 個交易日**（`YIELD_BACKFILL_MAX_DAYS_PER_RUN＝30`；TWT48U 單日回全市場檔，每檔均攤同一上限）；斷點記於 `agent_settings.twse_dividends.backfill_cursor`（下次起抓日／'done'），下輪續抓。觸發時機沿用既有：同步鈕＋每日排程順帶（best-effort，不擋主流程；讀取端 `/dividends` 唯讀不觸發）。
+- **回填機制（lazy＋封頂＋斷點續抓）**：`ensureYieldHistoryBackfill`（`lib/twse-dividends.ts`）針對整年缺檔的過去年份，由新往舊抓 TWT48U 歷史日；**每輪封頂 30 天**（`YIELD_BACKFILL_MAX_DAYS_PER_RUN＝30`；TWT48U 單日回全市場檔，全市場均攤同一上限）；斷點記於 `agent_settings.twse_dividends.backfill_cursor`（下次起抓日／'done'），下輪續抓。觸發時機沿用既有：同步鈕＋每日排程順帶（best-effort，不擋主流程；讀取端 `/dividends` 唯讀不觸發）。**Issue #84：回填納入當年 1/1 起缺口**（上界＝已快取最早 ex_date；無快取則含 today）——2026 每日累積 9/25 才上線、錯過除權旺季，當年被假設「每日累積有收到」是錯的；當年缺口日豁免 cursor `day > cursor` 過濾並優先掃，`years` 回報含當年（rows/missing/partial）。
 - **MOPS 選邊註明**：TWT48U 的 `?date=` 歷史檔僅 TWSE 保留近期才有；若舊年份連續回空／HTTP 錯，改用 MOPS「股利分派表」逐檔查（未實作：需另接 MOPS API＋欄位對映，本輪先以 TWT48U＋年份不全註記覆蓋）。
 - **參考殖利率不動**：Yahoo `dividendYield` 系多欄位 fallback（`fetchDividendYield`）行為照舊，僅參考顯示；手填股息欄已移除，DB 欄保留、寫入一律 0。
 - **欄位問號說明**：當年殖利率／5 年平均殖利率／殖利率參考／淨損益四欄表頭皆有 `?`（沿用後台 admin Help 風格，hover＋手機點擊開啟），三語顯示定義＋來源＋限制。
@@ -107,7 +107,7 @@
 - 資料來源直連證交所 `STOCK_DAY_ALL` 與歷史 `MI_INDEX`，點選任一標的立即自動填入代號並啟動回測。
 
 ### 3.5 點子流＋回測 AI 解讀（交易策略閉環）
-- **點子一鍵回測**：Top 20 逐檔＋cycle-entry Modal 皆可帶參數跳轉（`?symbol=&preset=`），回測頁自動帶入（`runWithPreset` 共用）。
+- **點子一鍵回測**：Top 20 逐檔可帶參數跳轉（`?symbol=&preset=`），回測頁自動帶入（`runWithPreset` 共用）。cycle-entry Modal 的標頭連結改為 **Yahoo 股市報價外連**（`tw.stock.yahoo.com/quote/{代號}.TW`，上櫃 `.TWO`，另開新頁；Issue #81）——因兩邊進場引擎不同、勝率永遠對不上，拔掉內連從源頭移除困惑；實驗室漏斗由 cycle-entry 頁底大卡片承擔。
 - **AI 解讀區**：跑完任一標的後顯示；勝率／筆數／平均天數等數字一律由引擎 JSON 注入原樣顯示（含 JSON 對照折疊區），LLM 只做文字解讀、`BACKTEST_INTERPRET_SYSTEM_PROMPT` 明寫禁自創數字；純計算不扣 quota，回測引擎本身未動。
 
 ---
@@ -123,7 +123,7 @@
 後端透過正規化標題特徵與 URL 指紋進行非同步去重，並嚴格過濾僅保留**近 2 天內**發布的新聞，建置出 50~60 則新聞的深度候選池。
 
 ### 4.2 AI 說人話逐則重點摘要 (`speak-human-tw`)
-- **全文抓取**：對入選的重點新聞深入原文網址抓取真實內文（遵守各網站 `robots.txt` 規範）。
+- **全文抓取**：對入選的重點新聞深入原文網址抓取真實內文（遵守各網站 `robots.txt` 規範）。**Issue #83 降級成功**：crawl 段 180 秒逾時不再整批失敗——未 settle 的文章記 `content=null` 繼續（摘要段有無全文 fallback），版次照出；`pendingDomains`（如長期擋爬蟲的 `tw.news.yahoo.com`）記入 Azure log 定罪。
 - **嚴格去 AI 味**：提示詞遵循 `speak-human-tw` 準則，首句交代客觀數字與事實事件，說明對產業鏈實質影響，禁贅詞、禁說教，每篇提煉 100~180 字精華。
 - **分流架構（方案 A）**：
   - **首頁 (`/`)**：展示最核心之 **精選 6 則**，維持首頁載入速度與極簡版面。
@@ -153,7 +153,8 @@
 - **定位**：在季線乖離回測（§3 `/backtest`）之上的「時點選擇」層——掃描全市場找出「已現合適進場點」的標的，輔助判斷買點。
 - **計算引擎**：`packages/cycle-entry`（`rules.ts`／`runSignalBacktest`），回測＋實時偵測同一套規則。
 - **資料更新**：`sync-cycle-entry.yml` 每交易日台灣時間 16:00 跑掃描，產出當日進場標的清單。
-- **個股細節**：`/api/cycle-entry/detail` 回傳近 1 年 OHLCV 與逐筆訊號回測（`runSignalBacktestDetail`）、今日規則判定（`evaluateLastBar`）；點擊標的開啟 `CycleEntryDetailModal` 檢視圖形與理由。
+- **個股細節**：`/api/cycle-entry/detail` 回傳近 1 年 OHLCV 與逐筆訊號回測（`runSignalBacktestDetail`）、今日規則判定（`evaluateLastBar`）；點擊標的開啟 `CycleEntryDetailModal` 檢視圖形與理由。Modal 標頭為 Yahoo 股市報價外連（Issue #81），不再連回測實驗室。
+- **列表互動（Issue #82）**：勝率為獨立可排序欄（表頭按鈕切換高→低／低→高，預設高→低，null 沉底；卡片模式同排序）；表頭「？」說明改下開，避開 `overflow-x-auto` 裁切（見 `docs/ui-table-checklist.md` §1 例外註記）。
 - **首頁入口**：首頁功能卡「已現合適進場點標的」直接進入。
 
 ---
@@ -170,7 +171,7 @@
 - **股票池**：動態市值**前 200**（`fetchTopMarketCapUniverse` 預設 topN=200）＋ETF 池（`DEFAULT_ARENA_ETF_UNIVERSE` 約 67 檔，可用 `ARENA_ETF_UNIVERSE` env 代換）；失敗兜底 `DEFAULT_ARENA_UNIVERSE`。
 - **起始資金**：全體 agent 起始資金 **NT$500,000**（`initial_capital` DEFAULT，migration 023；#27 起既有已全數補足，不再有 20 萬舊制）；文案三語同步。
 - **參數覆寫**：後台 `/admin/arena` 可改 `arena.slippage`（預設 0.003）、`arena.system_prompt` 等，優先於程式預設值。
-- **資金與心跳揭露**：排行頁揭露每隻 agent 剩餘資金與股息入帳（`twse_dividends` 真源窗內配息自動入帳）；tick 狀態端點含心跳／staleness 判斷（running 但 `updated_at` 超過 watchdog 即視為 stale，由備援 tick 接手）。
+- **資金與心跳揭露**：排行頁揭露每隻 agent 剩餘資金與股息入帳（`twse_dividends` 真源窗內配息自動入帳）；tick 狀態端點含心跳／staleness 判斷（running 但 `updated_at` 超過 watchdog 即視為 stale，由備援 tick 接手）。**Issue #80**：slot 段 decide 改限並行（`ARENA_SLOT_CONCURRENCY` 預設 3）＋單 agent 超時 150 秒（HOLD＋error 繼續）；看門狗改滑動 idle（engine 進展才重置）＋總時限硬上限 25 分鐘（`ARENA_TICK_HARD_CAP_MIN`）。
 - **資料展示**：後台提供決策時間軸（briefing／discussion／各 agent 決策與理由），可審視每日完整過程。
 
 ---

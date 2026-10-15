@@ -52,7 +52,7 @@
     <tr><th>工作流</th><th>in</th><th>out</th><th>等級／來源</th><th>頻率</th></tr>
     <tr><td><code>/analyze</code> 一輪（12 節點）</td><td class="num">~20k</td><td class="num">~10k</td><td>實測：#52 真機 2330（4 分析師 in 1656–1756、out 441–1440；其餘外推，±30%）</td><td>用戶觸發（quota：一般 1／天、管理員 3／天）</td></tr>
     <tr><td>market-focus 一版</td><td class="num">~20k</td><td class="num">~6k</td><td>預算：filter＋摘要 ≤6 批×340＋總覽 550</td><td>cron 4 次／天，有新版閘門，日均約 2 版</td></tr>
-    <tr><td>arena 一日（平日）</td><td class="num">~70k</td><td class="num">~20k</td><td>粗估：6 slot＋close 圓桌；<strong>待 §5 校準</strong></td><td>週一至週五</td></tr>
+    <tr><td>arena 一日（平日）</td><td class="num">~70k</td><td class="num">~20k</td><td>粗估：6 slot＋close 圓桌；<strong>per-agent 耗時 log 已上線（Issue #80），用 §6 SQL 即可轉實測</strong></td><td>週一至週五</td></tr>
     <tr><td>社群日更＋電子報</td><td class="num">~6k</td><td class="num">~3k</td><td>預算；電子報重用總覽，LLM ≈ 0</td><td>每日</td></tr>
     <tr><td>截圖辨識／review 類</td><td colspan="2" style="text-align:center">另計／零頭</td><td>vision 另計、量小</td><td>用戶觸發</td></tr>
   </table>

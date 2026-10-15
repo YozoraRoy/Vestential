@@ -267,6 +267,16 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
   3. OOM：`apps/web` 的 `typecheck` 已固定 `node --max-old-space-size=6144`，直接跑即可；CI（`typecheck.yml`）另設同值 `NODE_OPTIONS`。
 - **長期**：`typecheck.yml`（push main＋PR）先 build 依賴再全量 typecheck，同類斷鏈合併前即攔下；生產部署走 `deploy.yml` 的 `local-build`（先建 database 再建 web），不受影響。
 
+### Q6：排程觸發遇到 curl exit 28（60 秒完全無回應）？
+- **症狀**：如 `sync-market-focus.yml` trigger 步 `Process completed with exit code 28`（HTTP 000，連 route 第一行都沒跑到）。
+- **原因**：觸發時機撞上 Azure 部署重啟窗口（2026-10-15 實例：deploy 約 10:39–10:40 重啟 App，trigger 10:40:37 正中窗口）。route 本身是秒回 jobId 的設計，不可能跑 60 秒——exit 28 即代表「App 當時沒在聽」。
+- **排除**：等部署完成（`gh run watch <deploy-id>` success＋約 2 分鐘傳播）後手動 `workflow_dispatch` 重跑一次即可；同類排程下一班也會自己跑，不需修程式。另 GH schedule 延遲 4~5 小時是已知現象，排程時間≠實際觸發時間，判定撞期要看兩個 run 的時間軸。
+
+### Q7：market-focus 失敗 `[stage=crawl] timeout after 180s ... pendingDomains=[...]`？
+- **症狀**：job 在 crawl 段逾時，附帶未 settle 的 domain 清單（如長期擋爬蟲的 `tw.news.yahoo.com`）。
+- **原因**：該 domain 文章頁對 Azure 爬蟲 hanging（連 10s×2 重試都耗盡）。`pendingDomains` 即定罪證據（Issue #63 觀測格式）。
+- **排除**：Issue #83 起 crawl 逾時已降級成功（pending 文章 `content=null` 繼續、版次照出），此類失敗應不再出現；若出現，先看是否為**非 crawl 段**（照舊失敗屬正常）或新 domain，再決定換來源／降權重（另案）。
+
 ---
 
 ## 6. 社群憑證（IG / Threads / Facebook）維運
