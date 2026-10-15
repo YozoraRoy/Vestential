@@ -326,8 +326,11 @@ test('extractMetaError - 平面／空 body 不報錯', () => {
 })
 
 // ─── Issue #62：社群降頻（僅 00 UTC）＋下一 00 UTC 到期 ────────────────
+// Issue #79：isSocialEditionTime 已標 @deprecated（gate 改走 DB），以下斷言僅
+// 鎖定「舊函式行為不變、引用不斷」，新程式碼請勿使用；getNextSocialEditionAt
+// 維持不動（social-publish.ts next_retry_at 仍依賴它）。
 
-test('isSocialEditionTime - 僅 UTC 0 時回 true', () => {
+test('isSocialEditionTime - 僅 UTC 0 時回 true（deprecated 行為凍結）', () => {
   assert.equal(isSocialEditionTime(new Date('2026-10-13T00:00:00Z')), true)
   assert.equal(isSocialEditionTime(new Date('2026-10-13T00:59:59Z')), true)
   assert.equal(isSocialEditionTime(new Date('2026-10-13T06:00:00Z')), false)

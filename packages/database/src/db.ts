@@ -6210,6 +6210,31 @@ export async function countSocialPublishedPosts(platform: string): Promise<numbe
   return row?.n ?? 0
 }
 
+/**
+ * Issue #79：計算自 `since`（含）起全平台已「成功發布」的筆數。
+ * `since` 取 UTC 日曆日邊界的 wall-clock 字串（`YYYY-MM-DD HH:MM:SS`，
+ * 呼叫端以 `getSocialDayStartUtcWall` 產生）：published_at 寫入即此慣例
+ *（social-publish.ts 全平台皆 `toISOString().slice(0,19).replace('T',' ')`），
+ * created_at 亦同形（SQLite `datetime('now','localtime')`／MSSQL `GETDATE()`）。
+ * 同形 wall-clock 字串比較即時間比較，SQLite TEXT＋MSSQL DATETIME2
+ *（字串參數隱式轉換）雙後端皆可用；勿傳 T/Z 形 ISO（`' ' < 'T'` 會使同日列
+ * 整批失準，MSSQL DATETIME2 亦拒收 `Z` 後綴）。
+ * 只認 status='published'；failed／deferred 不計入、不阻擋當日 gate。
+ * published_at 為 NULL 的異常列退回以 created_at 判斷（COALESCE 兜底）。
+ */
+export async function countSocialPublishedSince(since: string): Promise<number> {
+  const row = await dbQueryFirst<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM social_posts WHERE status = 'published' AND COALESCE(published_at, created_at) >= @since`,
+    { since },
+  )
+  return row?.n ?? 0
+}
+
+/** Issue #79：自 `since`（含）起是否已有任一 published（當日 DB gate 用）。 */
+export async function hasAnySocialPublishedSince(since: string): Promise<boolean> {
+  return (await countSocialPublishedSince(since)) > 0
+}
+
 /** 讀取該平台該 edition 的發文紀錄（含 #31 首回覆欄位）；無紀錄回傳 undefined。 */
 export async function getSocialPost(platform: string, editionKey: string): Promise<SocialPostRow | undefined> {
   return dbQueryFirst<SocialPostRow>(

@@ -1,4 +1,4 @@
-import { getMarketFocusMeta, getMarketFocus, getAgentSetting, saveSocialCardImage, getSocialCardImage, listDueDeferredSocialPosts, getSocialPost } from '@stock/database'
+import { getMarketFocusMeta, getMarketFocus, getAgentSetting, saveSocialCardImage, getSocialCardImage, listDueDeferredSocialPosts, getSocialPost, hasAnySocialPublishedSince } from '@stock/database'
 import { sleep, getChainPaceMs, isSocialEditionTime } from '@stock/ai-engine'
 import type { SocialPostPlatform } from '@stock/database'
 import { generateSocialCaptions, generateMemeConcept, IG_DRIVE_COMMENT, type SocialCaptions } from '@/lib/social'
@@ -24,12 +24,28 @@ import { buildFirstReplyFailMessage, buildSocialPartialFailMessage, buildSocialD
 const SITE_BASE = process.env.AUTH_BASE_URL ?? 'https://vestential.com'
 
 /**
- * Issue #62 社群降頻：一天只發一次，僅 00 UTC edition 觸發社群發布＋重打；
- * 06／12／18 UTC 跳過（不發文、不記 failed、不發告警、不跑 redrive）。
+ * Issue #62 社群降頻：一天只發一次。
+ * Issue #79 起 gate 改以 social_posts 當日 UTC 是否已有 published 判斷
+ *（DB gate；schedule 延遲到非 00 時照發，根治 2026-10-14 整日零發文）。
  * force（admin 手動）跳過此 gate。dryRun（預覽）不受 gate 影響。
+ *
+ * @deprecated 舊 hour gate 墊片（UTC 小時 == 0 才回 true），僅保留匯出不斷
+ * 引用鏈；發布 gate 本體已改走 `hasAnySocialPublishedSince`，新程式碼請勿使用。
  */
 export function isSocialEdition(now: Date = new Date()): boolean {
   return isSocialEditionTime(now)
+}
+
+/**
+ * Issue #79：當日 UTC 日曆日邊界（`Date.UTC(y, m, d)` 起算，含）轉 wall-clock
+ * 字串（`YYYY-MM-DD HH:MM:SS`），供 `hasAnySocialPublishedSince` 時間窗查詢。
+ * 格式刻意取 UTC wall 而非 T/Z 形 ISO：published_at 寫入即此慣例
+ *（social-publish.ts 全平台 `toISOString().slice(0, 19).replace('T', ' ')`），
+ * T 形字串比較會因 `' ' < 'T'` 使同日列整批失準。純函數（now 可注入，方便單測）。
+ */
+export function getSocialDayStartUtcWall(now: Date = new Date()): string {
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+  return dayStart.toISOString().slice(0, 19).replace('T', ' ')
 }
 
 export interface SocialRedriveSummary {
@@ -40,7 +56,8 @@ export interface SocialRedriveSummary {
 
 /**
  * Issue #62：撿起已到期的 deferred 列，single-shot 重打（全程不熱重試）。
- * 只由 00 UTC 非 force 執行呼叫；06／12／18 UTC 與 force 不跑。
+ * Issue #79 起只由「新 DB gate 通過的非 force 執行」呼叫；gate 跳過（當日已發）
+ * 與 force 不跑。
  * 成功→published；再失敗→終態 deferred（next_retry_at=null，只剩人工 force）。
  */
 export async function redriveDueDeferredPosts(now: Date = new Date()): Promise<SocialRedriveSummary> {
@@ -54,7 +71,7 @@ export async function redriveDueDeferredPosts(now: Date = new Date()): Promise<S
     console.log(`[Social] redrive skip: ${due.length - igDue.length} 筆非 IG deferred，略過`)
   }
   if (igDue.length === 0) return summary
-  console.log(`[Social] redrive: ${igDue.length} 筆到期 deferred，00 UTC single-shot 重打`)
+  console.log(`[Social] redrive: ${igDue.length} 筆到期 deferred，single-shot 重打`)
   summary.checked = igDue.length
   for (const row of igDue) {
     try {
@@ -122,7 +139,7 @@ export async function triggerSocialPublish(
     imageUrl?: string | null
     imageUrls?: Partial<Record<SocialPostPlatform, string | null>>
     captions?: SocialCaptions
-    /** Issue #62：執行時刻（預設 now；單測可注入 00／06／12／18 UTC）。 */
+    /** Issue #79：執行時刻（預設 now；單測可注入任意 UTC 時刻＋mock 當日已發紀錄）。 */
     now?: Date
   } = {},
 ): Promise<SocialPublishOutcome> {
@@ -192,21 +209,33 @@ export async function triggerSocialPublish(
   }
 
   // 發布：去重與發布綁定。force 重發時清除去重紀錄並全部重跑；否則只處理未發布過的平台。
-  // Issue #62 降頻 gate：只在去重檢查「之前」擋非 00 UTC（且不寫任何列、不發告警）。
+  // Issue #79 DB gate：當日 UTC 日曆日內已有任一平台 published 即跳過
+  //（一天一次語義；非 00 時執行、跨日、failed／deferred 皆不受時刻影響）。
   const now = options.now ?? new Date()
-  if (!dryRun && !force && !isSocialEdition(now)) {
-    console.log(
-      `[Social] skip: 非 00 UTC edition（社群降頻一天一次，UTC hour=${now.getUTCHours()}，不發文、不記 failed、不發告警）`,
-    )
-    return {
-      triggered: false,
-      skipped: true,
-      editionKey,
-      message: 'skip: 非 00 UTC edition（社群降頻一天一次，06/12/18 UTC 不發文）',
+  if (!dryRun && !force) {
+    let alreadyPublishedToday = false
+    try {
+      alreadyPublishedToday = await hasAnySocialPublishedSince(getSocialDayStartUtcWall(now))
+    } catch (e: any) {
+      // 查不到已發紀錄時 fail-open 照發：第二層 alreadyPosted 逐平台 edition
+      // 去重仍在，同 edition 重跑照樣擋下，不會重發。
+      console.error('[Social] 今日已發查詢失敗（fail-open 照發）:', e?.message ?? e)
+    }
+    if (alreadyPublishedToday) {
+      console.log(
+        '[Social] skip: 今日 UTC 已有 published（社群降頻一天一次，不重發、不記 failed、不發告警）',
+      )
+      return {
+        triggered: false,
+        skipped: true,
+        editionKey,
+        message: 'skip: 今日 UTC 已有社群 published（一天一次，同日第二跑跳過）',
+      }
     }
   }
 
-  // Issue #62：00 UTC 非 force 先重打到期 deferred（single-shot），再走本版發布。
+  // Issue #79：新 gate 通過＋非 force＋非 dryRun 先重打到期 deferred
+  //（single-shot），再走本版發布；gate 跳過或 force 不跑 redrive。
   let redrive: SocialRedriveSummary = { checked: 0, published: [], terminal: [] }
   if (!dryRun && !force) {
     try {

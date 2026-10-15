@@ -180,8 +180,14 @@ export function isMetaSpamSuspected(_status: number, body?: MetaRateLimitBody | 
 // ─── Issue #62：社群降頻一天一次（僅 00 UTC 發社群）────────────────────
 // cron 一天跑 4 個 edition（00／06／12／18 UTC），社群只在 00 UTC 發布＋
 // 重打 deferred；06／12／18 UTC 跳過（不發文、不記 failed、不發告警）。
+// Issue #79：時刻 gate 已退役，改以 social_posts 當日 published 紀錄判斷
+//（DB gate，見 @stock/database `hasAnySocialPublishedSince`）。時刻 gate 會因
+// schedule 延遲造成整日零發文（2026-10-14），以下僅保留匯出不斷引用鏈。
 
 /**
+ * @deprecated Issue #79 起社群發布 gate 改走 DB
+ *（`hasAnySocialPublishedSince`，當日 UTC 有 published 即跳過）；時刻判斷會因
+ * schedule 延遲整日零發文，僅保留匯出不斷引用鏈，新程式碼請勿使用。
  * 是否為社群發布 edition（UTC 小時 == 0）。純函數（now 可注入，方便單測）。
  */
 export function isSocialEditionTime(now: Date = new Date()): boolean {
