@@ -11,6 +11,7 @@ import {
   backfillMonthWindow,
   writeDividendsMonthPlan,
   ensureYieldHistoryBackfill,
+  T187AP45_FETCH_TIMEOUT_MS,
   YIELD_BACKFILL_YEARS,
   type DividendsMonthPlan,
   type OfficialDividendRow,
@@ -105,6 +106,13 @@ describe('parseTwt49uRows（息／權／權息三態）', () => {
 
 // #95：官方股利分派表（t187ap45_L）解析——現金股利合計＝三個「元/股」欄相加。
 describe('parseT187ap45Rows（官方股利分派表）', () => {
+  // #95 P4：官方表 2.47 MB（gzip 471 KB）、跨區（Azure Canada Central）實測 >20s
+  // 逾時被中止 → 調為 120s；此斷言防日後被調回短逾時。
+  it('抓取逾時 ≥ 90s（跨區 2.47 MB 慢速串流；上限受 sync workflow --max-time 240 約束）', () => {
+    expect(T187AP45_FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(90000)
+    expect(T187AP45_FETCH_TIMEOUT_MS).toBeLessThanOrEqual(150000)
+  })
+
   const raw = [
     {
       出表日期: '1151015',

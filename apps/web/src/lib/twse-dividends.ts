@@ -282,7 +282,22 @@ export async function fetchTwt49uMonth(month: string): Promise<Twt49uParseResult
 // 年度、董事會日集中於 2026），故 2022～2024 的權息股查不到 → 依決策「跳過該列／
 // 刪除推導值，寧缺勿錯」（UI 顯示 —）。ETF 收益分配不在本表（0056／00919 等）。
 export const T187AP45_L_URL = 'https://openapi.twse.com.tw/v1/opendata/t187ap45_L'
-export const T187AP45_FETCH_TIMEOUT_MS = 20000
+/**
+ * 官方表抓取逾時（#95 P4 修正：20s → 120s）。
+ *
+ * 量測依據（2.47 MB JSON，undici 同款）：
+ * - 本機：undici 自動 gzip（`content-encoding: gzip`）→ 傳輸 471 KB、6.4 秒；
+ *   無壓縮對照 2.47 MB → 42～60 秒（TWSE 端為慢速串流，`starttransfer` 即 ~1 秒級）。
+ * - 生產（Azure App Service `stock-platform-roy`，region **Canada Central**，跨區）：
+ *   20 秒**每次都**被 AbortController 中止（`official_error: "This operation was aborted"`），
+ *   兩次實測一致 → 20s 對跨區抓取不足（#95 P4 前置）。
+ *
+ * 上限理由：sync workflow（`sync-portfolio-prices.yml`）`--max-time 240`；
+ * repair route 同一請求內還要逐月抓 TWT49U（6 個月約 10～20 秒），
+ * 故 120s 為安全上限（最壞 120s + 20s ≪ 240s，亦遠低於 route `maxDuration=300`）。
+ * 失敗仍走既有 best-effort 降級（僅套息列），不擋主流程。
+ */
+export const T187AP45_FETCH_TIMEOUT_MS = 120000
 /** 官方值與 TWT49U 值視為同一筆的容差（元/股）。TWT49U 值截斷至 6 位小數且
  *  可能與「宣告值」有換算差（實測 3416 融程電 2026-06-30：TWT49U 5.095945 vs
  *  官方 5.1），故取 0.005（半分錢）：誤差上限 ≤ 0.01，既對齊官方值又不致配錯事件。 */

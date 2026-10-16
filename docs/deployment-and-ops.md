@@ -113,7 +113,7 @@
 **一次性資料修復端點（`SYNC_TOKEN` 維運用；Issue #95）**：`POST /api/admin/dividends/repair`
 
 - 以新的 TWT49U 解析（息列取 `權值+息值`）＋官方 `t187ap45_L` 重抓歷史月，覆寫錯誤列並刪除「價差推導」產生的權息列；`dryRun` 預設 `true`（只回預估筆數）。
-- 一次處理 `limit` 個月（1..12）。**注意 `next_month` 只是「本段之後的下一個月」，不是進度游標**：每段都從 `[from,to]` 區間的最新月往舊取 `limit` 個月（重跑必得同結果＝冪等），所以整窗 70 個月要用 **`to` 逐段往回走**（`to` 帶上一段的 `next_month`），實測 5 段 × `limit:12` 可跑完全窗（單月約 1.5 秒、官方表抓取約 3 秒，遠低於 `maxDuration=300`）。
+- 一次處理 `limit` 個月（1..12）。**注意 `next_month` 只是「本段之後的下一個月」，不是進度游標**：每段都從 `[from,to]` 區間的最新月往舊取 `limit` 個月（重跑必得同結果＝冪等），所以整窗 70 個月要用 **`to` 逐段往回走**（`to` 帶上一段的 `next_month`），實測 5 段 × `limit:12` 可跑完全窗（單月 TWT49U 約 1.5 秒；官方表 `t187ap45_L` 2.47 MB，本機 gzip 傳輸約 6 秒、**跨區（Azure Canada Central）可達 40～60 秒**，故 `T187AP45_FETCH_TIMEOUT_MS＝120 秒`，#95 P4 前為 20 秒會必逾時）。
 - #95 P2 修正：`writeDividendsMonthPlan` 已移除 dry-run 預設值（一律顯式帶 `dryRun`），`dryRun:false` 才會真的 upsert／刪除；`covered_months` 只計「實際標記成功」的月。
 
 ```powershell
