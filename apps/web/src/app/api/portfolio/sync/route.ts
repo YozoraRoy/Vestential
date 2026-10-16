@@ -66,7 +66,8 @@ function byId(records: PortfolioRecord[]): Map<number, PortfolioRecord> {
   * - #44：手填股息欄已移除（全程不讀不寫 dividend，總報酬以裸價差重算）；
   * - #94：手動分支不再附殖利率參考（原回傳欄位已下架，同步不再打 Yahoo quoteSummary）；
   * - #35：排程／手動皆順帶更新當年除息快取（ensureTodayDividends，缺檔才抓；回傳 dividends{status,...}）；
-  * - #44：同步鈕／排程順帶觸發 5 年殖利率回填（ensureYieldHistoryBackfill，每輪封頂＋斷點續抓，best-effort）；
+  * - #44／#95：同步鈕／排程順帶觸發殖利率歷史回填（ensureYieldHistoryBackfill，#95 起改 6 年窗
+  *   `(Y-5)-01..本月`＋月粒度 TWT49U＋官方 `t187ap45_L` 覆寫，每輪封頂 6 個月，best-effort）；
   * - Yahoo 限流：記 console log＋reportServerError（#24 通道 30 分鐘同 key 去重＝告警節流），其餘持倉照常完成。
  */
 export async function POST(req: Request) {
@@ -130,7 +131,7 @@ export async function POST(req: Request) {
         void reportServerError({ route: 'POST /api/portfolio/sync (schedule)', status: 429, error: `Yahoo rate limited during scheduled sync (scanned ${targets.length})` })
       }
       // #35：排程順帶更新當年除息快取（缺檔才抓；best-effort，不擋現價同步主流程）。
-      // #44：順帶觸發 5 年殖利率回填（封頂＋斷點續抓，best-effort）。
+      // #44／#95：順帶觸發殖利率歷史回填（6 年窗、月粒度、每輪封頂 6 個月，best-effort）。
       const dividends = await ensureTodayDividends(today)
       const yieldBackfill = await ensureYieldHistoryBackfill(today)
       return NextResponse.json({
@@ -192,7 +193,7 @@ export async function POST(req: Request) {
       void reportServerError({ route: 'POST /api/portfolio/sync', status: 429, error: `Yahoo rate limited during manual sync (scanned ${holdings.length})` })
     }
     // #35：同步鈕順帶更新當年除息快取（缺檔才抓；best-effort，不擋主流程）。
-    // #44：順帶觸發 5 年殖利率回填（封頂＋斷點續抓，best-effort）。
+    // #44／#95：順帶觸發殖利率歷史回填（6 年窗、月粒度、每輪封頂 6 個月，best-effort）。
     const dividends = await ensureTodayDividends(taipeiTodayStr())
     const yieldBackfill = await ensureYieldHistoryBackfill(taipeiTodayStr())
     const res = NextResponse.json({

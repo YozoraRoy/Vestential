@@ -3238,6 +3238,67 @@ export async function hasTwseDividendsForDate(exDate: string): Promise<boolean> 
   return twseDividendMemoryStore.some(m => m.ex_date === exDate)
 }
 
+/**
+ * 條件式刪除單筆除息快取（Issue #95：移除「價差推導」產生的失真列）。
+ *
+ * 只有當 DB 內該 (symbol, ex_date) 的現金股利「等於呼叫端算出的推導值」
+ * （|diff| ≤ tolerance，預設 0.0005）時才刪除，回傳實際刪除筆數（0 或 1）。
+ * 用意：權／權息列的價差推導值不可信（含無償配股價值），需刪除不留；
+ * 但 `UNIQUE(symbol, ex_date)` 下同一格可能已被 TWT48U／官方表寫入精確值，
+ * 值不同即代表不是推導列 → 不刪（寧留不誤刪）。
+ */
+export async function deleteTwseDividendIfMatches(
+  symbol: string,
+  exDate: string,
+  expectedCash: number,
+  tolerance = 0.0005,
+): Promise<number> {
+  const sym = (symbol ?? '').trim().toUpperCase()
+  if (!sym || !/^\d{4}-\d{2}-\d{2}$/.test(exDate)) return 0
+  if (!Number.isFinite(expectedCash)) return 0
+  const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.0005
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('symbol', sql.NVarChar(30), sym)
+          .input('exDate', sql.NVarChar(20), exDate)
+          .input('cash', sql.Float, expectedCash)
+          .input('tol', sql.Float, tol)
+          .query(`
+            DELETE FROM twse_dividends
+            WHERE symbol = @symbol AND ex_date = @exDate AND ABS(cash_dividend - @cash) <= @tol
+          `)
+        return Number(result.rowsAffected?.[0] ?? 0)
+      } catch (e) {
+        console.error('[AzureSQL] deleteTwseDividendIfMatches error:', e)
+        return 0
+      }
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      try {
+        const res = db.prepare(
+          'DELETE FROM twse_dividends WHERE symbol = ? AND ex_date = ? AND ABS(cash_dividend - ?) <= ?',
+        ).run(sym, exDate, expectedCash, tol)
+        return Number(res.changes ?? 0)
+      } catch (e) {
+        console.error('[SQLite] deleteTwseDividendIfMatches error:', e)
+        return 0
+      }
+    }
+  }
+  // 記憶體兜底。
+  const idx = twseDividendMemoryStore.findIndex(m => m.symbol === sym && m.ex_date === exDate)
+  if (idx >= 0 && Math.abs(Number(twseDividendMemoryStore[idx]!.cash_dividend) - expectedCash) <= tol) {
+    twseDividendMemoryStore.splice(idx, 1)
+    return 1
+  }
+  return 0
+}
+
 // ─── 競技場股利入帳去重（Issue #54，arena_dividend_credits）───────
 export interface ArenaDividendCreditRow {
   id?: number

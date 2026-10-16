@@ -108,7 +108,42 @@
     - 行為：節日當天觸發 `/api/cron/festival` 全自動發賀圖＋貼文（去重 `festival:{id}:{date}`）；非節日回 skipped。另見 `docs/features-guide.md` §8.2。
 10. **持倉現價＋除息快取同步 (`sync-portfolio-prices.yml`)**：
     - 時間：每個交易日台灣時間 **16:00**（`0 8 * * 1-5` UTC；假日由 API 內 `isTwseTradingDay` 再擋一次）。
-    - 行為：呼叫 `POST /api/portfolio/sync`（`SYNC_TOKEN` 驗證）全掃持倉現價；**順帶更新當年除息快取**（TWSE `TWT48U` 每日 CSV → `twse_dividends` 表，缺檔才抓、同日不重抓）＋**5 年殖利率回填**（`ensureYieldHistoryBackfill`，每輪上限 30 天、斷點續抓；失敗不擋主流程＋告警沿用既有機制）。資料源與當年／5 年殖利率規則見 `docs/features-guide.md` §1.8。
+    - 行為：呼叫 `POST /api/portfolio/sync`（`SYNC_TOKEN` 驗證）全掃持倉現價；**順帶更新當年除息快取**（TWSE `TWT48U` 每日 CSV → `twse_dividends` 表，缺檔才抓、同日不重抓）＋**殖利率歷史回填**（`ensureYieldHistoryBackfill`，#95 起 6 年窗 `(Y-5)-01` 起、每輪上限 6 個月、以 `agent_settings.twse_dividends.covered_months` 記錄已回填月、斷點續抓；失敗不擋主流程＋告警沿用既有機制）。資料源與當年（YTD）／5 年平均（去年為止 5 個完整年度）規則見 `docs/features-guide.md` §1.8。
+
+**一次性資料修復端點（`SYNC_TOKEN` 維運用；Issue #95）**：`POST /api/admin/dividends/repair`
+
+- 以新的 TWT49U 解析（息列取 `權值+息值`）＋官方 `t187ap45_L` 重抓歷史月，覆寫錯誤列並刪除「價差推導」產生的權息列；`dryRun` 預設 `true`（只回預估筆數）。
+- 一次處理 `limit` 個月（1..12）。**注意 `next_month` 只是「本段之後的下一個月」，不是進度游標**：每段都從 `[from,to]` 區間的最新月往舊取 `limit` 個月（重跑必得同結果＝冪等），所以整窗 70 個月要用 **`to` 逐段往回走**（`to` 帶上一段的 `next_month`），實測 5 段 × `limit:12` 可跑完全窗（單月約 1.5 秒、官方表抓取約 3 秒，遠低於 `maxDuration=300`）。
+- #95 P2 修正：`writeDividendsMonthPlan` 已移除 dry-run 預設值（一律顯式帶 `dryRun`），`dryRun:false` 才會真的 upsert／刪除；`covered_months` 只計「實際標記成功」的月。
+
+```powershell
+# 1) 盤點（唯讀）：分年筆數＋已回填月／未回填月
+curl.exe -s --max-time 60 -X POST "https://vestential.com/api/admin/dividends/repair" `
+  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
+  -d '{"action":"assess"}'
+
+# 2) 預覽（唯讀）：窗內最新 6 個月的寫入／刪除計畫
+curl.exe -s --max-time 120 -X POST "https://vestential.com/api/admin/dividends/repair" `
+  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
+  -d '{"action":"repair","limit":6}'
+
+# 3) 執行：帶 dryRun:false 才寫入（冪等，可重跑）
+curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
+  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
+  -d '{"action":"repair","dryRun":false,"limit":12}'
+
+# 全窗（70 個月）逐段往回：把上一段的 next_month 填進 to，重複到 next_month 為 null
+curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
+  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
+  -d '{"action":"repair","dryRun":false,"limit":12,"to":"2025-10"}'
+
+# 也可指定區間（例：2026-01～2026-09）
+curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
+  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
+  -d '{"action":"repair","dryRun":false,"from":"2026-01","to":"2026-09","limit":12}'
+```
+
+- 預期輸出（實測窗內資料）：`would_write`／`written` 為該段 upsert 筆數、`would_delete`／`deleted` 為刪除的推導列數（2021～2026 全窗 70 個月：`written` 合計 **6,283**、`official_overrides` **146**、`failed_months` 0；刪除僅在 DB 內已有舊推導列時才非 0，空表實測為 0，全窗上限約 446 筆）、`covered_months` 為「已覆蓋月 ∪ 本段實際標記成功月」的月數（全窗 70）、`marked_months` 為本段實際標記成功月數（舊版用 `covered.size + 已處理月數` 會謊報）。
 11. **靜態閘門 (`typecheck.yml`，Issue #68 防漏網)**：
     - 觸發：push 至 `main`＋所有 pull_request。
     - 行為：先建依賴 workspaces（core→market-data→database→ai-engine，避免 stale dist）再跑 `npm run typecheck` 全量檢查；`NODE_OPTIONS=--max-old-space-size=6144`（web tsc 需約 6GB，見 §5 Q5）。

@@ -57,7 +57,7 @@ export {
   LLM_USAGE_ROW_LIMIT,
   saveAnalysisJob, updateAnalysisJob, getAnalysisJobById, listAnalysisJobsByUser,
   saveArenaTickJob, updateArenaTickJob, getArenaTickJobById, findRunningArenaTickJob, cleanupArenaTickJobs,
-  upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate, getTwseDividendsInWindow,
+  upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate, getTwseDividendsInWindow, deleteTwseDividendIfMatches,
   normalizeArenaDividendSymbol, saveArenaDividendCredit, hasArenaDividendCredit, getArenaDividendCredits,
   saveDcaPlan, getDcaPlans, logDcaEvent, getDcaEventStats,
 } from './db.js'

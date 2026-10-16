@@ -8,9 +8,10 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Issue #35：除息快取讀取（唯讀，不觸發抓取；抓取由同步鈕／16:00 排程順帶做）。
- * #44：支援多年度（5 年殖利率）：`years=2022,2023,2024,2025,2026`（預設當年，
- * 舊 `year=` 單年參數沿用相容）；回傳 coverage（分年筆數＋缺年標記，供 UI
- * 「年份不全」註記；缺年回填由同步鈕／排程順帶做，此處唯讀不觸發）。
+ * #44：支援多年度（殖利率窗）：`years=2021,2022,2023,2024,2025,2026`（預設當年，
+ * 舊 `year=` 單年參數沿用相容；#95 起讀取窗為 `(Y-5)..Y` 共 6 年）；回傳 coverage
+ * （分年筆數＋缺年標記，供 UI「年份不全」註記；缺年回填由同步鈕／排程順帶做，
+ * 此處唯讀不觸發）。
  * GET /api/portfolio/dividends?symbols=2002,2330&year=2026
  * 回傳 { success, year, today, dividends[{symbol,ex_date,cash_dividend}],
  *         coverage[{year,rows,missing}], cacheAsOf, isTradingDay, reason }。
@@ -24,9 +25,10 @@ export async function GET(req: Request) {
     const today = taipeiTodayStr()
     const singleYear = url.searchParams.get('year') ?? ''
     const yearsParam = (url.searchParams.get('years') ?? '').trim()
-    // #44：years CSV 優先（5 年窗）；否則沿用單 year（預設當年，相容舊呼叫）。
+    // #44：years CSV 優先（多年度窗）；否則沿用單 year（預設當年，相容舊呼叫）。
+    // #95：讀取窗＝(Y-5)..Y 共 6 年；上限放寬至 8（留 2 年餘裕，僅 4 位數字不影響 URL 長度）。
     const years = yearsParam
-      ? [...new Set(yearsParam.split(',').map((s) => s.trim()).filter((s) => /^\d{4}$/.test(s)))].slice(0, 6)
+      ? [...new Set(yearsParam.split(',').map((s) => s.trim()).filter((s) => /^\d{4}$/.test(s)))].slice(0, 8)
       : [(/^\d{4}$/.test(singleYear) ? singleYear : today.slice(0, 4))]
     const year = years[years.length - 1] ?? today.slice(0, 4)
     const symbolsParam = (url.searchParams.get('symbols') ?? '').trim().toUpperCase()

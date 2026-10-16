@@ -13,6 +13,7 @@ import {
   computeCurrentYearYield,
   computeFiveYearAvgYield,
   yearlyPerShareTotals,
+  yieldDataYears,
   yieldWindowYears,
   type YieldHistoryEntry,
 } from '@/lib/portfolio-yield'
@@ -307,14 +308,17 @@ export default function PortfolioPage() {
     }
   }, [visibleColumns, sortKey])
   // #35：TWSE 除息快取（當年）＋無檔原因碼（API reason 原字串，顯示時轉三語）。
-  // #44：改抓 5 年窗（缺年由各列「年份不全」註記呈現；回填由同步鈕／排程順帶做，此處唯讀）。
+  // #44：改抓 6 年資料窗（缺年由各列「年份不全」註記呈現；回填由同步鈕／排程順帶做，此處唯讀）。
+  // #95：5 年平均窗改「去年為止 5 個完整年度」(Y-5)..(Y-1)；當年殖利率改 YTD。
   // coverage（分年筆數）由 API 回傳供 QA 手算核對，前端以逐列 partial 徽章呈現，不另存 state。
   const [divRows, setDivRows] = useState<DividendYtdEntry[]>([])
   const [divReason, setDivReason] = useState<string | null>(null)
   // #44：當年／5 年殖利率（recordId→值；TWSE 真源僅台股，手算可重現見 lib/portfolio-yield）。
   // 定義於 sortedHistory 之前（排序鍵 curYield/avg5Yield 需用）。
   const divToday = getTaiwanDateStrClient()
-  const yieldYears = useMemo(() => yieldWindowYears(divToday.slice(0, 4)), [divToday])
+  const divCurYear = divToday.slice(0, 4)
+  // #95：5 年平均＝(Y-5)..(Y-1)（不含當年；當年另有 YTD 欄）。
+  const yieldYears = useMemo(() => yieldWindowYears(divCurYear), [divCurYear])
   const yieldById = useMemo(() => {
     const m = new Map<number, { cur: number | null; avg5: number | null; partial: boolean; missingYears: string[] }>()
     const rowsAll: YieldHistoryEntry[] = (divRows ?? []) as YieldHistoryEntry[]
@@ -324,9 +328,10 @@ export default function PortfolioPage() {
         m.set(r.id, { cur: null, avg5: null, partial: true, missingYears: [...yieldYears] })
         continue
       }
+      // 5 年平均：完整年度窗（不含當年）。
       const yearly = yearlyPerShareTotals(r.symbol, rowsAll, yieldYears)
-      const curYear = yieldYears[yieldYears.length - 1]
-      const curPerShare = yearly.find((y) => y.year === curYear)?.perShareTotal ?? 0
+      // 當年：只計今年已除息（ex_date <= today）事件，未來預告不墊高。
+      const curPerShare = yearlyPerShareTotals(r.symbol, rowsAll, [divCurYear], divToday)[0]?.perShareTotal ?? 0
       const avg = computeFiveYearAvgYield(yearly, r.current_price)
       m.set(r.id, {
         cur: computeCurrentYearYield(curPerShare, r.current_price),
@@ -336,7 +341,7 @@ export default function PortfolioPage() {
       })
     }
     return m
-  }, [history, divRows, yieldYears])
+  }, [history, divRows, yieldYears, divCurYear, divToday])
   const sortedHistory = useMemo(() => {
     if (!sortKey) return history
     const arr = [...history]
@@ -457,7 +462,8 @@ export default function PortfolioPage() {
     let cancelled = false
     ;(async () => {
       try {
-        const years = yieldWindowYears(getTaiwanDateStrClient().slice(0, 4)).join(',')
+        // #95：讀取窗＝(Y-5)..Y 共 6 年（當年 YTD＋5 個完整年度；API years 上限同為 6）。
+        const years = yieldDataYears(getTaiwanDateStrClient().slice(0, 4)).join(',')
         const res = await fetch(`/api/portfolio/dividends?symbols=${encodeURIComponent(twSymbols.join(','))}&years=${encodeURIComponent(years)}`)
         const data = await parseJsonSafe(res, safeMsg)
         if (!cancelled && data?.success) {
