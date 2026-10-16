@@ -24,7 +24,7 @@ export interface PortfolioInput {
   /**
    * #44：股息輸入欄已移除。型別保留 required（DB 不刪欄、舊呼叫相容），但 validate
    * 忽略 body.dividend 一律回 0、寫入一律 0；殖利率改由 TWSE 真源（當年／5 年平均）
-   * ＋ Yahoo 參考欄呈現。
+   * 呈現（#94：Yahoo 參考殖利率欄已下架）。
    */
   dividend: number
   symbolName?: string
@@ -77,7 +77,7 @@ export interface PnLResult {
  * - 公式：totalReturn＝unrealizedPnl＝市值−成本（不再＋股息）；
  *   totalReturnPct＝totalReturn／成本×100%。
  * - 選邊：yieldOnCost 固定回 0（手填股息已移除，無分子可算；殖利率改由
- *   TWSE 真源當年／5 年平均＋ Yahoo 參考欄呈現，本函式不碰）。
+ *   TWSE 真源當年／5 年平均呈現，本函式不碰）。
  * - 稅費淨損益（computeNetPnL）計算不動（本就以裸值為基）。
  */
 export function computePnL(input: PnLInput): PnLResult {
@@ -164,17 +164,14 @@ export async function fetchLiveQuote(rawSymbol: string, market: Market): Promise
   }
 }
 
-// ─── #33：持倉現價批量同步＋殖利率參考 ────────────────────────────
+// ─── #33：持倉現價批量同步 ────────────────────────────────────────
 // 限流數值（實作註明）：
 // - Yahoo v7 批量報價每批 ≤100 檔（fetchBatchQuotes 上限），批間已有 300ms 間隔；
 // - 批量未命中才走單檔 fallback，逐檔間隔 SINGLE_GAP_MS＝200ms；
-// - 殖利率（quoteSummary）單檔成本高：並行 FUND_CONCURRENCY＝5、批間隔 250ms、單檔超時 8s；
+// - #94：殖利率參考欄（Yahoo quoteSummary 三段 fallback）已移除，同步不再逐檔抓 fundamentals；
 // - 單持有人單次上限 200 筆、排程全掃單次上限 2000 筆（訪客全表量級未知，封頂＋id 分頁）。
 export const PORTFOLIO_SYNC_BATCH_SIZE = 100
 export const PORTFOLIO_SYNC_SINGLE_GAP_MS = 200
-export const PORTFOLIO_SYNC_FUND_CONCURRENCY = 5
-export const PORTFOLIO_SYNC_FUND_GAP_MS = 250
-export const PORTFOLIO_SYNC_FUND_TIMEOUT_MS = 8000
 export const PORTFOLIO_SYNC_MAX_PER_REQUEST = 200
 export const PORTFOLIO_SYNC_MAX_PER_RUN = 2000
 
@@ -182,92 +179,10 @@ function syncSleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null
-  return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms)
-    p.then(
-      (v) => { if (timer) clearTimeout(timer); resolve(v) },
-      (e) => { if (timer) clearTimeout(timer); reject(e) },
-    )
-  })
-}
-
 /** Yahoo 限流訊號（429／rate limit／too many）；命中時呼叫端記 log＋告警（告警靠 #24 去重 30 分鐘節流）。 */
 export function isQuoteRateLimited(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e ?? '')
   return /429|rate.?limit|too many/i.test(msg)
-}
-
-/**
- * #34：殖利率缺值三態原因（UI 以三語顯示，不再空白 —）。
- * - 'no-data'：Yahoo 各欄位皆無值（台股常態）
- * - 'timeout'：quoteSummary 單檔超時（PORTFOLIO_SYNC_FUND_TIMEOUT_MS）
- * - 'rate-limited'：Yahoo 限流（沿用 isQuoteRateLimited 模式）
- */
-export type DividendYieldReason = 'no-data' | 'timeout' | 'rate-limited'
-
-export interface DividendYieldResult {
-  /** Yahoo 殖利率（小數，如 0.035＝3.5%）；無值為 null。 */
-  value: number | null
-  /** value 為 null 時的缺值原因；有值時為 null。 */
-  reason: DividendYieldReason | null
-}
-
-function isYieldTimeout(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e ?? '')
-  return /timeout after \d+ms/i.test(msg)
-}
-
-function classifyYieldError(e: unknown): DividendYieldReason {
-  if (isQuoteRateLimited(e)) return 'rate-limited'
-  if (isYieldTimeout(e)) return 'timeout'
-  return 'no-data'
-}
-
-function asYieldValue(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
-}
-
-/**
- * #34：殖利率參考多欄位 fallback：
- * dividendYield → trailingAnnualDividendYield → dividendRate / 現價推算。
- * 有值回 { value, reason: null }；仍無值回 { value: null, reason } 三態原因。
- * #44：僅回傳 Yahoo 參考值，不寫入任何持倉欄位。
- */
-export async function fetchDividendYield(rawSymbol: string, market: Market): Promise<DividendYieldResult> {
-  let symbol: string
-  try {
-    symbol = await resolveYahooSymbol(rawSymbol, market)
-  } catch (e) {
-    return { value: null, reason: classifyYieldError(e) }
-  }
-  let f: Awaited<ReturnType<typeof yahooFinanceProvider.getFundamentals>> | null = null
-  try {
-    f = await withTimeout(
-      yahooFinanceProvider.getFundamentals(symbol, market === 'tw' ? 'TW' : 'US'),
-      PORTFOLIO_SYNC_FUND_TIMEOUT_MS,
-    )
-  } catch (e) {
-    return { value: null, reason: classifyYieldError(e) }
-  }
-  const direct = asYieldValue(f?.dividendYield) ?? asYieldValue(f?.trailingAnnualDividendYield)
-  if (direct != null) return { value: direct, reason: null }
-  // 第三順位：dividendRate（每股金額）/ 現價 推算；現價取不到即視為無資料。
-  const rate = asYieldValue(f?.dividendRate)
-  if (rate != null && rate > 0) {
-    try {
-      const quote = await withTimeout(
-        yahooFinanceProvider.getQuote(symbol, market === 'tw' ? 'TW' : 'US'),
-        PORTFOLIO_SYNC_FUND_TIMEOUT_MS,
-      )
-      const price = asYieldValue(quote?.price)
-      if (price != null && price > 0) return { value: rate / price, reason: null }
-    } catch (e) {
-      return { value: null, reason: classifyYieldError(e) }
-    }
-  }
-  return { value: null, reason: 'no-data' }
 }
 
 export interface SyncableHolding {
@@ -284,10 +199,6 @@ export interface SyncedHolding {
   id: number
   symbol: string
   price: number
-  /** Yahoo 殖利率（小數）；未取／無值為 null。僅參考顯示，不寫 dividend。 */
-  dividendYield: number | null
-  /** #34：殖利率缺值原因（有值時為 null；UI 以三語顯示）。 */
-  dividendYieldReason: DividendYieldReason | null
 }
 
 export type SyncFailureReason = 'quote' | 'resolve'
@@ -309,12 +220,11 @@ export interface PortfolioSyncResult {
 /**
  * 批量同步現價（逐檔 best-effort：單檔失敗不中斷整批）。
  * - 先批量報價（≤100/批），未命中再單檔 fallback（200ms 間隔）；
- * - includeYield 時才抓殖利率（並行 5，失敗→null），排程全掃傳 false 省配額；
  * - #44：手填股息欄已移除，同步全程不讀不寫 dividend（裸價差重算）。
+ * - #94：同步不再抓 Yahoo 殖利率（quoteSummary 恆 404 的參考欄已下架）。
  */
 export async function syncPortfolioPrices(
   holdings: SyncableHolding[],
-  opts?: { includeYield?: boolean },
 ): Promise<PortfolioSyncResult> {
   const syncedAt = new Date().toISOString().replace('T', ' ').substring(0, 19)
   const updated: SyncedHolding[] = []
@@ -366,36 +276,9 @@ export async function syncPortfolioPrices(
     else failed.push({ id: r.h.id, symbol: r.h.symbol, reason: 'quote' })
   }
 
-  // 5) 殖利率參考（僅需要時；失敗→{ value: null, reason }，UI 顯示三語原因）。
-  // #44：手填股息欄已移除（只讀傳入相容欄，不回寫）。
-  const yieldMap = new Map<number, DividendYieldResult>()
-  if (opts?.includeYield && priced.length > 0) {
-    for (let i = 0; i < priced.length; i += PORTFOLIO_SYNC_FUND_CONCURRENCY) {
-      const chunk = priced.slice(i, i + PORTFOLIO_SYNC_FUND_CONCURRENCY)
-      const results = await Promise.all(
-        chunk.map(async (p): Promise<DividendYieldResult> => {
-          try {
-            return await fetchDividendYield(p.h.symbol, p.h.market)
-          } catch (e) {
-            markRateLimited(e)
-            return { value: null, reason: classifyYieldError(e) }
-          }
-        }),
-      )
-      chunk.forEach((p, idx) => yieldMap.set(p.h.id, results[idx]))
-      if (i + PORTFOLIO_SYNC_FUND_CONCURRENCY < priced.length) await syncSleep(PORTFOLIO_SYNC_FUND_GAP_MS)
-    }
-  }
-
+  // 5) 組裝結果（#94：殖利率參考欄下架，不再回傳 dividendYield／dividendYieldReason）。
   for (const p of priced) {
-    const y = yieldMap.get(p.h.id)
-    updated.push({
-      id: p.h.id,
-      symbol: p.h.symbol,
-      price: p.price,
-      dividendYield: y?.value ?? null,
-      dividendYieldReason: y?.value != null ? null : (y?.reason ?? null),
-    })
+    updated.push({ id: p.h.id, symbol: p.h.symbol, price: p.price })
   }
   return { updated, failed, rateLimited, syncedAt }
 }

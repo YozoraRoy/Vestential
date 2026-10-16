@@ -243,7 +243,7 @@ export const yahooFinanceProvider: MarketDataProvider = {
       eps: num(summary.trailingEps),
       dividendYield: num(summary.dividendYield),
       // #34：fallback 用既有 summaryDetail 欄位（trailingAnnualDividendYield 小數／dividendRate 每股金額）；
-      // Yahoo 未回傳即 undefined，由 fetchDividendYield 走缺值三態。
+      // Yahoo 未回傳即 undefined（#94：web 端參考殖利率欄已下架，此處僅供 AI 引擎等既有取用端）。
       trailingAnnualDividendYield: num(summary.trailingAnnualDividendYield),
       dividendRate: num(summary.dividendRate),
       sector: price.sector,

@@ -8,7 +8,6 @@ import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
 import { computePortfolioReviewStats, filterPortfolioReviewByMonth, PORTFOLIO_MIN_REVIEW_COUNT } from '@/lib/portfolio-review'
-import type { DividendYieldReason } from '@/lib/portfolio'
 import { type DividendYtdEntry } from '@/lib/portfolio-dividends'
 import {
   computeCurrentYearYield,
@@ -122,24 +121,25 @@ function formatPct(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
 }
 
-// #34：表格欄位自定義（15 欄；操作欄常顯不參與）。
-// #44：股息／成本殖利率欄移除，改為當年殖利率／5 年平均殖利率欄（仍 15 欄）。
+// #34：表格欄位自定義（14 欄；操作欄常顯不參與）。
+// #44：股息／成本殖利率欄移除，改為當年殖利率／5 年平均殖利率欄。
+// #94：殖利率（參考）欄移除（Yahoo quoteSummary 恆 404）→ 15 欄改 14 欄。
 // 偏好鍵 portfolio-table-columns；評等預設關、其餘預設開；localStorage 讀寫皆 try/catch。
 const TABLE_COLUMNS_STORAGE_KEY = 'portfolio-table-columns'
 type TableColumnId =
   | 'rating' | 'name' | 'symbol' | 'shares' | 'cost' | 'price' | 'totalCost'
-  | 'marketValue' | 'unrealized' | 'return' | 'curYield' | 'avg5Yield' | 'refYield'
+  | 'marketValue' | 'unrealized' | 'return' | 'curYield' | 'avg5Yield'
   | 'net' | 'created'
 const TABLE_COLUMN_IDS: TableColumnId[] = [
   'rating', 'name', 'symbol', 'shares', 'cost', 'price', 'totalCost',
-  'marketValue', 'unrealized', 'return', 'curYield', 'avg5Yield', 'refYield',
+  'marketValue', 'unrealized', 'return', 'curYield', 'avg5Yield',
   'net', 'created',
 ]
 const DEFAULT_TABLE_COLUMNS: Record<TableColumnId, boolean> = {
   rating: false,
   name: true, symbol: true, shares: true, cost: true, price: true, totalCost: true,
   marketValue: true, unrealized: true, return: true, curYield: true, avg5Yield: true,
-  refYield: true, net: true, created: true,
+  net: true, created: true,
 }
 function loadTableColumns(): Record<TableColumnId, boolean> {
   try {
@@ -154,13 +154,14 @@ function loadTableColumns(): Record<TableColumnId, boolean> {
 }
 // #34：排序鍵→欄位對照（隱藏欄排序自動失效用；評等/操作不參與排序）。
 // #44：dividend/yield 排序鍵移除，改為 curYield/avg5Yield（TWSE 真源殖利率）。
+// #94：殖利率（參考）欄排序鍵移除（欄位下架）。
 type RecordsSortKey =
   | 'name' | 'shares' | 'cost' | 'price' | 'totalCost' | 'marketValue'
-  | 'unrealized' | 'returnRate' | 'curYield' | 'avg5Yield' | 'refYield' | 'net' | 'created'
+  | 'unrealized' | 'returnRate' | 'curYield' | 'avg5Yield' | 'net' | 'created'
 const SORT_KEY_TO_COLUMN: Record<RecordsSortKey, TableColumnId> = {
   name: 'name', shares: 'shares', cost: 'cost', price: 'price', totalCost: 'totalCost',
   marketValue: 'marketValue', unrealized: 'unrealized', returnRate: 'return',
-  curYield: 'curYield', avg5Yield: 'avg5Yield', refYield: 'refYield', net: 'net', created: 'created',
+  curYield: 'curYield', avg5Yield: 'avg5Yield', net: 'net', created: 'created',
 }
 
 function num(s: string): number | null {
@@ -277,7 +278,7 @@ export default function PortfolioPage() {
     cost: ui.detailCost, price: ui.detailPrice, totalCost: ui.detailTotalCost,
     marketValue: ui.detailMarketValue, unrealized: ui.detailUnrealizedPnl,
     return: ui.resultTotalReturn, curYield: ui.colCurYield, avg5Yield: ui.colAvg5Yield,
-    refYield: ui.colRefYield, net: ui.netTitle, created: ui.detailCreatedAt,
+    net: ui.netTitle, created: ui.detailCreatedAt,
   }), [ui])
   const visibleColumnCount = useMemo(
     () => TABLE_COLUMN_IDS.filter((c) => visibleColumns[c]).length,
@@ -305,9 +306,6 @@ export default function PortfolioPage() {
       setSortReset(true)
     }
   }, [visibleColumns, sortKey])
-  // #33/#34：同步殖利率參考值（recordId→小數）＋缺值原因（recordId→三態）。
-  const [syncYields, setSyncYields] = useState<Record<number, number | null>>({})
-  const [syncYieldReasons, setSyncYieldReasons] = useState<Record<number, DividendYieldReason>>({})
   // #35：TWSE 除息快取（當年）＋無檔原因碼（API reason 原字串，顯示時轉三語）。
   // #44：改抓 5 年窗（缺年由各列「年份不全」註記呈現；回填由同步鈕／排程順帶做，此處唯讀）。
   // coverage（分年筆數）由 API 回傳供 QA 手算核對，前端以逐列 partial 徽章呈現，不另存 state。
@@ -389,12 +387,6 @@ export default function PortfolioPage() {
         // #44：5 年平均殖利率排序（缺值沉底；年份不全者仍按有值排）。
         sortNums((r) => yieldById.get(r.id)?.avg5 ?? null)
         break
-      case 'refYield':
-        sortNums((r) => {
-          const y = syncYields[r.id]
-          return typeof y === 'number' && Number.isFinite(y) ? y : null
-        })
-        break
       case 'net':
         sortNums((r) => computeNetPnL({
           market: r.market, symbol: r.symbol, shares: r.shares,
@@ -406,7 +398,7 @@ export default function PortfolioPage() {
         break
     }
     return arr
-  }, [history, sortKey, sortDir, syncYields, feeDiscount, yieldById])
+  }, [history, sortKey, sortDir, feeDiscount, yieldById])
   const effectiveRecordsView: 'cards' | 'table' = isDesktop ? recordsView : 'cards'
 
   // #30：當前持倉快照 hash（代號＋股數＋現價；去重對齊後端，見 lib/risk-summary-cache）。
@@ -519,7 +511,7 @@ export default function PortfolioPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   // #33：現價同步 in-flight 守衛（沿用 #25 模式：ref 同步擋重入＋state 驅動 disabled＋旋轉；
-  // finally 釋放避免失敗後按鈕永久 disabled）。yields 僅參考顯示（recordId→小數），失敗清單逐檔列出。
+  // finally 釋放避免失敗後按鈕永久 disabled）。失敗清單逐檔列出。
   const [syncing, setSyncing] = useState(false)
   const syncRef = useRef(false)
   const [syncFailed, setSyncFailed] = useState<Array<{ id: number; symbol: string; reason: string }>>([])
@@ -1140,17 +1132,6 @@ export default function PortfolioPage() {
         setError(data.error || ui.syncError)
         return
       }
-      if (data.yields && typeof data.yields === 'object') setSyncYields(data.yields)
-      // #34：缺值原因同步（非三態字串一律丟棄，避免髒資料進 UI）。
-      if (data.yieldReasons && typeof data.yieldReasons === 'object') {
-        const clean: Record<number, DividendYieldReason> = {}
-        for (const [k, v] of Object.entries(data.yieldReasons)) {
-          if (v === 'no-data' || v === 'timeout' || v === 'rate-limited') clean[Number(k)] = v
-        }
-        setSyncYieldReasons(clean)
-      } else {
-        setSyncYieldReasons({})
-      }
       setSyncFailed(Array.isArray(data.failed) ? data.failed : [])
       setNotice(ui.syncDone.replace('{updated}', String(data.updated ?? 0)).replace('{scanned}', String(data.scanned ?? 0)))
       await fetchHistory()
@@ -1164,18 +1145,6 @@ export default function PortfolioPage() {
 
   const syncReasonText = (reason: string) =>
     reason === 'resolve' ? ui.syncReasonResolve : reason === 'save' ? ui.syncReasonSave : ui.syncReasonQuote
-
-  // #34：殖利率參考顯示——有值顯示 ％；缺值顯示三態原因（三語），不再空白 —。
-  // 尚未同步（無原因）時預設顯示「暫無資料」，同步後以 API 回傳原因為準。
-  const yieldReasonText = (reason: DividendYieldReason | undefined): string => {
-    if (reason === 'timeout') return ui.yieldTimeout
-    if (reason === 'rate-limited') return ui.yieldRateLimited
-    return ui.yieldNoData
-  }
-  const refYieldText = (id: number) => {
-    const y = syncYields[id]
-    return typeof y === 'number' && Number.isFinite(y) ? `${(y * 100).toFixed(2)}%` : yieldReasonText(syncYieldReasons[id])
-  }
 
   // #33：全持倉最近一次同步時間（price_synced_at 最大值；無則不顯示）。
   const latestSyncAt = useMemo(() => {
@@ -2199,14 +2168,6 @@ export default function PortfolioPage() {
                       </span>
                     </th>
                   )}
-                  {visibleColumns.refYield && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
-                      <span className="inline-flex items-center gap-1">
-                        <RecordsSortHeader label={ui.colRefYield} active={sortKey === 'refYield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('refYield')} />
-                        <FieldHelp text={ui.helpRefYield} />
-                      </span>
-                    </th>
-                  )}
                   {visibleColumns.net && (
                     <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
                       <span className="inline-flex items-center gap-1">
@@ -2270,7 +2231,6 @@ export default function PortfolioPage() {
                             )}
                           </td>
                         )}
-                        {visibleColumns.refYield && <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums text-[var(--text-secondary)]">{refYieldText(item.id)}</td>}
                         {visibleColumns.net && (
                           <td className={`px-3 py-2 whitespace-nowrap text-right tabular-nums font-medium ${net.netPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
                             {formatMoney(net.netPnl, item.market)} ({formatPct(net.netPnlPct)})
@@ -2390,7 +2350,6 @@ export default function PortfolioPage() {
                             <p className="text-[10px] text-amber-400/90">{avg5PartialText(item.id)}</p>
                           )}
                         </div>
-                        <div><p className="text-xs text-[var(--text-secondary)]"><span className="inline-flex items-center gap-1">{ui.detailRefYield} <FieldHelp text={ui.helpRefYield} /></span></p><p>{refYieldText(item.id)}</p></div>
                         <div className="col-span-2 md:col-span-4">
                           <p className="text-xs text-[var(--text-secondary)]">{ui.detailCreatedAt}</p>
                           <p className="text-xs">{(item.created_at || '').replace('T', ' ')}</p>

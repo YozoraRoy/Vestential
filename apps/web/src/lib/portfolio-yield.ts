@@ -9,7 +9,7 @@
  * - 5 年平均殖利率＝（Σ有資料年份每股合計 ÷ 有資料年數）÷ 現價 ×100%。
  *   缺年（整年 0 筆快取）不補 0、不計入平均，只記 missingYears，UI 註「年份不全」。
  * - 美股無真源 → 呼叫端只對 market==='tw' 計算（此檔不擋 market，純算）。
- * - 參考殖利率（Yahoo dividendYield 系）行為不動，見 lib/portfolio.ts fetchDividendYield。
+ * - #94：Yahoo「殖利率（參考）」欄已下架（quoteSummary 恆 404），此檔不再有對照欄位。
  */
 
 export interface YieldHistoryEntry {

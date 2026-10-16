@@ -752,15 +752,10 @@ export interface Dict {
     colRating: string
     tableColumns: string
     sortResetNote: string
-    yieldNoData: string
-    yieldTimeout: string
-    yieldRateLimited: string
     syncPricesBtn: string
     syncSyncing: string
     syncUpdatedAt: string
     syncNonRealtime: string
-    colRefYield: string
-    detailRefYield: string
     // #44：當年／5 年殖利率欄（三語新鍵；TWSE 真源）。
     colCurYield: string
     colAvg5Yield: string
@@ -780,7 +775,6 @@ export interface Dict {
     divReasonPending: string
     divReasonEmpty: string
     helpYield: string
-    helpRefYield: string
     helpDividend: string
     helpNet: string
     reviewScopeMonth: string

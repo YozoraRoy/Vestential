@@ -17,7 +17,6 @@ import {
   syncPortfolioPrices,
   PORTFOLIO_SYNC_MAX_PER_REQUEST,
   PORTFOLIO_SYNC_MAX_PER_RUN,
-  type DividendYieldReason,
   type SyncableHolding,
 } from '../../../../lib/portfolio'
 import { ensureTodayDividends, ensureYieldHistoryBackfill } from '../../../../lib/twse-dividends'
@@ -62,9 +61,10 @@ function byId(records: PortfolioRecord[]): Map<number, PortfolioRecord> {
  * 理由：排程與手動共用同一份 best-effort＋寫回邏輯，避免雙份實作漂移；
  * 權限以 authorizeSync（沿用 cycle-entry refresh 慣例）區隔。
  *
-   * 回傳：{ success, scope, scanned, updated, failed[{symbol,reason}], yields{recordId:yield|null}, yieldReasons{recordId:reason}, syncedAt, rateLimited }
+   * 回傳：{ success, scope, scanned, updated, failed[{symbol,reason}], syncedAt, rateLimited }
   * - 排程重跑冪等：直接蓋 current_price＋price_synced_at，以最後一次同步時間為準，不產生重複列；
-  * - #44：手填股息欄已移除（全程不讀不寫 dividend，總報酬以裸價差重算）；殖利率僅回傳參考值（yields），不寫庫；
+  * - #44：手填股息欄已移除（全程不讀不寫 dividend，總報酬以裸價差重算）；
+  * - #94：手動分支不再附殖利率參考（原回傳欄位已下架，同步不再打 Yahoo quoteSummary）；
   * - #35：排程／手動皆順帶更新當年除息快取（ensureTodayDividends，缺檔才抓；回傳 dividends{status,...}）；
   * - #44：同步鈕／排程順帶觸發 5 年殖利率回填（ensureYieldHistoryBackfill，每輪封頂＋斷點續抓，best-effort）；
   * - Yahoo 限流：記 console log＋reportServerError（#24 通道 30 分鐘同 key 去重＝告警節流），其餘持倉照常完成。
@@ -103,9 +103,8 @@ export async function POST(req: Request) {
         }
         if (page.length < PAGE) break
       }
-      // 排程只同步現價（includeYield=false）：quoteSummary 逐檔成本高，
-      // 全掃開殖利率易觸發 Yahoo 限流；殖利率參考由手動同步回填。
-      const result = await syncPortfolioPrices(targets, { includeYield: false })
+      // #94：同步只同步現價（不再逐檔抓 Yahoo quoteSummary 殖利率參考）。
+      const result = await syncPortfolioPrices(targets)
       const failed: FailedItem[] = result.failed.map((f) => ({ ...f }))
       let written = 0
       const targetById = new Map(targets.map((t) => [t.id, t]))
@@ -140,8 +139,6 @@ export async function POST(req: Request) {
         scanned: targets.length,
         updated: written,
         failed,
-        yields: {},
-        yieldReasons: {},
         syncedAt: result.syncedAt,
         rateLimited: result.rateLimited,
         dividends,
@@ -149,7 +146,7 @@ export async function POST(req: Request) {
       })
     }
 
-    // ── 分支 2/3：手動（登入掃本人／訪客掃 guest_uid），附殖利率參考 ──
+    // ── 分支 2/3：手動（登入掃本人／訪客掃 guest_uid），只同步現價 ──
     const user = await getCurrentUserFromCookies()
     let records: PortfolioRecord[]
     let scope: 'user' | 'guest'
@@ -170,17 +167,12 @@ export async function POST(req: Request) {
 
     const holdings = toHoldings(records)
     const recordById = byId(records)
-    const result = await syncPortfolioPrices(holdings, { includeYield: true })
+    const result = await syncPortfolioPrices(holdings)
     const failed: FailedItem[] = result.failed.map((f) => ({ ...f }))
-    const yields: Record<number, number | null> = {}
-    // #34：殖利率缺值原因（recordId→'no-data'|'timeout'|'rate-limited'；有值不列）。
-    const yieldReasons: Record<number, DividendYieldReason> = {}
     let written = 0
     for (const u of result.updated) {
       const base = recordById.get(u.id)
       if (!base) continue
-      yields[u.id] = u.dividendYield
-      if (u.dividendYield == null && u.dividendYieldReason) yieldReasons[u.id] = u.dividendYieldReason
       // #44：裸價差重算（不再讀舊 dividend 值）。
       const pnl = computePnL({ market: base.market, shares: base.shares, cost: base.cost, currentPrice: u.price })
       const ok = await updatePortfolioSyncedPrice(u.id, {
@@ -209,8 +201,6 @@ export async function POST(req: Request) {
       scanned: holdings.length,
       updated: written,
       failed,
-      yields,
-      yieldReasons,
       syncedAt: result.syncedAt,
       rateLimited: result.rateLimited,
       dividends,
