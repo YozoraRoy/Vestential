@@ -2,6 +2,9 @@
  * Issue #35：TWSE TWT48U（除權除息預告表）每日 CSV 抓取＋解析。
  * Issue #90／#95：TWT49U 月表歷史回填（#95 年起現金股利解析精確化＋官方
  *   `t187ap45_L` 覆寫權息精確值，見檔內 TWT49U 段註解）。
+ * Issue #101：TWT49U 息列另存「除權息前收盤價」為 `prev_close`（除息日昨收），
+ *   供逐年已實現殖利率（÷該年最後一次除息日昨收）；歷史回填走 repair 端點重跑
+ *   （既有 covered 月照抓，不動 `covered_months` 機制）。
  *
  * 沿用 arena MI_INDEX 抓取模式（`packages/ai-engine/src/arena/universe.ts`）：
  * big5 解碼（失敗退 utf-8）＋容錯解析（欄位名動態定位、非法列略過）＋
@@ -87,6 +90,9 @@ function splitCsvLine(line: string): string[] {
  * - 表頭以欄位名動態定位（`股票代號`／`除權除息日期`／`現金股利`），欄順異動不炸；
  * - 找不到表頭 → 回空陣列（呼叫端視為無檔，不 throw）；
  * - 資料列任一欄非法（代號空／日期非法／現金非正數）→ 單列略過計 skipped。
+ *
+ * 註（#101）：TWT48U 為「預告表」（多為未來事件），**無**除權息前收盤價欄位，
+ * 故此處不帶 `prev_close`（維持 null）；前收由 TWT49U 月表（除息後）補上。
  */
 export function parseTwt48uCsv(text: string): Twt48uParseResult {
   const rows: TwseDividendInput[] = []
@@ -204,11 +210,13 @@ function round4(n: number): number {
 
 /**
  * 解析 TWT49U JSON data 列：
- * [資料日期ROC, 代號, 名稱, 前收, 參考價, 權值+息值, 權/息, 漲停, 跌停,
+ * [資料日期ROC, 代號, 名稱, 除權息前收盤價, 參考價, 權值+息值, 權/息, 漲停, 跌停,
  *  開盤競價基準, 減除股利參考價, ...]。純函式，可單測。
  *
  * #95：`息` 列取 `權值+息值`（第 6 欄）為現金股利；`權`／`權息` 列不推導，
  * 收進 `unresolved` 交由官方 `t187ap45_L` 覆寫（見 matchOfficialDividend）。
+ * #101：`息` 列另帶第 4 欄「除權息前收盤價」為 `prev_close`（除息日昨收，供逐年
+ * 已實現殖利率）；`權`／`權息` unresolved 列維持不帶（現金股利尚不可信，前收亦無意義）。
  */
 export function parseTwt49uRows(data: unknown[][]): Twt49uParseResult {
   const rows: TwseDividendInput[] = []
@@ -237,7 +245,13 @@ export function parseTwt49uRows(data: unknown[][]): Twt49uParseResult {
         skipped++
         continue
       }
-      rows.push({ symbol, ex_date: exDate, cash_dividend: total })
+      rows.push({
+        symbol,
+        ex_date: exDate,
+        cash_dividend: total,
+        // #101：前收 ≤0（官方表以 0 表示無值）視為無值。
+        prev_close: prevClose != null && prevClose > 0 ? prevClose : null,
+      })
       continue
     }
     // 權 / 權息 / 其他：不以價差推導（配股價值會污染現金股利）。
@@ -453,6 +467,9 @@ export interface DividendsMonthPlan {
 /**
  * 抓 TWT49U 單月並產生寫入／刪除計畫（不寫 DB；`official` 為 null 時僅做息列）。
  * 抓取失敗直接 throw（呼叫端逐月 best-effort）。
+ *
+ * #101：息列（含官方值覆寫者，見下方 spread）保留 `prev_close`；權／權息列改由官方表
+ * 補值時不帶前收（該列現金股利來源非 TWT49U 息值，前收無對應語意）→ DB 存 null。
  */
 export async function planTwt49uMonth(
   month: string,

@@ -771,10 +771,15 @@ export interface Dict {
     yieldCardCurNone: string
     yieldCardAvg5Price: string
     yieldCardAvg5PriceNote: string
+    // #101：5 年平均（逐年已實現）卡＋逐年表「÷除息日價」欄（文案逐字照 #100 定稿表）。
+    yieldCardAvg5Realized: string
+    yieldCardAvg5RealizedNote: string
+    yieldCardNotAvailable: string
     yieldColYear: string
     yieldColTimes: string
     yieldColYearTotal: string
     yieldColYieldOnPrice: string
+    yieldColYieldOnExPrice: string
     yieldColExDate: string
     yieldColCash: string
     yieldColEventYield: string

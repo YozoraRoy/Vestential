@@ -60,14 +60,30 @@ describe('backfillMonthWindow（回填月份窗，由新往舊）', () => {
 })
 
 // #95：息列取 `權值+息值`（第 6 欄）；權／權息列不再以價差推導。
+// #101：息列另帶第 4 欄前收為 prev_close（除息日昨收）；權／權息列不帶。
 describe('parseTwt49uRows（息／權／權息三態）', () => {
   it('息列取「權值+息值」，不再用價差推導（2330 2026-03-17）', () => {
     const { rows, unresolved, skipped } = parseTwt49uRows([
       ['115年03月17日', '2330', '台積電', '1,845.00', '1,838.99', '6.000035', '息', '2,020.00', '1,660.00', '1,840.00', '1,838.99'],
     ])
-    expect(rows).toEqual([{ symbol: '2330', ex_date: '2026-03-17', cash_dividend: 6.000035 }])
+    expect(rows).toEqual([
+      { symbol: '2330', ex_date: '2026-03-17', cash_dividend: 6.000035, prev_close: 1845 },
+    ])
     expect(unresolved).toEqual([])
     expect(skipped).toBe(0)
+  })
+
+  it('#101 息列帶前收（除息日昨收）；前收 0／空視為無值（null，不寫 0）', () => {
+    const { rows } = parseTwt49uRows([
+      ['115年08月18日', '00878', '國泰永續高股息', '33.75', '32.74', '1.010000', '息', '35.80', '29.50', '32.80', '32.74'],
+      ['115年09月17日', '00929', '復華台灣科技優息', '0', '17.50', '0.380000', '息', '0', '0', '17.55', '17.50'],
+      ['115年08月19日', '00929', '復華台灣科技優息', '', '17.90', '0.380000', '息', '0', '0', '17.95', '17.90'],
+    ])
+    expect(rows.map((r) => [r.symbol, r.ex_date, r.prev_close])).toEqual([
+      ['00878', '2026-08-18', 33.75],
+      ['00929', '2026-09-17', null],
+      ['00929', '2026-08-19', null],
+    ])
   })
 
   it('權息列不推導：1773 勝一 2025-06-13 不得產生 27.25 假股利', () => {
@@ -91,7 +107,9 @@ describe('parseTwt49uRows（息／權／權息三態）', () => {
     const { rows } = parseTwt49uRows([
       ['115年07月01日', '00939', '統一台灣高息動能', '13.74', '13.67', '0.068000', '息', '15.03', '12.31', '13.67', '13.67'],
     ])
-    expect(rows).toEqual([{ symbol: '00939', ex_date: '2026-07-01', cash_dividend: 0.068 }])
+    expect(rows).toEqual([
+      { symbol: '00939', ex_date: '2026-07-01', cash_dividend: 0.068, prev_close: 13.74 },
+    ])
   })
 
   it('代號 Excel 前綴清洗；非法列計 skipped', () => {
@@ -99,7 +117,9 @@ describe('parseTwt49uRows（息／權／權息三態）', () => {
       ['115年06月19日', '="2330"', '台積電', '1000', '990', '10', '息', '0', '0', '990', '990'],
       ['壞列'],
     ])
-    expect(rows).toEqual([{ symbol: '2330', ex_date: '2026-06-19', cash_dividend: 10 }])
+    expect(rows).toEqual([
+      { symbol: '2330', ex_date: '2026-06-19', cash_dividend: 10, prev_close: 1000 },
+    ])
     expect(skipped).toBe(1)
   })
 })

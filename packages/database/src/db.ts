@@ -394,6 +394,10 @@ function getSqliteDb(): Database.Database | null {
     try {
       _db.exec('ALTER TABLE arena_trades ADD COLUMN slot INTEGER;')
     } catch {}
+    // Issue #101：twse_dividends 補 prev_close（除息日昨收；冪等；全新 DB 由 CREATE TABLE 帶欄位）。
+    try {
+      _db.exec('ALTER TABLE twse_dividends ADD COLUMN prev_close REAL;')
+    } catch {}
 
     _db.exec(`
       CREATE TABLE IF NOT EXISTS arena_intraday_prices (
@@ -591,11 +595,13 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       CREATE INDEX IF NOT EXISTS idx_trade_journal_date ON trade_journal(user_id, trade_date);
 
       -- Issue #35：TWSE 除息快取（TWT48U；UNIQUE 防重抓冪等）。
+      -- Issue #101：prev_close（除息日昨收＝TWT49U「除權息前收盤價」）供逐年已實現殖利率。
       CREATE TABLE IF NOT EXISTS twse_dividends (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         symbol TEXT NOT NULL,
         ex_date TEXT NOT NULL,
         cash_dividend REAL NOT NULL,
+        prev_close REAL,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         UNIQUE (symbol, ex_date)
       );
@@ -1324,6 +1330,7 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
     `)
 
     // Issue #35：TWSE 除息快取（TWT48U；UNIQUE 防重抓冪等）。
+    // Issue #101：prev_close（除息日昨收＝TWT49U「除權息前收盤價」）供逐年已實現殖利率。
     await _pool.request().query(`
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'twse_dividends')
       BEGIN
@@ -1332,12 +1339,18 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
           symbol        NVARCHAR(30) NOT NULL,
           ex_date       NVARCHAR(20) NOT NULL,
           cash_dividend FLOAT NOT NULL,
+          prev_close    FLOAT NULL,
           created_at    DATETIME2 DEFAULT GETDATE(),
           CONSTRAINT uq_twse_dividends UNIQUE (symbol, ex_date)
         );
         CREATE INDEX idx_twse_dividends_ex_date ON twse_dividends(ex_date);
         CREATE INDEX idx_twse_dividends_symbol ON twse_dividends(symbol);
       END
+    `)
+    // Issue #101：既有 twse_dividends 補 prev_close（冪等；migration 032 亦 covering）。
+    await _pool.request().query(`
+      IF COL_LENGTH('twse_dividends', 'prev_close') IS NULL
+        ALTER TABLE twse_dividends ADD prev_close FLOAT;
     `)
 
     // Issue #54：競技場股利入帳去重（UNIQUE 防重發冪等）。
@@ -3096,6 +3109,11 @@ export interface TwseDividendRow {
   ex_date: string
   /** 每股現金股利（元）。 */
   cash_dividend: number
+  /**
+   * Issue #101：除息日昨收（TWT49U「除權息前收盤價」第 4 欄；元/股）。
+   * TWT48U 每日預告（未來事件）與查無精確值的權／權息列為 null（UI 顯示「—」）。
+   */
+  prev_close?: number | null
   created_at?: string
 }
 
@@ -3103,9 +3121,11 @@ export interface TwseDividendInput {
   symbol: string
   ex_date: string
   cash_dividend: number
+  /** Issue #101：除息日昨收；null／未帶＝不覆寫既有值（見 upsertTwseDividends）。 */
+  prev_close?: number | null
 }
 
-const TWSE_DIVIDEND_COLUMNS = 'id, symbol, ex_date, cash_dividend, created_at'
+const TWSE_DIVIDEND_COLUMNS = 'id, symbol, ex_date, cash_dividend, prev_close, created_at'
 
 function normalizeTwseDividendInput(r: TwseDividendInput): TwseDividendInput | null {
   const symbol = (r.symbol ?? '').trim().toUpperCase()
@@ -3113,12 +3133,19 @@ function normalizeTwseDividendInput(r: TwseDividendInput): TwseDividendInput | n
   const cash = Number(r.cash_dividend)
   if (!symbol || !/^\d{4}-\d{2}-\d{2}$/.test(exDate)) return null
   if (!Number.isFinite(cash) || cash < 0) return null
-  return { symbol, ex_date: exDate, cash_dividend: cash }
+  // #101：prev_close 非法（非正數／非有限）一律視為 null（＝無值，不寫 0）。
+  const pc = r.prev_close == null ? null : Number(r.prev_close)
+  const prevClose = pc != null && Number.isFinite(pc) && pc > 0 ? pc : null
+  return { symbol, ex_date: exDate, cash_dividend: cash, prev_close: prevClose }
 }
 
 /**
  * 寫入除息快取（UNIQUE(symbol, ex_date) 冪等：重抓直接覆寫，不產生重複列）。
  * 回傳實際寫入筆數（非法列直接略過，不 throw、不擋主流程）。
+ *
+ * #101：`prev_close` 一併寫入；**UPDATE 時只在傳入值非 null 才覆蓋**
+ * （COALESCE(excluded.prev_close, 既有值)）——TWT48U 每日預告與查無前收的列
+ * 傳 null，若直接覆寫會把 TWT49U 回填好的歷史前收抹掉。
  */
 export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<number> {
   const clean = rows.map(normalizeTwseDividendInput).filter((r): r is TwseDividendInput => r != null)
@@ -3133,11 +3160,12 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
             .input('symbol', sql.NVarChar(30), r.symbol)
             .input('exDate', sql.NVarChar(20), r.ex_date)
             .input('cash', sql.Float, r.cash_dividend)
+            .input('prevClose', sql.Float, r.prev_close ?? null)
             .query(`
               IF EXISTS (SELECT 1 FROM twse_dividends WHERE symbol = @symbol AND ex_date = @exDate)
-                UPDATE twse_dividends SET cash_dividend = @cash WHERE symbol = @symbol AND ex_date = @exDate
+                UPDATE twse_dividends SET cash_dividend = @cash, prev_close = COALESCE(@prevClose, prev_close) WHERE symbol = @symbol AND ex_date = @exDate
               ELSE
-                INSERT INTO twse_dividends (symbol, ex_date, cash_dividend) VALUES (@symbol, @exDate, @cash)
+                INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close) VALUES (@symbol, @exDate, @cash, @prevClose)
             `)
           written++
         } catch (e) {
@@ -3151,12 +3179,14 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
     if (db) {
       try {
         const stmt = db.prepare(`
-          INSERT INTO twse_dividends (symbol, ex_date, cash_dividend)
-          VALUES (?, ?, ?)
-          ON CONFLICT(symbol, ex_date) DO UPDATE SET cash_dividend = excluded.cash_dividend
+          INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(symbol, ex_date) DO UPDATE SET
+            cash_dividend = excluded.cash_dividend,
+            prev_close = COALESCE(excluded.prev_close, twse_dividends.prev_close)
         `)
         const tx = db.transaction((list: TwseDividendInput[]) => {
-          for (const r of list) stmt.run(r.symbol, r.ex_date, r.cash_dividend)
+          for (const r of list) stmt.run(r.symbol, r.ex_date, r.cash_dividend, r.prev_close ?? null)
         })
         tx(clean)
         return clean.length
@@ -3166,11 +3196,17 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
       }
     }
   }
-  // 記憶體兜底（同鍵覆寫）。
+  // 記憶體兜底（同鍵覆寫；#101：prev_close 只在非 null 才覆蓋）。
   for (const r of clean) {
     const idx = twseDividendMemoryStore.findIndex(m => m.symbol === r.symbol && m.ex_date === r.ex_date)
-    if (idx >= 0) twseDividendMemoryStore[idx] = { ...twseDividendMemoryStore[idx], cash_dividend: r.cash_dividend }
-    else twseDividendMemoryStore.push({ id: twseDividendMemoryStore.length + 1, ...r })
+    if (idx >= 0) {
+      const prev = twseDividendMemoryStore[idx]!
+      twseDividendMemoryStore[idx] = {
+        ...prev,
+        cash_dividend: r.cash_dividend,
+        prev_close: r.prev_close ?? prev.prev_close ?? null,
+      }
+    } else twseDividendMemoryStore.push({ id: twseDividendMemoryStore.length + 1, ...r })
   }
   return clean.length
 }

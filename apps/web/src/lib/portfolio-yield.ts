@@ -24,6 +24,12 @@ export interface YieldHistoryEntry {
   symbol: string
   ex_date: string
   cash_dividend: number
+  /**
+   * Issue #101：除息日昨收（TWT49U「除權息前收盤價」）。缺值（TWT48U 預告列、
+   * 權息列查無、舊資料尚未回填）為 null／undefined → 逐年已實現殖利率顯示「—」，
+   * **不得**以現價或 0 代墊。
+   */
+  prev_close?: number | null
 }
 
 /** 5 年平均回看年數（去年為止的 5 個完整年度：(Y-5)..(Y-1)）。 */
@@ -188,6 +194,16 @@ export interface YieldAvg5 extends FiveYearAvgYield {
   years: YearlyPerShare[]
 }
 
+/**
+ * 5 年平均（逐年已實現；#101）＋逐年明細。
+ * `value`／`coveredYears`／`missingYears`／`partial` 為 `(Y-5)..(Y-1)` 窗（同現價口徑窗）
+ * 之逐年已實現值平均；`years` 為 `(Y-5)..Y`（供逐年表「÷除息日價」欄對齊列）。
+ */
+export interface YieldAvg5Realized extends FiveYearAvgYield {
+  /** 逐年明細：(Y-5)..Y（含當年；欄位對齊 `yearly`）。 */
+  years: RealizedYearYield[]
+}
+
 /** 單筆除息事件（TTM 窗內；供 modal 逐筆列出可手算重現）。 */
 export interface YieldEvent {
   /** 除息日 'YYYY-MM-DD'。 */
@@ -203,6 +219,8 @@ export interface YieldBreakdown {
   ttm: YieldTtm
   cur: YieldCurrent
   avg5: YieldAvg5
+  /** #101：5 年平均（逐年已實現）＋逐年明細（÷該年最後一次除息日昨收）。 */
+  avg5Realized: YieldAvg5Realized
   /** 逐年明細：(Y-5)..Y（含當年；當年只計已除息 ex_date ≤ today）。 */
   yearly: YearlyPerShare[]
   /** TTM 窗內逐筆事件（新→舊）。 */
@@ -214,6 +232,8 @@ export interface YieldBreakdown {
  * - ttm：Σ(fromDate < ex_date ≤ today) ÷ 現價；下界不含（today−365 當日除息屬前一年窗）。
  * - cur：今年已除息合計 ÷ 現價；今年零筆 → `value: null`（不顯示 0.00%）。
  * - avg5：`yieldWindowYears`＝(Y-5)..(Y-1)（**不變**：去年為止 5 個完整年度）÷ 現價。
+ * - avg5Realized（#101）：同窗逐年（該年每股合計 ÷ 該年最後一次除息日昨收）之平均，
+ *   不除現價；分母缺 → 該年 null（不補 0、不以現價代墊）。
  * - yearly：`yieldDataYears`＝(Y-5)..Y 逐年筆數／每股合計（缺年 count 0 由 UI 註「年份不全」）。
  * - events：ttm 窗內逐筆（次數與 `ttm.count` 一致）。
  * 美股無真源→呼叫端不呼叫（此檔不擋 market，純算）；現價非法時 value 全 null、次數照算。
@@ -232,6 +252,13 @@ export function computeYieldBreakdown(
   const yearly = yearlyPerShareTotals(symbol, rows, yieldDataYears(curYear), today)
   const avg5Years = yearlyPerShareTotals(symbol, rows, yieldWindowYears(curYear), today)
   const avg5: YieldAvg5 = { ...computeFiveYearAvgYield(avg5Years, currentPrice), years: avg5Years }
+  // #101：逐年已實現（6 年供逐年表）＋其 5 年平均（(Y-5)..(Y-1) 同現價口徑窗）。
+  const realizedAll = computeRealizedYearYields(symbol, rows, yieldDataYears(curYear), today)
+  const realizedWindow = new Set(yieldWindowYears(curYear))
+  const avg5Realized: YieldAvg5Realized = {
+    ...computeRealizedAvgYield(realizedAll.years.filter((y) => realizedWindow.has(y.year))),
+    years: realizedAll.years,
+  }
 
   const curEntry = yearly.find((y) => y.year === curYear)
   const curTotal = curEntry?.perShareTotal ?? 0
@@ -268,7 +295,105 @@ export function computeYieldBreakdown(
     },
     cur,
     avg5,
+    avg5Realized,
     yearly,
     events,
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #101：逐年已實現殖利率（÷該年最後一次除息日昨收）＝與 Yahoo 同義口徑
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 逐年已實現殖利率（#101）。 */
+export interface RealizedYearYield {
+  year: string
+  /** 該年每股現金合計（元；口徑同 `yearlyPerShareTotals`）。 */
+  perShareTotal: number
+  /** 該年計入事件數（0＝該年無快取＝缺年）。 */
+  count: number
+  /**
+   * 分母：該年**最後一次**除息事件的除息日昨收（該筆缺值時取該年往前最近一筆有值的；
+   * 整年皆缺 → null）。
+   */
+  prevClose: number | null
+  /** 逐年已實現殖利率（%）＝每股合計 ÷ 除息日昨收 ×100；分母缺／零筆 → null（UI「—」）。 */
+  value: number | null
+}
+
+export interface RealizedYieldResult {
+  /** 逐年明細（順序同輸入 years）。 */
+  years: RealizedYearYield[]
+  /** 逐年值之平均（缺年／無分母年不補 0、不計入）。 */
+  avg: FiveYearAvgYield
+}
+
+/**
+ * #101：逐年已實現殖利率（與 Yahoo「近 5 年平均現金殖利率」同義）。
+ * - 分子＝該年每股現金合計（代號相符、現金 >0、帶 today 時僅計 `ex_date ≤ today`）。
+ * - 分母＝該年**最後一次**除息事件的 `prev_close`（該筆缺值 → 取該年往前最近一筆有值者；
+ *   整年都沒有 → null）。月配 ETF（00929）同法，**不得**改成逐次殖利率平均。
+ * - 缺 prev_close 一律 null（UI 顯示「—」），不得以現價或 0 代墊。
+ * 手算（00878）：2026 年 2.09 ÷ 33.75 ＝ 6.19%；2021–2025 逐年 5.20/7.04/5.99/8.84/8.38%
+ * → 平均 7.09%。
+ */
+export function computeRealizedYearYields(
+  symbol: string,
+  rows: YieldHistoryEntry[],
+  years: string[],
+  today?: string | null,
+): RealizedYieldResult {
+  const sym = (symbol ?? '').trim().toUpperCase()
+  const cutoff = typeof today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(today) ? today : null
+  const out: RealizedYearYield[] = (years ?? []).map((year) => {
+    let perShareTotal = 0
+    let count = 0
+    const events: Array<{ exDate: string; prevClose: number | null }> = []
+    if (sym && /^\d{4}$/.test(year)) {
+      for (const r of rows ?? []) {
+        if ((r.symbol ?? '').trim().toUpperCase() !== sym) continue
+        const ex = (r.ex_date ?? '').trim()
+        const cash = Number(r.cash_dividend)
+        if (!ex.startsWith(year) || !/^\d{4}-\d{2}-\d{2}$/.test(ex)) continue
+        if (cutoff != null && ex > cutoff) continue
+        if (!Number.isFinite(cash) || cash <= 0) continue
+        perShareTotal += cash
+        count++
+        const pc = Number(r.prev_close)
+        events.push({ exDate: ex, prevClose: Number.isFinite(pc) && pc > 0 ? pc : null })
+      }
+      // 以除息日排序（DB／API 已為升冪，此處自保），取最後一筆有前收者當分母。
+      events.sort((a, b) => (a.exDate < b.exDate ? -1 : a.exDate > b.exDate ? 1 : 0))
+    }
+    let prevClose: number | null = null
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]!.prevClose != null) {
+        prevClose = events[i]!.prevClose
+        break
+      }
+    }
+    return {
+      year,
+      perShareTotal,
+      count,
+      prevClose,
+      value: count > 0 && perShareTotal > 0 && prevClose != null ? (perShareTotal / prevClose) * 100 : null,
+    }
+  })
+  return { years: out, avg: computeRealizedAvgYield(out) }
+}
+
+/**
+ * #101：逐年已實現值之平均（不外除現價）。
+ * 只計 value 有值年份（缺年／無分母年不補 0、不計入）；
+ * `coveredYears`／`missingYears`／`partial` 語意同 `computeFiveYearAvgYield`。
+ */
+export function computeRealizedAvgYield(years: RealizedYearYield[]): FiveYearAvgYield {
+  const list = years ?? []
+  const covered = list.filter((y) => y.value != null && Number.isFinite(y.value))
+  const missingYears = list.filter((y) => y.value == null || !Number.isFinite(y.value)).map((y) => y.year)
+  const coveredYears = covered.map((y) => y.year)
+  if (covered.length === 0) return { value: null, coveredYears, missingYears, partial: true }
+  const avg = covered.reduce((s, y) => s + (y.value as number), 0) / covered.length
+  return { value: avg, coveredYears, missingYears, partial: missingYears.length > 0 }
 }

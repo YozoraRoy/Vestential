@@ -2,6 +2,8 @@
 
 /**
  * Issue #100：殖利率明細 modal。
+ * Issue #101：第 4 張卡「5 年平均（逐年已實現）」＋逐年表新增「÷除息日價」欄
+ *   （分母＝該年最後一次除息日昨收；缺值顯示「—」，不以現價或 0 代墊）。
  *
  * 沿 `cycle-entry-detail-modal.tsx` 模式：overlay 點擊關閉 / `role="dialog"` /
  * `aria-modal` / Esc 關閉 / `document.body.style.overflow` 鎖定 / 關閉後由呼叫端
@@ -9,8 +11,7 @@
  *
  * 資料來源：呼叫端已在 state 的 `divRows`（TWSE 快取）＋ `computeYieldBreakdown`
  * 純函式結果，本元件**不打 API、不扣 quota、不碰 DB**。
- * 免責：`yieldDetailFormula`（公式）＋ `yieldDetailSource`（來源／限制）置底；
- * 除息日價欄屬 Issue 2，本 Issue 不放佔位空欄。
+ * 免責：`yieldDetailFormula`（公式）＋ `yieldDetailSource`（來源／限制）置底。
  */
 
 import { useCallback, useEffect, useRef } from 'react'
@@ -19,7 +20,7 @@ import { computeCurrentYearYield, type YieldBreakdown } from '@/lib/portfolio-yi
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 
-/** 本 modal 用到的三語鍵（逐字對齊 Issue #100 文案表；不新增、不改寫）。 */
+/** 本 modal 用到的三語鍵（逐字對齊 Issue #100 文案表；#101 新增 4 鍵同表定稿）。 */
 export type YieldModalDict = {
   yieldModalTitle: string
   yieldModalSubtitle: string
@@ -32,10 +33,14 @@ export type YieldModalDict = {
   yieldCardCurNone: string
   yieldCardAvg5Price: string
   yieldCardAvg5PriceNote: string
+  yieldCardAvg5Realized: string
+  yieldCardAvg5RealizedNote: string
+  yieldCardNotAvailable: string
   yieldColYear: string
   yieldColTimes: string
   yieldColYearTotal: string
   yieldColYieldOnPrice: string
+  yieldColYieldOnExPrice: string
   yieldColExDate: string
   yieldColCash: string
   yieldColEventYield: string
@@ -94,8 +99,11 @@ export function PortfolioYieldModal({ symbol, name, price, breakdown, dict, onCl
   const ttm = breakdown?.ttm ?? null
   const cur = breakdown?.cur ?? null
   const avg5 = breakdown?.avg5 ?? null
+  const avg5Realized = breakdown?.avg5Realized ?? null
   const yearly = breakdown?.yearly ?? []
   const events = breakdown?.events ?? []
+  // #101：逐年已實現殖利率（依年度索引；逐年表「÷除息日價」欄）。
+  const realizedByYear = new Map((avg5Realized?.years ?? []).map((y) => [y.year, y]))
   const title = `${symbol}${name ? ` ${name}` : ''}`
 
   const card = (label: string, value: string, notes: string[] = []) => (
@@ -152,8 +160,8 @@ export function PortfolioYieldModal({ symbol, name, price, breakdown, dict, onCl
         </div>
 
         <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-          {/* 數字卡：TTM（含次數）／YTD／5 年平均（現價口徑） */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* 數字卡：TTM（含次數）／YTD／5 年平均（現價口徑）／5 年平均（逐年已實現） */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {card(
               dict.yieldCardTtm,
               fmtPct(ttm?.value),
@@ -164,23 +172,30 @@ export function PortfolioYieldModal({ symbol, name, price, breakdown, dict, onCl
               dict.yieldCardAvg5PriceNote,
               ...(avg5?.partial ? [dict.yieldPartialNote] : []),
             ])}
+            {/* #101：逐年（該年現金合計 ÷ 該年最後一次除息日昨收）之平均；無值＝「—」 */}
+            {card(dict.yieldCardAvg5Realized, fmtPct(avg5Realized?.value), [
+              dict.yieldCardAvg5RealizedNote,
+              ...(avg5Realized?.partial ? [dict.yieldPartialNote] : []),
+              ...(avg5Realized?.value == null ? [dict.yieldCardNotAvailable] : []),
+            ])}
           </div>
 
           {/* 逐年明細：(Y-5)..Y（缺年標「年份不全」，不補 0） */}
           <div className="overflow-x-auto rounded-xl border border-white/10">
-            <table className={tableClass(typo, 'w-full min-w-[360px]')}>
+            <table className={tableClass(typo, 'w-full min-w-[460px]')}>
               <thead>
                 <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
                   <th className={`${cell} font-medium`}>{dict.yieldColYear}</th>
                   <th className={`${numCell} font-medium`}>{dict.yieldColTimes}</th>
                   <th className={`${numCell} font-medium`}>{dict.yieldColYearTotal}</th>
                   <th className={`${numCell} font-medium`}>{dict.yieldColYieldOnPrice}</th>
+                  <th className={`${numCell} font-medium`}>{dict.yieldColYieldOnExPrice}</th>
                 </tr>
               </thead>
               <tbody>
                 {yearly.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-3 py-4 text-center text-[var(--text-secondary)]">
+                    <td colSpan={5} className="px-3 py-4 text-center text-[var(--text-secondary)]">
                       {dict.yieldNoData}
                     </td>
                   </tr>
@@ -188,6 +203,7 @@ export function PortfolioYieldModal({ symbol, name, price, breakdown, dict, onCl
                   yearly.map((y) => {
                     // 缺年（整年 0 筆快取）不補 0：合計／殖利率皆顯示「—」＋註「年份不全」。
                     const empty = y.count === 0
+                    const realized = realizedByYear.get(y.year)
                     return (
                       <tr key={y.year} className="border-b border-white/5 last:border-b-0">
                         <td className={cell}>
@@ -201,6 +217,8 @@ export function PortfolioYieldModal({ symbol, name, price, breakdown, dict, onCl
                         <td className={numCell}>{y.count}</td>
                         <td className={numCell}>{empty ? '—' : fmtCash(y.perShareTotal)}</td>
                         <td className={numCell}>{fmtPct(empty ? null : computeCurrentYearYield(y.perShareTotal, price))}</td>
+                        {/* #101：÷除息日價（缺 prev_close → 「—」，不以現價代墊） */}
+                        <td className={numCell}>{fmtPct(empty ? null : realized?.value ?? null)}</td>
                       </tr>
                     )
                   })

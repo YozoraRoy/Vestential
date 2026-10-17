@@ -17,6 +17,8 @@ export interface DividendYtdEntry {
   symbol: string
   ex_date: string
   cash_dividend: number
+  /** Issue #101：除息日昨收（TWT49U 前收；缺值 null）＝逐年已實現殖利率分母用。 */
+  prev_close?: number | null
 }
 
 export interface DividendYtdEstimate {

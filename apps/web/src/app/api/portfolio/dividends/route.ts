@@ -12,8 +12,10 @@ export const dynamic = 'force-dynamic'
  * 舊 `year=` 單年參數沿用相容；#95 起讀取窗為 `(Y-5)..Y` 共 6 年）；回傳 coverage
  * （分年筆數＋缺年標記，供 UI「年份不全」註記；缺年回填由同步鈕／排程順帶做，
  * 此處唯讀不觸發）。
+ * #101：`dividends[]` additive 加 `prev_close`（除息日昨收；缺值 null）供逐年已實現殖利率，
+ * 既有欄位一律保留（向下相容）。
  * GET /api/portfolio/dividends?symbols=2002,2330&year=2026
- * 回傳 { success, year, today, dividends[{symbol,ex_date,cash_dividend}],
+ * 回傳 { success, year, today, dividends[{symbol,ex_date,cash_dividend,prev_close}],
  *         coverage[{year,rows,missing}], cacheAsOf, isTradingDay, reason }。
  * reason（無檔原因，UI 顯示非空白）：'non-trading-day'（今日非交易日）|
  *   'cache-pending'（今日快取尚未同步）| 'empty-file'（今日 TWSE 無除息公告）| null（正常）。
@@ -36,14 +38,15 @@ export async function GET(req: Request) {
       symbolsParam.split(',').map((s) => s.trim()).filter(Boolean),
     )
 
-    const all: Array<{ symbol: string; ex_date: string; cash_dividend: number }> = []
+    const all: Array<{ symbol: string; ex_date: string; cash_dividend: number; prev_close: number | null }> = []
     const coverage: Array<{ year: string; rows: number; missing: boolean }> = []
     for (const y of years) {
       const list = await getTwseDividendsByYear(y)
       coverage.push({ year: y, rows: list.length, missing: list.length === 0 })
       for (const r of list) {
         if (wanted.size > 0 && !wanted.has(r.symbol.toUpperCase())) continue
-        all.push({ symbol: r.symbol, ex_date: r.ex_date, cash_dividend: r.cash_dividend })
+        // #101：prev_close additive（除息日昨收；缺值 null），既有欄位不變。
+        all.push({ symbol: r.symbol, ex_date: r.ex_date, cash_dividend: r.cash_dividend, prev_close: r.prev_close ?? null })
       }
     }
     const dividends = all
