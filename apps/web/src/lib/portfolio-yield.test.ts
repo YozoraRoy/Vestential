@@ -5,8 +5,11 @@ import {
   computeFiveYearAvgYield,
   yieldWindowYears,
   yieldDataYears,
+  computeYieldBreakdown,
+  ttmWindowStart,
   YIELD_HISTORY_YEARS,
   YIELD_DATA_YEARS,
+  YIELD_TTM_DAYS,
   type YieldHistoryEntry,
 } from './portfolio-yield'
 
@@ -108,5 +111,194 @@ describe('yieldDataYears（#95：資料讀取窗 (Y-5)..Y 共 6 年）', () => {
     expect(yieldDataYears('2026')).toEqual(['2021', '2022', '2023', '2024', '2025', '2026'])
     expect(yieldDataYears('2026')).toHaveLength(YIELD_DATA_YEARS)
     expect(yieldDataYears('bad')).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #100：TTM（近 365 天）＋ computeYieldBreakdown（00878 真實快取、00929 月配）
+// 00878 快取 23 筆（2021-02-25～2026-08-18）；今日 2026-10-17、現價 35.53。
+// ─────────────────────────────────────────────────────────────────────────────
+const TODAY = '2026-10-17'
+const d878: YieldHistoryEntry[] = [
+  { symbol: '00878', ex_date: '2021-02-25', cash_dividend: 0.15 },
+  { symbol: '00878', ex_date: '2021-05-18', cash_dividend: 0.25 },
+  { symbol: '00878', ex_date: '2021-08-17', cash_dividend: 0.3 },
+  { symbol: '00878', ex_date: '2021-11-16', cash_dividend: 0.28 },
+  { symbol: '00878', ex_date: '2022-02-22', cash_dividend: 0.3 },
+  { symbol: '00878', ex_date: '2022-05-18', cash_dividend: 0.32 },
+  { symbol: '00878', ex_date: '2022-08-16', cash_dividend: 0.28 },
+  { symbol: '00878', ex_date: '2022-11-16', cash_dividend: 0.28 },
+  { symbol: '00878', ex_date: '2023-02-16', cash_dividend: 0.27 },
+  { symbol: '00878', ex_date: '2023-05-17', cash_dividend: 0.27 },
+  { symbol: '00878', ex_date: '2023-08-16', cash_dividend: 0.35 },
+  { symbol: '00878', ex_date: '2023-11-16', cash_dividend: 0.35 },
+  { symbol: '00878', ex_date: '2024-02-27', cash_dividend: 0.4 },
+  { symbol: '00878', ex_date: '2024-05-17', cash_dividend: 0.51 },
+  { symbol: '00878', ex_date: '2024-08-16', cash_dividend: 0.55 },
+  { symbol: '00878', ex_date: '2024-11-18', cash_dividend: 0.55 },
+  { symbol: '00878', ex_date: '2025-02-20', cash_dividend: 0.5 },
+  { symbol: '00878', ex_date: '2025-05-19', cash_dividend: 0.47 },
+  { symbol: '00878', ex_date: '2025-08-18', cash_dividend: 0.4 },
+  { symbol: '00878', ex_date: '2025-11-18', cash_dividend: 0.4 },
+  { symbol: '00878', ex_date: '2026-02-26', cash_dividend: 0.42 },
+  { symbol: '00878', ex_date: '2026-05-19', cash_dividend: 0.66 },
+  { symbol: '00878', ex_date: '2026-08-18', cash_dividend: 1.01 },
+]
+// 00929 月配（TTM 12 筆：2025-10-21～2026-09-17；另附窗外 2 筆證明下界生效）。
+const d929: YieldHistoryEntry[] = [
+  { symbol: '00929', ex_date: '2025-09-17', cash_dividend: 0.08 },
+  { symbol: '00929', ex_date: '2025-10-21', cash_dividend: 0.08 },
+  { symbol: '00929', ex_date: '2025-11-19', cash_dividend: 0.09 },
+  { symbol: '00929', ex_date: '2025-12-17', cash_dividend: 0.09 },
+  { symbol: '00929', ex_date: '2026-01-20', cash_dividend: 0.1 },
+  { symbol: '00929', ex_date: '2026-03-03', cash_dividend: 0.1 },
+  { symbol: '00929', ex_date: '2026-03-18', cash_dividend: 0.11 },
+  { symbol: '00929', ex_date: '2026-04-21', cash_dividend: 0.13 },
+  { symbol: '00929', ex_date: '2026-05-20', cash_dividend: 0.13 },
+  { symbol: '00929', ex_date: '2026-06-17', cash_dividend: 0.26 },
+  { symbol: '00929', ex_date: '2026-07-21', cash_dividend: 0.38 },
+  { symbol: '00929', ex_date: '2026-08-19', cash_dividend: 0.38 },
+  { symbol: '00929', ex_date: '2026-09-17', cash_dividend: 0.38 },
+]
+
+describe('ttmWindowStart（#100：TTM 窗起日＝today−365，下界不含）', () => {
+  it('2026-10-17 → 2025-10-17；非法 today 回 null', () => {
+    expect(ttmWindowStart('2026-10-17')).toBe('2025-10-17')
+    expect(ttmWindowStart('2026-03-01')).toBe('2025-03-01')
+    expect(ttmWindowStart('bad')).toBeNull()
+    expect(ttmWindowStart('2026-02-31')).toBeNull()
+  })
+
+  it('回看天數＝YIELD_TTM_DAYS＝365', () => {
+    expect(YIELD_TTM_DAYS).toBe(365)
+  })
+})
+
+describe('computeYieldBreakdown（#100：00878 手算可重現）', () => {
+  const b = computeYieldBreakdown('00878', d878, TODAY, 35.53)
+
+  it('TTM＝(0.40+0.42+0.66+1.01)/35.53＝7.01%、次數 4', () => {
+    expect(b.ttm.perShareTotal).toBeCloseTo(2.49, 10)
+    expect(b.ttm.count).toBe(4)
+    expect(b.ttm.fromDate).toBe('2025-10-17')
+    expect(b.ttm.value).toBeCloseTo(7.007, 2)
+    expect(Number(b.ttm.value!.toFixed(2))).toBe(7.01)
+  })
+
+  it('TTM 卡片次數＝事件清單筆數（新→舊）', () => {
+    expect(b.events).toHaveLength(b.ttm.count)
+    expect(b.events.map((e) => e.exDate)).toEqual(['2026-08-18', '2026-05-19', '2026-02-26', '2025-11-18'])
+    expect(b.events.map((e) => e.cash)).toEqual([1.01, 0.66, 0.42, 0.4])
+    // 當次殖利率＝cash ÷ 現價 ×100（1.01 ÷ 35.53）
+    expect(b.events[0].yieldOnPrice).toBeCloseTo((1.01 / 35.53) * 100, 8)
+  })
+
+  it('YTD＝2.09/35.53＝5.88%、今年已除息 3 筆', () => {
+    expect(b.cur.perShareTotal).toBeCloseTo(2.09, 10)
+    expect(b.cur.count).toBe(3)
+    expect(Number(b.cur.value!.toFixed(2))).toBe(5.88)
+  })
+
+  it('5 年平均（現價口徑）＝(0.98+1.18+1.24+2.01+1.77)/5 ÷35.53＝4.04%、窗 2021–2025 無缺年', () => {
+    expect(b.avg5.value).toBeCloseTo((1.436 / 35.53) * 100, 10)
+    expect(Number(b.avg5.value!.toFixed(2))).toBe(4.04)
+    expect(b.avg5.coveredYears).toEqual(['2021', '2022', '2023', '2024', '2025'])
+    expect(b.avg5.missingYears).toEqual([])
+    expect(b.avg5.partial).toBe(false)
+    expect(b.avg5.years.map((y) => y.year)).toEqual(['2021', '2022', '2023', '2024', '2025'])
+  })
+
+  it('逐年明細 2021–2026：每年筆數／每股合計', () => {
+    expect(b.yearly.map((y) => [y.year, y.count, Number(y.perShareTotal.toFixed(2))])).toEqual([
+      ['2021', 4, 0.98],
+      ['2022', 4, 1.18],
+      ['2023', 4, 1.24],
+      ['2024', 4, 2.01],
+      ['2025', 4, 1.77],
+      ['2026', 3, 2.09],
+    ])
+  })
+
+  it('預告事件（ex_date > today）不計入 YTD（未來不墊高）', () => {
+    const withForecast = computeYieldBreakdown('00878', [...d878, { symbol: '00878', ex_date: '2026-11-20', cash_dividend: 5 }], TODAY, 35.53)
+    expect(withForecast.cur.perShareTotal).toBeCloseTo(2.09, 10)
+    expect(withForecast.cur.count).toBe(3)
+  })
+
+  it('TTM 下界不含：fromDate 當日除息屬前一年窗', () => {
+    const rows: YieldHistoryEntry[] = [
+      { symbol: '2330', ex_date: '2025-10-17', cash_dividend: 9 }, // ＝fromDate，不計
+      { symbol: '2330', ex_date: '2025-10-18', cash_dividend: 3 }, // 計
+    ]
+    const r = computeYieldBreakdown('2330', rows, TODAY, 100)
+    expect(r.ttm.perShareTotal).toBeCloseTo(3, 10)
+    expect(r.ttm.count).toBe(1)
+  })
+})
+
+describe('computeYieldBreakdown（#100：00929 月配 12 筆）', () => {
+  it('TTM 次數 12、合計 2.23；窗外事件不計', () => {
+    const b = computeYieldBreakdown('00929', d929, TODAY, 21.5)
+    expect(b.ttm.count).toBe(12)
+    expect(b.ttm.perShareTotal).toBeCloseTo(2.23, 10)
+    expect(b.events).toHaveLength(12)
+    expect(Number(b.ttm.value!.toFixed(2))).toBe(Number(((2.23 / 21.5) * 100).toFixed(2)))
+  })
+
+  it('逐年代號不混入（同代號大小寫／空白等效）', () => {
+    const b = computeYieldBreakdown(' 00878 ', d878, TODAY, 35.53)
+    expect(b.ttm.count).toBe(4)
+    expect(b.ttm.perShareTotal).toBeCloseTo(2.49, 10)
+  })
+})
+
+describe('computeYieldBreakdown（#100：今年零筆除息 → null、不顯示 0.00%）', () => {
+  const annual: YieldHistoryEntry[] = [
+    { symbol: '1101', ex_date: '2024-07-10', cash_dividend: 2 },
+    { symbol: '1101', ex_date: '2025-07-09', cash_dividend: 2.2 },
+  ]
+
+  it('今年零筆：cur.value＝null、count＝0（UI 顯示「—」＋「今年尚未除息」）', () => {
+    const b = computeYieldBreakdown('1101', annual, TODAY, 40)
+    expect(b.cur.count).toBe(0)
+    expect(b.cur.perShareTotal).toBe(0)
+    expect(b.cur.value).toBeNull()
+    expect(b.cur.value).not.toBe(0)
+  })
+
+  it('computeCurrentYearYield(0, price) 回 null（#100 修 0.00% 缺陷）', () => {
+    expect(computeCurrentYearYield(0, 500)).toBeNull()
+    expect(computeCurrentYearYield(-1, 500)).toBeNull()
+  })
+
+  it('年配股 TTM 次數＝1（配息頻率由次數揭露）', () => {
+    const b = computeYieldBreakdown('1101', annual, TODAY, 40)
+    // 2025-07-09 距今日 2026-10-17 已 465 天 → 近 365 天無除息
+    expect(b.ttm.count).toBe(0)
+    // 除息日前一年內（2026-07-08）看得到去年那一次 → 次數 1
+    const b2 = computeYieldBreakdown('1101', annual, '2026-07-08', 40)
+    expect(b2.ttm.count).toBe(1)
+    expect(b2.ttm.perShareTotal).toBeCloseTo(2.2, 10)
+  })
+})
+
+describe('computeYieldBreakdown（#100：美股／現價非法 → —，次數照算且不為 0）', () => {
+  it('現價 0：value 全 null，但筆數／事件仍列出', () => {
+    const b = computeYieldBreakdown('00878', d878, TODAY, 0)
+    expect(b.ttm.value).toBeNull()
+    expect(b.cur.value).toBeNull()
+    expect(b.avg5.value).toBeNull()
+    expect(b.ttm.count).toBe(4)
+    expect(b.events).toHaveLength(4)
+    expect(b.events[0].yieldOnPrice).toBeNull()
+  })
+
+  it('無資料代號（美股無真源）：次數 0、events 空、value null（不顯示 0）', () => {
+    const b = computeYieldBreakdown('AAPL', d878, TODAY, 200)
+    expect(b.ttm.count).toBe(0)
+    expect(b.ttm.value).toBeNull()
+    expect(b.events).toEqual([])
+    expect(b.cur.value).toBeNull()
+    expect(b.avg5.value).toBeNull()
   })
 })

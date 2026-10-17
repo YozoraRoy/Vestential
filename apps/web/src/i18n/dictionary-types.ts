@@ -756,12 +756,30 @@ export interface Dict {
     syncSyncing: string
     syncUpdatedAt: string
     syncNonRealtime: string
-    // #44：當年／5 年殖利率欄（三語新鍵；TWSE 真源）。
-    colCurYield: string
-    colAvg5Yield: string
-    helpCurYield: string
-    helpAvg5Yield: string
+    // #100：表格單欄殖利率（TTM）＋明細 modal（三語新鍵；文案定稿見 Issue #100 comment）。
+    colYieldTtm: string
+    helpYieldTtm: string
+    yieldModalTitle: string
+    yieldModalSubtitle: string
+    yieldOpenModal: string
+    yieldModalClose: string
+    yieldNoData: string
     yieldPartialNote: string
+    yieldCardTtm: string
+    yieldCardTtmNote: string
+    yieldCardCur: string
+    yieldCardCurNone: string
+    yieldCardAvg5Price: string
+    yieldCardAvg5PriceNote: string
+    yieldColYear: string
+    yieldColTimes: string
+    yieldColYearTotal: string
+    yieldColYieldOnPrice: string
+    yieldColExDate: string
+    yieldColCash: string
+    yieldColEventYield: string
+    yieldDetailFormula: string
+    yieldDetailSource: string
     syncDone: string
     syncFailedTitle: string
     syncFailedItem: string

@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { TrendingUp, Zap, RefreshCw, Sparkles, History, ChevronDown, ChevronUp, Upload, Trash2, CheckCircle2, Plus, X, Search, Pencil } from 'lucide-react'
@@ -10,13 +10,12 @@ import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
 import { computePortfolioReviewStats, filterPortfolioReviewByMonth, PORTFOLIO_MIN_REVIEW_COUNT } from '@/lib/portfolio-review'
 import { type DividendYtdEntry } from '@/lib/portfolio-dividends'
 import {
-  computeCurrentYearYield,
-  computeFiveYearAvgYield,
-  yearlyPerShareTotals,
+  computeYieldBreakdown,
   yieldDataYears,
-  yieldWindowYears,
+  type YieldBreakdown,
   type YieldHistoryEntry,
 } from '@/lib/portfolio-yield'
+import { PortfolioYieldModal } from '@/components/portfolio-yield-modal'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { parseJsonSafe, parseSseJson } from '@/lib/safe-parse'
@@ -122,24 +121,26 @@ function formatPct(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
 }
 
-// #34：表格欄位自定義（14 欄；操作欄常顯不參與）。
+// #34：表格欄位自定義（13 欄；操作欄常顯不參與）。
 // #44：股息／成本殖利率欄移除，改為當年殖利率／5 年平均殖利率欄。
 // #94：殖利率（參考）欄移除（Yahoo quoteSummary 恆 404）→ 15 欄改 14 欄。
+// #100：curYield＋avg5Yield 兩欄合併為單欄 ttmYield（近 12 個月 TTM）→ 14 欄改 13 欄；
+//       其餘口徑（YTD／5 年平均／逐年／逐筆）收進明細 modal。
 // 偏好鍵 portfolio-table-columns；評等預設關、其餘預設開；localStorage 讀寫皆 try/catch。
 const TABLE_COLUMNS_STORAGE_KEY = 'portfolio-table-columns'
 type TableColumnId =
   | 'rating' | 'name' | 'symbol' | 'shares' | 'cost' | 'price' | 'totalCost'
-  | 'marketValue' | 'unrealized' | 'return' | 'curYield' | 'avg5Yield'
+  | 'marketValue' | 'unrealized' | 'return' | 'ttmYield'
   | 'net' | 'created'
 const TABLE_COLUMN_IDS: TableColumnId[] = [
   'rating', 'name', 'symbol', 'shares', 'cost', 'price', 'totalCost',
-  'marketValue', 'unrealized', 'return', 'curYield', 'avg5Yield',
+  'marketValue', 'unrealized', 'return', 'ttmYield',
   'net', 'created',
 ]
 const DEFAULT_TABLE_COLUMNS: Record<TableColumnId, boolean> = {
   rating: false,
   name: true, symbol: true, shares: true, cost: true, price: true, totalCost: true,
-  marketValue: true, unrealized: true, return: true, curYield: true, avg5Yield: true,
+  marketValue: true, unrealized: true, return: true, ttmYield: true,
   net: true, created: true,
 }
 function loadTableColumns(): Record<TableColumnId, boolean> {
@@ -154,15 +155,16 @@ function loadTableColumns(): Record<TableColumnId, boolean> {
   }
 }
 // #34：排序鍵→欄位對照（隱藏欄排序自動失效用；評等/操作不參與排序）。
-// #44：dividend/yield 排序鍵移除，改為 curYield/avg5Yield（TWSE 真源殖利率）。
+// #44：dividend/yield 排序鍵移除，改為 TWSE 真源殖利率欄排序鍵。
 // #94：殖利率（參考）欄排序鍵移除（欄位下架）。
+// #100：curYield／avg5Yield 排序鍵移除，改為單欄 ttmYield（近 12 個月）。
 type RecordsSortKey =
   | 'name' | 'shares' | 'cost' | 'price' | 'totalCost' | 'marketValue'
-  | 'unrealized' | 'returnRate' | 'curYield' | 'avg5Yield' | 'net' | 'created'
+  | 'unrealized' | 'returnRate' | 'ttmYield' | 'net' | 'created'
 const SORT_KEY_TO_COLUMN: Record<RecordsSortKey, TableColumnId> = {
   name: 'name', shares: 'shares', cost: 'cost', price: 'price', totalCost: 'totalCost',
   marketValue: 'marketValue', unrealized: 'unrealized', returnRate: 'return',
-  curYield: 'curYield', avg5Yield: 'avg5Yield', net: 'net', created: 'created',
+  ttmYield: 'ttmYield', net: 'net', created: 'created',
 }
 
 function num(s: string): number | null {
@@ -273,12 +275,13 @@ export default function PortfolioPage() {
     setVisibleColumns((prev) => ({ ...prev, [c]: !prev[c] }))
   }
   // 欄位標籤（沿用既有表頭三語鍵，不新增單欄鍵）。
-  // #44：股息／成本殖利率欄移除，改為當年／5 年殖利率欄（三語新鍵）。
+  // #44：股息／成本殖利率欄移除，改為殖利率欄（三語新鍵）。
+  // #100：兩欄殖利率合併為單欄（近 12 個月 TTM）。
   const columnLabels: Record<TableColumnId, string> = useMemo(() => ({
     rating: ui.colRating, name: ui.colName, symbol: ui.colSymbol, shares: ui.detailShares,
     cost: ui.detailCost, price: ui.detailPrice, totalCost: ui.detailTotalCost,
     marketValue: ui.detailMarketValue, unrealized: ui.detailUnrealizedPnl,
-    return: ui.resultTotalReturn, curYield: ui.colCurYield, avg5Yield: ui.colAvg5Yield,
+    return: ui.resultTotalReturn, ttmYield: ui.colYieldTtm,
     net: ui.netTitle, created: ui.detailCreatedAt,
   }), [ui])
   const visibleColumnCount = useMemo(
@@ -301,6 +304,9 @@ export default function PortfolioPage() {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     }
   }
+  // #75／#100：可排序欄頭 aria-sort（當前欄 ascending/descending，其餘 none）。
+  const ariaSortFor = (k: RecordsSortKey): 'ascending' | 'descending' | 'none' =>
+    sortKey === k ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
   useEffect(() => {
     if (sortKey && !visibleColumns[SORT_KEY_TO_COLUMN[sortKey]]) {
       setSortKey(null)
@@ -313,35 +319,20 @@ export default function PortfolioPage() {
   // coverage（分年筆數）由 API 回傳供 QA 手算核對，前端以逐列 partial 徽章呈現，不另存 state。
   const [divRows, setDivRows] = useState<DividendYtdEntry[]>([])
   const [divReason, setDivReason] = useState<string | null>(null)
-  // #44：當年／5 年殖利率（recordId→值；TWSE 真源僅台股，手算可重現見 lib/portfolio-yield）。
-  // 定義於 sortedHistory 之前（排序鍵 curYield/avg5Yield 需用）。
+  // #100：殖利率拆解（recordId→YieldBreakdown；TWSE 真源僅台股，手算可重現見 lib/portfolio-yield）。
+  // 表格單欄＝TTM；cur／avg5／逐年／逐筆收進明細 modal（divRows 已在 state，modal 不另打 API、不扣 quota）。
+  // 定義於 sortedHistory 之前（排序鍵 ttmYield 需用）。
   const divToday = getTaiwanDateStrClient()
-  const divCurYear = divToday.slice(0, 4)
-  // #95：5 年平均＝(Y-5)..(Y-1)（不含當年；當年另有 YTD 欄）。
-  const yieldYears = useMemo(() => yieldWindowYears(divCurYear), [divCurYear])
   const yieldById = useMemo(() => {
-    const m = new Map<number, { cur: number | null; avg5: number | null; partial: boolean; missingYears: string[] }>()
+    const m = new Map<number, YieldBreakdown>()
     const rowsAll: YieldHistoryEntry[] = (divRows ?? []) as YieldHistoryEntry[]
     for (const r of history) {
+      // 美股無真源 → 不進 map（UI 顯示 —，不顯示 0）。
       if (r.market === 'us') continue
-      if (!Number.isFinite(r.current_price) || r.current_price <= 0) {
-        m.set(r.id, { cur: null, avg5: null, partial: true, missingYears: [...yieldYears] })
-        continue
-      }
-      // 5 年平均：完整年度窗（不含當年）。
-      const yearly = yearlyPerShareTotals(r.symbol, rowsAll, yieldYears)
-      // 當年：只計今年已除息（ex_date <= today）事件，未來預告不墊高。
-      const curPerShare = yearlyPerShareTotals(r.symbol, rowsAll, [divCurYear], divToday)[0]?.perShareTotal ?? 0
-      const avg = computeFiveYearAvgYield(yearly, r.current_price)
-      m.set(r.id, {
-        cur: computeCurrentYearYield(curPerShare, r.current_price),
-        avg5: avg.value,
-        partial: avg.partial,
-        missingYears: avg.missingYears,
-      })
+      m.set(r.id, computeYieldBreakdown(r.symbol, rowsAll, divToday, r.current_price))
     }
     return m
-  }, [history, divRows, yieldYears, divCurYear, divToday])
+  }, [history, divRows, divToday])
   const sortedHistory = useMemo(() => {
     if (!sortKey) return history
     const arr = [...history]
@@ -384,13 +375,9 @@ export default function PortfolioPage() {
       case 'returnRate':
         sortNums((r) => r.total_return_pct)
         break
-      case 'curYield':
-        // #44：當年殖利率排序（TWSE 真源；缺值沉底沿用 sortNums 語意）。
-        sortNums((r) => yieldById.get(r.id)?.cur ?? null)
-        break
-      case 'avg5Yield':
-        // #44：5 年平均殖利率排序（缺值沉底；年份不全者仍按有值排）。
-        sortNums((r) => yieldById.get(r.id)?.avg5 ?? null)
+      case 'ttmYield':
+        // #100：近 12 個月殖利率排序（缺值沉底沿用 sortNums 語意）。
+        sortNums((r) => yieldById.get(r.id)?.ttm.value ?? null)
         break
       case 'net':
         sortNums((r) => computeNetPnL({
@@ -506,6 +493,8 @@ export default function PortfolioPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null)
   // #26：紀錄編輯 modal（沿用 journal openEdit 預填風格；驗證沿用 validatePortfolioInput 模型）。
   const [editingItem, setEditingItem] = useState<HistoryItem | null>(null)
+  // #100：殖利率明細 modal（開啟中的紀錄 id；null＝關閉）。
+  const [yieldModalId, setYieldModalId] = useState<number | null>(null)
   const [editMarket, setEditMarket] = useState<Market>('tw')
   const [editSymbol, setEditSymbol] = useState('')
   const [editSymbolName, setEditSymbolName] = useState('')
@@ -1161,20 +1150,26 @@ export default function PortfolioPage() {
     return latest
   }, [history])
 
-  // #44：當年／5 年殖利率顯示（台股 TWSE 真源；美股無真源顯示 —）。
-  // 缺年（整年無快取）5 年欄加註「年份不全」（ui.yieldPartialNote，三語）。
-  const curYieldText = (id: number) => {
-    const y = yieldById.get(id)
-    return y?.cur != null && Number.isFinite(y.cur) ? `${y.cur.toFixed(2)}%` : '—'
+  // #100：殖利率單欄顯示＝TTM（近 365 天已除息每股合計 ÷ 現價；台股 TWSE 真源，美股無真源顯示 —）。
+  // 其餘口徑（YTD／5 年平均／逐年／逐筆）收進明細 modal；今年零筆除息由 modal 的 YTD 卡顯示
+  // 「—」＋「今年尚未除息」（`yieldCardCurNone`，不得顯示 0.00%）。
+  const ttmYieldText = (id: number) => {
+    const v = yieldById.get(id)?.ttm.value
+    return v != null && Number.isFinite(v) ? `${v.toFixed(2)}%` : '—'
   }
-  const avg5YieldText = (id: number) => {
-    const y = yieldById.get(id)
-    return y?.avg5 != null && Number.isFinite(y.avg5) ? `${y.avg5.toFixed(2)}%` : '—'
+  // #100：殖利率明細 modal（開啟前記住觸發鈕，關閉後焦點還原；Esc／點遮罩關閉）。
+  const yieldTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const openYieldModal = (e: ReactMouseEvent<HTMLButtonElement>, id: number) => {
+    // 列本身點擊＝展開明細，故殖利率鈕必須阻斷冒泡（不觸發列展開）。
+    e.stopPropagation()
+    yieldTriggerRef.current = e.currentTarget
+    setYieldModalId(id)
   }
-  const avg5PartialText = (id: number) => {
-    const y = yieldById.get(id)
-    return y && y.partial && y.avg5 != null ? ui.yieldPartialNote : null
-  }
+  const closeYieldModal = useCallback(() => {
+    setYieldModalId(null)
+    yieldTriggerRef.current?.focus()
+  }, [])
+  const yieldModalItem = yieldModalId != null ? history.find((r) => r.id === yieldModalId) ?? null : null
   // #35：無檔原因（三語；null＝正常不顯示）。
   const divReasonText: string | null =
     divReason === 'non-trading-day' ? ui.divReasonNonTrading
@@ -2117,65 +2112,57 @@ export default function PortfolioPage() {
                 <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
                   {visibleColumns.rating && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colRating}</th>}
                   {visibleColumns.name && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('name')}>
                       <RecordsSortHeader label={ui.colName} active={sortKey === 'name'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('name')} />
                     </th>
                   )}
                   {visibleColumns.symbol && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colSymbol}</th>}
                   {visibleColumns.shares && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('shares')}>
                       <RecordsSortHeader label={ui.detailShares} active={sortKey === 'shares'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('shares')} />
                     </th>
                   )}
                   {visibleColumns.cost && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('cost')}>
                       <RecordsSortHeader label={ui.detailCost} active={sortKey === 'cost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('cost')} />
                     </th>
                   )}
                   {visibleColumns.price && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('price')}>
                       <RecordsSortHeader label={ui.detailPrice} active={sortKey === 'price'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('price')} />
                     </th>
                   )}
                   {visibleColumns.totalCost && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('totalCost')}>
                       <RecordsSortHeader label={ui.detailTotalCost} active={sortKey === 'totalCost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('totalCost')} />
                     </th>
                   )}
                   {visibleColumns.marketValue && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('marketValue')}>
                       <RecordsSortHeader label={ui.detailMarketValue} active={sortKey === 'marketValue'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('marketValue')} />
                     </th>
                   )}
                   {visibleColumns.unrealized && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('unrealized')}>
                       <RecordsSortHeader label={ui.detailUnrealizedPnl} active={sortKey === 'unrealized'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('unrealized')} />
                     </th>
                   )}
                   {visibleColumns.return && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('returnRate')}>
                       <RecordsSortHeader label={ui.resultTotalReturn} active={sortKey === 'returnRate'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('returnRate')} />
                     </th>
                   )}
-                  {/* #44：累計股息／成本殖利率欄移除，改為當年／5 年殖利率欄（TWSE 真源）。 */}
-                  {visibleColumns.curYield && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                  {/* #100：curYield＋avg5Yield 兩欄合併為單欄（近 12 個月 TTM；其餘口徑收進明細 modal）。 */}
+                  {visibleColumns.ttmYield && (
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('ttmYield')}>
                       <span className="inline-flex items-center gap-1">
-                        <RecordsSortHeader label={ui.colCurYield} active={sortKey === 'curYield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('curYield')} />
-                        <FieldHelp text={ui.helpCurYield} />
-                      </span>
-                    </th>
-                  )}
-                  {visibleColumns.avg5Yield && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
-                      <span className="inline-flex items-center gap-1">
-                        <RecordsSortHeader label={ui.colAvg5Yield} active={sortKey === 'avg5Yield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('avg5Yield')} />
-                        <FieldHelp text={ui.helpAvg5Yield} />
+                        <RecordsSortHeader label={ui.colYieldTtm} active={sortKey === 'ttmYield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('ttmYield')} />
+                        <FieldHelp text={ui.helpYieldTtm} />
                       </span>
                     </th>
                   )}
                   {visibleColumns.net && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('net')}>
                       <span className="inline-flex items-center gap-1">
                         <RecordsSortHeader label={ui.netTitle} active={sortKey === 'net'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('net')} />
                         <FieldHelp text={ui.helpNet} />
@@ -2183,7 +2170,7 @@ export default function PortfolioPage() {
                     </th>
                   )}
                   {visibleColumns.created && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium">
+                    <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('created')}>
                       <RecordsSortHeader label={ui.detailCreatedAt} active={sortKey === 'created'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('created')} />
                     </th>
                   )}
@@ -2223,17 +2210,22 @@ export default function PortfolioPage() {
                             {formatMoney(item.total_return, item.market)} {formatPct(item.total_return_pct)}
                           </td>
                         )}
-                        {/* #44：累計股息／成本殖利率欄移除，改為當年／5 年殖利率欄（TWSE 真源；缺年註年份不全）。 */}
-                        {visibleColumns.curYield && (
+                        {/* #100：單欄殖利率＝TTM；點欄位開明細 modal（stopPropagation 不觸發列展開）；美股無真源顯示 —。 */}
+                        {visibleColumns.ttmYield && (
                           <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
-                            {curYieldText(item.id)}
-                          </td>
-                        )}
-                        {visibleColumns.avg5Yield && (
-                          <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
-                            {avg5YieldText(item.id)}
-                            {avg5PartialText(item.id) && (
-                              <div className="text-[10px] font-normal text-amber-400/90">{avg5PartialText(item.id)}</div>
+                            {item.market === 'us' ? (
+                              <span className="text-[var(--text-secondary)]">—</span>
+                            ) : (
+                              <button
+                                type="button"
+                                aria-haspopup="dialog"
+                                aria-label={`${ui.yieldOpenModal} ${item.symbol}`}
+                                title={ui.yieldOpenModal}
+                                onClick={(e) => openYieldModal(e, item.id)}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:bg-white/10 hover:decoration-current transition cursor-pointer"
+                              >
+                                {ttmYieldText(item.id)}
+                              </button>
                             )}
                           </td>
                         )}
@@ -2329,10 +2321,22 @@ export default function PortfolioPage() {
                         <div><p className="text-xs text-[var(--text-secondary)]">{ui.detailShares}</p><p>{item.shares}</p></div>
                         <div><p className="text-xs text-[var(--text-secondary)]">{ui.detailCost}</p><p>{formatMoney(item.cost, item.market)}</p></div>
                         <div><p className="text-xs text-[var(--text-secondary)]">{ui.detailPrice}</p><p>{formatMoney(item.current_price, item.market)}</p></div>
-                        {/* #44：累計股息欄移除，改為當年殖利率欄（TWSE 真源；美股無真源顯示 —）。 */}
+                        {/* #100：兩欄殖利率合併為單欄（近 12 個月 TTM）；點欄位開明細 modal。 */}
                         <div>
-                          <p className="text-xs text-[var(--text-secondary)]"><span className="inline-flex items-center gap-1">{ui.colCurYield} <FieldHelp text={ui.helpCurYield} /></span></p>
-                          <p>{curYieldText(item.id)}</p>
+                          <p className="text-xs text-[var(--text-secondary)]"><span className="inline-flex items-center gap-1">{ui.colYieldTtm} <FieldHelp text={ui.helpYieldTtm} /></span></p>
+                          {item.market === 'us' ? (
+                            <p className="text-[var(--text-secondary)]">—</p>
+                          ) : (
+                            <button
+                              type="button"
+                              aria-haspopup="dialog"
+                              aria-label={`${ui.yieldOpenModal} ${item.symbol}`}
+                              onClick={(e) => openYieldModal(e, item.id)}
+                              className="font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:decoration-current transition cursor-pointer"
+                            >
+                              {ttmYieldText(item.id)}
+                            </button>
+                          )}
                         </div>
                         <div><p className="text-xs text-[var(--text-secondary)]">{ui.detailTotalCost}</p><p>{formatMoney(item.cost_basis, item.market)}</p></div>
                         <div><p className="text-xs text-[var(--text-secondary)]">{ui.detailMarketValue}</p><p>{formatMoney(item.market_value, item.market)}</p></div>
@@ -2348,14 +2352,7 @@ export default function PortfolioPage() {
                           ui={ui}
                           helpText={ui.helpNet}
                         />
-                        {/* #44：成本殖利率欄移除，改為 5 年平均殖利率欄（缺年註年份不全）。 */}
-                        <div>
-                          <p className="text-xs text-[var(--text-secondary)]"><span className="inline-flex items-center gap-1">{ui.colAvg5Yield} <FieldHelp text={ui.helpAvg5Yield} /></span></p>
-                          <p>{avg5YieldText(item.id)}</p>
-                          {avg5PartialText(item.id) && (
-                            <p className="text-[10px] text-amber-400/90">{avg5PartialText(item.id)}</p>
-                          )}
-                        </div>
+                        {/* #100：5 年平均殖利率已收進明細 modal（表格僅單欄 TTM，不留佔位欄）。 */}
                         <div className="col-span-2 md:col-span-4">
                           <p className="text-xs text-[var(--text-secondary)]">{ui.detailCreatedAt}</p>
                           <p className="text-xs">{(item.created_at || '').replace('T', ' ')}</p>
@@ -2504,6 +2501,18 @@ export default function PortfolioPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* #100：殖利率明細 modal（單欄 TTM 的其餘口徑：YTD／5 年平均／逐年／逐筆）。 */}
+      {yieldModalItem && (
+        <PortfolioYieldModal
+          symbol={yieldModalItem.symbol}
+          name={yieldModalItem.symbol_name}
+          price={yieldModalItem.current_price}
+          breakdown={yieldById.get(yieldModalItem.id) ?? null}
+          dict={ui}
+          onClose={closeYieldModal}
+        />
       )}
     </div>
   )
