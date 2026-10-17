@@ -1,3 +1,5 @@
+[English](./deployment-and-ops.md) ｜ **繁體中文**
+
 # Azure 部署與維運手冊
 
 本文件提供 Vestential 在 Azure App Service 的部署架構、GitHub Actions 自動化流程、環境變數對應表與常見維運排錯指南。

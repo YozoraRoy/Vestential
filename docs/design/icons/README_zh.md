@@ -1,3 +1,5 @@
+[English](./README.md) ｜ **繁體中文**
+
 # doc/icons — 品牌識別 Logo 產出資料夾
 
 > 目標：為 Vestential 產製品牌識別 Logo（社群大頭照、網站 icon、甚至 app icon 的來源母版）。

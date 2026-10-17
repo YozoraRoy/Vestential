@@ -1,3 +1,5 @@
+[English](./ai-cost-estimation.md) ｜ **繁體中文**
+
 # AI 工作流實際成本評估（Cost Estimation）
 
 > 價格基準日：2026-10-03（Zen 公開價格表口徑；直接通路同價時不再另列）。

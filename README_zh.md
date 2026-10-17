@@ -30,7 +30,7 @@ Vestential 是基於 Next.js 15 與多代理人協作架構（Multi-Agent Archit
 | 🔐 **後台管理** | `/admin` | 管理員後台（社群小編乾跑、節慶發文、首回覆提問開關、競技場檢視、使用量、設定等） | 需管理員 |
 | 🔐 **會員登入** | `/login` | Google 與 LINE 第三方快速登入，安全管理每日免費配額 | — |
 
-👉 各項功能的深入演算法、公式與操作流程，請參閱 [核心功能與模組手冊](./docs/features-guide.md)。
+👉 各項功能的深入演算法、公式與操作流程，請參閱 [核心功能與模組手冊](./docs/features-guide_zh.md)。
 
 ---
 
@@ -51,7 +51,7 @@ flowchart LR
 - **雙資料庫相容**：本地開發採用 SQLite，雲端生產環境支援 Azure SQL Server，配備資料增量遷移與防洗保護。
 - **國際化語系**：內建中、英、日三語系路由與即時切換。
 
-👉 深入了解多代理人協作架構與容錯機制，請參閱 [系統架構與技術手冊](./docs/architecture-and-tech.md)。
+👉 深入了解多代理人協作架構與容錯機制，請參閱 [系統架構與技術手冊](./docs/architecture-and-tech_zh.md)。
 
 ---
 
@@ -104,15 +104,17 @@ npm run dev
 
 為了便於維護與深入查閱，詳細技術規格與操作指引已獨立整理於 `docs/` 目錄：
 
-- 📖 **[核心功能與模組手冊](./docs/features-guide.md)**  
+> **註**：`docs/` 文件以英文為主檔，繁體中文版以 `*_zh.md` 並列（例：`features-guide_zh.md`）。
+
+- 📖 **[核心功能與模組手冊](./docs/features-guide_zh.md)**  
   收錄個人損益試算（含稅費淨損益、組合風險、交易日誌、表格檢視）、截圖 OCR、零股紀念品 7 大分類、季線乖離回測（含 AI 解讀與點子流）、週期進場、AI Agent 競技場（50 萬起始、前 200 池）、後台與社群小編（含節慶發文、首回覆提問）規範。
-- ⚙️ **[系統架構與技術手冊](./docs/architecture-and-tech.md)**  
+- ⚙️ **[系統架構與技術手冊](./docs/architecture-and-tech_zh.md)**  
   Monorepo 結構、12-Agent 協作邏輯、0.3 秒熔斷門禁、Primary/Fallback 雙模型備援、持久化儲存機制與 2026-09 新增模組。
-- ☁️ **[Azure 部署與維運手冊](./docs/deployment-and-ops.md)**  
+- ☁️ **[Azure 部署與維運手冊](./docs/deployment-and-ops_zh.md)**  
   GitHub Actions 自動化 CI/CD、繞過 Oryx 記憶體不足的打包技巧、Secrets 清單、Issue 驅動開發鏈路（`/dev-loop`）、9 個定時排程＋自動部署、社群憑證維運與排錯步驟。
-- 🔐 **[身分驗證與配額規範手冊](./docs/auth-and-quota.md)**  
+- 🔐 **[身分驗證與配額規範手冊](./docs/auth-and-quota_zh.md)**  
   Google 與 LINE OAuth 申請流程、JWT Session 安全規範、分級 AI 分析配額（一般每日 1 次／管理員每日 3 次）與 10 次圖片辨識配額機制。
-- ✉️ **[品牌專屬客服信箱建置手冊](./docs/custom-domain-email-setup.md)**  
+- ✉️ **[品牌專屬客服信箱建置手冊](./docs/custom-domain-email-setup_zh.md)**  
   利用 Spaceship 免費轉寄 + Gmail SMTP 建立 `service@vestential.com` 的 100% 免費官方客服信箱教學。
 - 🎨 **[品牌設計資產](./docs/design/)**  
   設計準則（`design-guideline.md`）與歷代 Logo 產出（`docs/design/icons/`）。

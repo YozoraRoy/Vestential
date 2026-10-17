@@ -1,3 +1,5 @@
+[English](./design-guideline.md) ｜ **繁體中文**
+
 # Vestential 前端設計指南 (Design Guideline)
 
 > 本文是前端視覺與結構的唯一權威。新增頁面／元件時**優先參照這裡**，不要從既有頁面逐頁考古複製 class。

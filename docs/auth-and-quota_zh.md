@@ -1,3 +1,5 @@
+[English](./auth-and-quota.md) ｜ **繁體中文**
+
 # 身分驗證與配額規範手冊
 
 本文件說明 Vestential 的 OAuth 第三方登入設定步驟、JWT Session 安全機制與使用者每日免費額度管理。

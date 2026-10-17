@@ -1,3 +1,5 @@
+[English](./custom-domain-email-setup.md) ｜ **繁體中文**
+
 # 品牌專屬客服信箱建置手冊 (100% 免費做法 A)
 
 本手冊說明如何使用 **Spaceship 網域託管** 與 **個人免費 Gmail**，為 `vestential.com` 建立專屬的官方客服信箱別名（`service@vestential.com`），享有免費收信、代發與抗垃圾郵件防護，完全無需額外付費訂閱 Google Workspace。

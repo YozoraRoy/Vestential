@@ -1,3 +1,5 @@
+[English](./architecture-and-tech.md) ｜ **繁體中文**
+
 # 系統架構與技術手冊
 
 本文件說明 Vestential 的 Monorepo 結構、12-Agent AI 協作引擎、雙層 LLM 備援與雙資料庫持久化機制。

@@ -1,3 +1,5 @@
+[English](./features-guide.md) ｜ **繁體中文**
+
 # 核心功能與模組手冊
 
 本手冊詳細說明 Vestential 平台各功能模組的運作原理、演算法設計與操作細節。

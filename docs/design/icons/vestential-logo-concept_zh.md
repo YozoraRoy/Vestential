@@ -1,3 +1,5 @@
+[English](./vestential-logo-concept.md) ｜ **繁體中文**
+
 # Vestential 品牌識別 —「Accumulation Arc」（累積弧）
 
 > Logo 概念母版。產出檔案：
