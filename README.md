@@ -104,7 +104,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser to get start
 
 To keep things maintainable, detailed specs and operating guides live in the `docs/` directory.
 
-> **Note**: the documents under `docs/` are currently written in Traditional Chinese; English versions are planned.
+> **Note**: the documents under `docs/` use English as the main version, with a Traditional Chinese version alongside as `*_zh.md` (e.g. `features-guide_zh.md`).
 
 - 📖 **[Feature & Module Guide](./docs/features-guide.md)**
   Covers portfolio P&L (after-tax net P&L, portfolio risk, trading journal, table view), screenshot OCR, the 7 odd-lot gift categories, MA-deviation backtesting (with AI interpretation and the idea flow), cycle entry, the AI Agent Arena (NT$500k start, top-200 universe), and the admin/social-editor rules (festival posting, first-reply Q&A).
