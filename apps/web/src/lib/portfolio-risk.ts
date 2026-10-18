@@ -4,7 +4,8 @@
  * 設計決策（見 issue 回報）：
  * - 台/美股分幣別成組計算（NT$/US$ 不混加；跨幣別對沖本就 out-of-scope）。
  * - 虧損公式：情境虧損金額 = Σ(持倉市值 × 情境跌幅)，虧損％ = 虧損金額 ÷ 該組納入試算市值。
- * - 產業分類優先採用 Yahoo profile sector；取不到時用下方簡版對照表，
+ * - 產業分類優先採用 Yahoo profile sector（Issue #105 起為 zh-TW 中文）；取不到時：
+ *   ETF 由 `classifyEtfSector` 歸類（台股/美股/債券 ETF），再退回下方簡版對照表，
  *   仍無則標示「未分類」——只有「單一產業重挫」情境會把未分類標的列為不納入試算，
  *   大盤型情境不需要產業資料故全部納入（市值有效者）。
  * - Issue #104：單一產業重挫的目標取「占比最大的**已知**產業」，未分類桶即使最大也不得
@@ -55,6 +56,68 @@ export const FALLBACK_SECTOR_MAP: Record<string, string> = {
 export function resolveFallbackSector(symbol: string): string | null {
   const key = (symbol ?? '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
   return FALLBACK_SECTOR_MAP[key] ?? null
+}
+
+/** ETF 歸類桶名（與 FALLBACK_SECTOR_MAP 同名，維持 UI 一致）。 */
+export const BOND_ETF_SECTOR = '債券 ETF'
+export const TW_ETF_SECTOR = '台股 ETF'
+export const US_ETF_SECTOR = '美股 ETF'
+
+/**
+ * Issue #105：ETF 沒有 Yahoo sector，改以 `quoteType`＋名稱＋市場歸類。
+ *
+ * ETF 在 Yahoo 的 `sector` 一律為空（`quoteType:'ETF'`），若不歸類，台股 ETF（00878／00929…）
+ * 會全部落「未分類」⇒「最大產業重挫 30%」情境失效。歸類規則：
+ * - 名稱含 `債|Bond|Treasury` → `債券 ETF`（如 `00687B` → `Cathay US Treasury 20+ YR ETF TWD`）。
+ * - 其餘依市場 → 台股 `台股 ETF`、美股 `美股 ETF`。
+ *
+ * **只在風險層使用**：不回寫 `CompanyProfile.sector`（避免污染 `/api/quote`／`/api/analyze`／
+ * AI engine 等 data 層消費端）。回傳 null 表示「非 ETF」或資料不足 ⇒ 由呼叫端續走
+ * `FALLBACK_SECTOR_MAP`／未分類。
+ */
+export function classifyEtfSector(input: {
+  quoteType?: string | null
+  name?: string | null
+  market: RiskMarket
+}): string | null {
+  const quoteType = (input.quoteType ?? '').trim().toUpperCase()
+  if (quoteType !== 'ETF') return null
+  const name = input.name ?? ''
+  if (/債|Bond|Treasury/i.test(name)) return BOND_ETF_SECTOR
+  return input.market === 'us' ? US_ETF_SECTOR : TW_ETF_SECTOR
+}
+
+export interface ResolvedHoldingSector {
+  sector: string | null
+  sectorSource: 'yahoo' | 'fallback' | 'none'
+}
+
+/**
+ * Issue #105：持倉產業解析優先序（純函式，供風險快照與單元測試共用）：
+ * Yahoo sector（已 zh-TW 對照）→ ETF 歸類 → `FALLBACK_SECTOR_MAP` → null（未分類）。
+ * ETF 歸類與 fallback **同級**（`sectorSource:'fallback'`）——不新增列舉值、不動快照型別。
+ */
+export function resolveHoldingSector(input: {
+  symbol: string
+  market: RiskMarket
+  yahooSector?: string | null
+  quoteType?: string | null
+  companyName?: string | null
+}): ResolvedHoldingSector {
+  const yahoo = (input.yahooSector ?? '').trim()
+  if (yahoo) return { sector: yahoo, sectorSource: 'yahoo' }
+
+  const etf = classifyEtfSector({
+    quoteType: input.quoteType,
+    name: input.companyName,
+    market: input.market,
+  })
+  if (etf) return { sector: etf, sectorSource: 'fallback' }
+
+  const fallback = resolveFallbackSector(input.symbol)
+  if (fallback) return { sector: fallback, sectorSource: 'fallback' }
+
+  return { sector: null, sectorSource: 'none' }
 }
 
 export interface RiskHoldingInput {

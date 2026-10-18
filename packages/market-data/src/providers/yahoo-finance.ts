@@ -2,12 +2,27 @@ import type { MarketDataProvider } from '../provider.js'
 import type { OHLCV, Quote, Fundamentals, CompanyProfile, BatchQuote } from '../types.js'
 import { MarketDataError } from '@stock/core'
 import { TTLCache } from '../cache.js'
+import { buildProfileFromSearch, emptyProfile, pickSearchQuote } from './yahoo-profile.js'
+import type { YahooSearchQuote } from './yahoo-profile.js'
 
 /** 歷史日線快取：盤中資料不劇烈變動，擋掉重複請求避免觸發 Yahoo Rate Limit。 */
 const historyCache = new TTLCache<OHLCV[]>(15 * 60 * 1000)
 
-/** 標的類型（ETF / EQUITY）快取：很少變動，重用避免重複呼叫 Yahoo。 */
-const assetTypeCache = new TTLCache<string>(60 * 60 * 1000)
+/**
+ * Issue #105：profile（name／sector／quoteType）快取，沿用原 assetTypeCache 的 TTLCache 模式。
+ * 原本「quoteType 快取（1h）＋ detectQuoteType 另打一次 search」已整併成單一快取：
+ * getProfile 一次 search 同時供 name／sector／quoteType，**同一 symbol 不再重複打兩次 search**。
+ * - 成功：24h（名稱／產業／標的類型幾乎不變）。
+ * - 失敗（逾時／非 2xx／無精確比對）：5 分鐘短 TTL 負面快取，避免每頁載入重複付 timeout
+ *   （Azure 出口 IP 可能被 Yahoo 限流）。
+ */
+const PROFILE_TTL_MS = 24 * 60 * 60 * 1000
+const PROFILE_MISS_TTL_MS = 5 * 60 * 1000
+const profileCache = new TTLCache<CompanyProfile>(PROFILE_TTL_MS)
+const profileMissCache = new TTLCache<true>(PROFILE_MISS_TTL_MS)
+
+/** Issue #105：search 單次請求逾時（profile 屬加分資料，逾時即降級回空值，不拖住呼叫端）。 */
+const PROFILE_SEARCH_TIMEOUT_MS = 6000
 
 /** v7 finance/quote 的 crumb：連同 cookie 一起取得，2 小時 TTL。 */
 const crumbCache = new TTLCache<{ cookies: string; crumb: string }>(2 * 60 * 60 * 1000)
@@ -61,27 +76,28 @@ async function yahooFetch(path: string): Promise<any> {
   throw lastErr
 }
 
-/**
- * 偵測標的類型（"ETF" / "EQUITY" / ...），使用 Yahoo search 的 quoteType 欄位。
- * 用 search 而非 chart 或 quoteSummary，因為 ETF 的 quoteSummary modules（如 price）常回 404。
- * 有 1 小時 TTL 快取；查無結果回空白字串。
- */
-async function detectQuoteType(symbol: string): Promise<string> {
-  const cached = assetTypeCache.get(symbol)
-  if (cached !== undefined) return cached
+type SearchOutcome = { ok: true; quote?: YahooSearchQuote } | { ok: false }
 
+/**
+ * Issue #105：打 `v1/finance/search` 並取出精確比對的那一筆（免 crumb）。
+ *
+ * 回傳三態：`{ ok: false }`＝請求失敗（逾時／非 2xx／JSON 壞），
+ * `{ ok: true, quote: undefined }`＝有回應但沒有精確比對，`{ ok: true, quote }`＝命中。
+ * **永不拋錯**：呼叫端（getProfile）據此決定要不要寫負面快取。
+ */
+async function fetchSearchQuote(symbol: string): Promise<SearchOutcome> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), PROFILE_SEARCH_TIMEOUT_MS)
   try {
+    // v11/v10 quoteSummary 已失效（404／401 Invalid Crumb）；search 免 crumb 且不會被擋。
     const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=3`
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    const data: any = await res.json()
-    const match = (data?.quotes ?? []).find(
-      (q: any) => (q.symbol ?? '').toUpperCase() === symbol.toUpperCase(),
-    )
-    const quoteType: string = match?.quoteType ?? ''
-    assetTypeCache.set(symbol, quoteType)
-    return quoteType
-  } catch (_) {
-    return ''
+    const res = await fetch(url, { headers: { 'User-Agent': CHROME_AGENT }, signal: controller.signal })
+    if (!res.ok) return { ok: false }
+    return { ok: true, quote: pickSearchQuote(symbol, await res.json()) }
+  } catch {
+    return { ok: false }
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
@@ -251,21 +267,38 @@ export const yahooFinanceProvider: MarketDataProvider = {
     }
   },
 
+  /**
+   * Issue #105：原本打 `v11/finance/quoteSummary/{symbol}?modules=assetProfile`（HTTP 404，已下架；
+   * v10 則回 401 Invalid Crumb）導致所有標的 sector／name 全空。改以 `v1/finance/search`（免 crumb）
+   * 取 `sector`／`industry`／`longname`／`shortname`／`quoteType`，一次請求同時供 name／sector／
+   * quoteType（不再額外呼叫 detectQuoteType，避免同 symbol 打兩次 search）。
+   *
+   * - `sector` 回傳 zh-TW 中文（`Technology`→`科技`…11 類）；對照不到原樣英文、查無資料 undefined。
+   * - 失敗／逾時／無精確比對：回空值（`name` 退回代號）且**不拋錯**，由呼叫端降級
+   *   （apps/web 的風險層再走 ETF 歸類 → FALLBACK_SECTOR_MAP → 未分類）。
+   * - 快取：成功 24h／失敗（含無精確比對）5 分鐘負面快取，見上方 profileCache。
+   *
+   * 已知取捨：search 端點沒有 `longBusinessSummary`／`exchange` 的完整資料，故 `description`
+   * 不再回傳（改動前 quoteSummary 已 404，實際上同樣是空值，非本次退化）。
+   */
   async getProfile(symbol: string): Promise<CompanyProfile> {
-    const url = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${symbol}?modules=assetProfile`
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    const data: any = await res.json()
+    const key = (symbol ?? '').trim().toUpperCase()
+    if (!key) return emptyProfile(symbol)
 
-    const profile = data?.quoteSummary?.result?.[0]?.assetProfile
-    return {
-      symbol,
-      name: profile?.companyName ?? symbol,
-      sector: profile?.sector,
-      industry: profile?.industry,
-      exchange: profile?.exchange,
-      description: profile?.longBusinessSummary,
-      quoteType: await detectQuoteType(symbol),
+    const cached = profileCache.get(key)
+    if (cached) return cached
+    // 負面快取：近期已知失敗／查無資料者不再重打（擋每頁載入的 4 秒 timeout 疊加）。
+    if (profileMissCache.get(key)) return emptyProfile(symbol)
+
+    const outcome = await fetchSearchQuote(key)
+    if (!outcome.ok || !outcome.quote) {
+      profileMissCache.set(key, true)
+      return emptyProfile(symbol)
     }
+
+    const profile = buildProfileFromSearch(symbol, outcome.quote)
+    profileCache.set(key, profile)
+    return profile
   },
 
   async searchSymbols(query: string): Promise<Array<{ symbol: string; name: string; market: string; quoteType?: string }>> {
