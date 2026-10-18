@@ -133,3 +133,9 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 - 主 agent 用 Start-Process 起 server 若 hang 到 tool timeout（回了 pid 也算）：不要重試，改走 §3b WMI 備案；重試同一招只會再殺掉一台剛起好的 server。
 - QA task 時間預算 25–30 分鐘，超時由主 agent 取消重派（重派前清殘留 server）；QA 超時／失聯改走降級驗收（typecheck＋lint＋diff 核對放行，runtime 標 UNVERIFIED），詳見 `dev-loop.md`「QA 派單 SOP」與「降級驗收」。
 - 表格 UI 規範（排序／字級／loading／信站一致／佔位欄禁令／免責四件套）：見 `docs/ui-table-checklist.md`（Issue #75）。
+- **貼中文內容到 GitHub 一律用 UTF-8 檔、禁用 shell 管道**（2026-10-18 事故）：先把內容用 `write` 工具寫成檔案，再 `gh issue comment N --body-file <path>` 張貼（`gh issue create/edit`、PR comment 同理）。**禁用** `$body | gh ... --body-file -`、`echo ... | gh`、`Get-Content | gh` 等 PowerShell 管道——PowerShell 5.1 會先把非 ASCII 轉成 `?`（0x3F）才交給原生程式，寫進 GitHub 的已經是壞字（非顯示問題；`gh api`／node／curl 三路取回一致可證）。事故規模：16 則 comment 中文全毀（#102×4／#103×4／#104×5／#105×3），事後以 UTF-8 檔 ＋ `gh api -X PATCH <comment> -F body=@file` 補正。
+- **貼完必複查編碼**：以 `gh api repos/<owner>/<repo>/issues/comments/<id>` 取回檢查，`?` 數 ≥ 20 且 CJK 字數 < `?`/4 即視為亂碼，須以 UTF-8 檔重貼／補正（`gh api -X PATCH ... -F body=@file`）。`git commit` 同理建議用 `git commit -F <utf8 檔>` 取代 `-m "中文"`。自查片段（複製即用，把 `N` 換成 Issue 號；node 直接抓 `gh` 的原始 UTF-8 輸出，不經 PowerShell 管道）：
+
+```powershell
+node -e "const{execSync}=require('child_process');const t=execSync('gh api repos/YozoraRoy/vestential/issues/N/comments --paginate',{encoding:'utf8',maxBuffer:1e8});const q=(t.match(/\?/g)||[]).length,c=(t.match(/[\u4e00-\u9fff]/g)||[]).length;console.log('?='+q,'CJK='+c,q>=20&&c<q/4?'=> 疑似亂碼，重貼':'=> OK')"
+```
