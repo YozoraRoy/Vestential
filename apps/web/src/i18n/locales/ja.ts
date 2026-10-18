@@ -781,6 +781,8 @@ export const ja: Dict = {
     riskScenarioSector: '最大セクター −30%',
     riskLossAmount: '損失額',
     riskLossPct: '損失率',
+    riskValueNa: '—',
+    riskCannotCompute: '試算不可：セクターデータ不足',
     riskExcluded: '試算対象外',
     riskExcludedMissingValue: '時価データ不足',
     riskExcludedMissingSector: 'セクターデータ不足',

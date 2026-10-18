@@ -781,6 +781,8 @@ export const en: Dict = {
     riskScenarioSector: 'Largest sector −30%',
     riskLossAmount: 'Loss amount',
     riskLossPct: 'Loss %',
+    riskValueNa: '—',
+    riskCannotCompute: 'Cannot compute: missing sector data',
     riskExcluded: 'Excluded from test',
     riskExcludedMissingValue: 'missing value data',
     riskExcludedMissingSector: 'missing sector data',

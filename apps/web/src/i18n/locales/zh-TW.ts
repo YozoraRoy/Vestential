@@ -781,6 +781,8 @@ export const zhTW: Dict = {
     riskScenarioSector: '最大產業重挫 30%',
     riskLossAmount: '虧損金額',
     riskLossPct: '虧損比例',
+    riskValueNa: '—',
+    riskCannotCompute: '無法試算：缺產業資料',
     riskExcluded: '不納入試算',
     riskExcludedMissingValue: '缺市值資料',
     riskExcludedMissingSector: '缺產業資料',

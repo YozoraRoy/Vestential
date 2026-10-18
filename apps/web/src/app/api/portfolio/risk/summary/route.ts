@@ -48,6 +48,11 @@ export async function POST() {
       lines.push(`產業：${g.sectors.map((s) => `${s.sector} ${fmt(s.weightPct)}%`).join('、')}。`)
       for (const sc of g.scenarios) {
         const name = sc.id === 'market-10' ? '大盤跌10%' : sc.id === 'market-20' ? '大盤跌20%' : `最大產業${sc.targetSector ? `（${sc.targetSector}）` : ''}重挫30%`
+        // Issue #104：無法判定目標產業時不得餵「虧損 0」給模型（會被描述成「跌 30% 也不虧」而誤導）。
+        if (sc.targetUnavailable) {
+          lines.push(`${name}：無法試算（該組無已知產業資料，未分類持股不納入試算）。`)
+          continue
+        }
         lines.push(`${name}：虧損 ${fmt(sc.lossAmount)} ${ccy}（${fmt(sc.lossPct)}%）。`)
       }
     }

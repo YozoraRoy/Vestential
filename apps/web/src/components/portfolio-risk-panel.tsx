@@ -22,6 +22,8 @@ type PortfolioDict = {
   riskScenarioSector: string
   riskLossAmount: string
   riskLossPct: string
+  riskValueNa: string
+  riskCannotCompute: string
   riskExcluded: string
   riskExcludedMissingValue: string
   riskExcludedMissingSector: string
@@ -58,6 +60,8 @@ interface ScenarioResult {
   id: string
   dropPct: number
   targetSector: string | null
+  /** Issue #104：整組無已知產業 → 金額/比例顯示 `—`（不是 NT$0）。舊資料可能無此欄位。 */
+  targetUnavailable?: boolean
   lossAmount: number
   lossPct: number
   excluded: Array<{ symbol: string; symbolName?: string | null; reason: string }>
@@ -287,24 +291,33 @@ export default function PortfolioRiskPanel({ ui, isLoggedIn, summary, summarySta
             <p className="text-xs font-medium text-[var(--text-secondary)] mb-1">{ui.riskStressTitle}</p>
             <p className="text-[10px] text-[var(--text-secondary)] mb-2">{ui.riskStressFormula}</p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              {g.scenarios.map((sc) => (
-                <div key={sc.id} className="rounded-lg border border-white/10 bg-[var(--bg-secondary)]/50 p-3">
-                  <p className="text-xs font-medium flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                    {scenarioName(sc.id, ui, sc.targetSector)}
-                  </p>
-                  <p className="mt-2 text-[11px] text-[var(--text-secondary)]">{ui.riskLossAmount}</p>
-                  <p className="text-base font-bold text-[var(--accent-red)]">{fmtMoney(sc.lossAmount, g.market)}</p>
-                  <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{ui.riskLossPct}</p>
-                  <p className="text-sm font-bold">{fmtPct(sc.lossPct)}</p>
-                  {((sc.excluded ?? []).length > 0) && (
-                    <p className="mt-2 text-[10px] text-amber-400">
-                      {ui.riskExcluded}：{(sc.excluded ?? []).map((x) => x.symbol).join('、')}
-                      （{(sc.excluded ?? [])[0]?.reason === 'missing-sector' ? ui.riskExcludedMissingSector : ui.riskExcludedMissingValue}）
+              {g.scenarios.map((sc) => {
+                // Issue #104：該組完全無已知產業時，不得顯示 NT$0 / 0.00%（會誤導成「跌 30% 也不虧」）。
+                const cannotCompute = sc.targetUnavailable === true
+                return (
+                  <div key={sc.id} className="rounded-lg border border-white/10 bg-[var(--bg-secondary)]/50 p-3">
+                    <p className="text-xs font-medium flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                      {scenarioName(sc.id, ui, sc.targetSector)}
                     </p>
-                  )}
-                </div>
-              ))}
+                    <p className="mt-2 text-[11px] text-[var(--text-secondary)]">{ui.riskLossAmount}</p>
+                    <p className="text-base font-bold text-[var(--accent-red)]">
+                      {cannotCompute ? ui.riskValueNa : fmtMoney(sc.lossAmount, g.market)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--text-secondary)]">{ui.riskLossPct}</p>
+                    <p className="text-sm font-bold">{cannotCompute ? ui.riskValueNa : fmtPct(sc.lossPct)}</p>
+                    {cannotCompute && (
+                      <p className="mt-1 text-[10px] text-amber-400">{ui.riskCannotCompute}</p>
+                    )}
+                    {((sc.excluded ?? []).length > 0) && (
+                      <p className="mt-2 text-[10px] text-amber-400">
+                        {ui.riskExcluded}：{(sc.excluded ?? []).map((x) => x.symbol).join('、')}
+                        （{(sc.excluded ?? [])[0]?.reason === 'missing-sector' ? ui.riskExcludedMissingSector : ui.riskExcludedMissingValue}）
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>

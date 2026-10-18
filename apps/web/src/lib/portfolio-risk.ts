@@ -7,6 +7,8 @@
  * - 產業分類優先採用 Yahoo profile sector；取不到時用下方簡版對照表，
  *   仍無則標示「未分類」——只有「單一產業重挫」情境會把未分類標的列為不納入試算，
  *   大盤型情境不需要產業資料故全部納入（市值有效者）。
+ * - Issue #104：單一產業重挫的目標取「占比最大的**已知**產業」，未分類桶即使最大也不得
+ *   讓整個情境歸零；整組完全無已知產業時 targetUnavailable=true，交由 UI 顯示 `—`。
  * - 所有除法皆有零守衛：空倉/零市值不回傳 NaN。
  */
 
@@ -205,8 +207,15 @@ export interface StressHoldingLoss {
 export interface StressScenarioResult {
   id: StressScenarioDef['id']
   dropPct: number
-  /** sector-30 的目標產業（占比最大者）；大盤型為 null。 */
+  /** sector-30 的目標產業（占比最大的「已知」產業）；大盤型為 null。 */
   targetSector: string | null
+  /**
+   * Issue #104：該情境是否「完全無法判定目標產業」（整組無任何已知產業）。
+   * UI 必須以此旗標決定顯示 `—`＋「無法試算：缺產業資料」，
+   * **不得**用 `lossAmount === 0` 猜（0 也可能是合法的試算結果）。
+   * 僅 sector-30 可能為 true；market-10/20 恆為 false。
+   */
+  targetUnavailable: boolean
   lossAmount: number
   /** 虧損％ = 虧損金額 ÷ 納入試算市值（全精度）。 */
   lossPct: number
@@ -218,13 +227,15 @@ export interface StressScenarioResult {
 /**
  * 三情境試算（持倉 × 情境跌幅純計算，可手算重現）。
  * - market-10/20：全部有效市值標的納入。
- * - sector-30：以占比最大產業為重挫目標（跌 30%），該產業外標的 appliedDropPct=0；
+ * - sector-30：以占比最大的「已知產業」為重挫目標（跌 30%），該產業外標的 appliedDropPct=0；
  *   產業未知（未分類）標的標示「不納入試算」，金額不補 0、不計入虧損。
+ *   Issue #104：目標不得取「最大的一桶」（那一桶可能整體是未分類）；若整組沒有任何已知產業，
+ *   則 targetSector=null 且 targetUnavailable=true（UI 顯示 `—`，不再誤導為 NT$0）。
  */
 export function computeStress(concentration: ConcentrationResult): StressScenarioResult[] {
   const { weights, sectors } = concentration
-  const topSector = sectors.length > 0 ? sectors[0].sector : null
-  const topSectorIsKnown = topSector != null && topSector !== UNCATEGORIZED_SECTOR
+  // sectors 已依權重降序；濾掉未分類後的第一個即「最大的已知產業」。
+  const largestKnownSector = sectors.find((s) => s.sector !== UNCATEGORIZED_SECTOR)?.sector ?? null
 
   return STRESS_SCENARIOS.map((def) => {
     const holdingLosses: StressHoldingLoss[] = []
@@ -244,7 +255,7 @@ export function computeStress(concentration: ConcentrationResult): StressScenari
           })
           continue
         }
-        const inTarget = topSectorIsKnown && w.sector === topSector
+        const inTarget = largestKnownSector != null && w.sector === largestKnownSector
         const applied = inTarget ? def.dropPct : 0
         const loss = (w.marketValue * applied) / 100
         lossAmount += loss
@@ -272,10 +283,12 @@ export function computeStress(concentration: ConcentrationResult): StressScenari
       }
     }
 
+    const isSectorScenario = def.id === 'sector-30'
     return {
       id: def.id,
       dropPct: def.dropPct,
-      targetSector: def.id === 'sector-30' ? (topSectorIsKnown ? topSector : null) : null,
+      targetSector: isSectorScenario ? largestKnownSector : null,
+      targetUnavailable: isSectorScenario && largestKnownSector == null,
       lossAmount,
       lossPct: includedValue > 0 ? (lossAmount / includedValue) * 100 : 0,
       includedValue,

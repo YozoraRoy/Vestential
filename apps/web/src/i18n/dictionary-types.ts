@@ -731,6 +731,8 @@ export interface Dict {
     riskScenarioSector: string
     riskLossAmount: string
     riskLossPct: string
+    riskValueNa: string
+    riskCannotCompute: string
     riskExcluded: string
     riskExcludedMissingValue: string
     riskExcludedMissingSector: string
