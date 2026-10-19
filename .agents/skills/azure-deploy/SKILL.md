@@ -181,7 +181,16 @@ az webapp config appsettings set --name stock-platform-roy --resource-group rg-y
    ```
 4. 如需從本機連線：先在 Azure portal / CLI 加**單一來源 IP** 防火牆規則（用完即刪），不要開放全網段。
 
-> 註：`apps/web/.env.azure` 的 `DATABASE_URL` 可能為過期密碼（`Login failed`）。實際有效連線字串以 GitHub Secret 為準。
+> 註：`apps/web/.env.azure` 的 `DATABASE_URL` 是**本機專用**（gitignored）的生產 Azure SQL 連線字串。實際有效值以 App Service 環境變數為準；若出現 `Login failed for user 'royadmin'`，用下列指令從 App Service 取回並覆寫（**勿把值貼進 issue／commit／log**）：
+>
+> ```powershell
+> az webapp config appsettings list --name stock-platform-roy `
+>   --resource-group rg-yuzora_roy_ai -o json |
+>   ConvertFrom-Json | Where-Object name -eq 'DATABASE_URL' | Select-Object -ExpandProperty value
+> ```
+>
+> 取得後以單行 `DATABASE_URL=<值>` 覆寫 `apps/web/.env.azure`（保留首行註解），再以 `node packages/database/scripts/diag-size.mjs` 驗證（應跑出 DATABASE SIZE／TOP TABLES 三張表）。
+> 前提：本機已 `az login`，且 Azure SQL 防火牆已放行目前 IP（見上一節第 4 點，用完即刪）。
 
 ---
 
