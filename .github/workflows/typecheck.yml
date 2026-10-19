@@ -9,7 +9,8 @@ name: Typecheck
 on:
   push:
     branches: [main]
-    # Issue #109：純文件（**/*.md）push 不再觸發本 workflow（與 deploy.yml 同策略）
+    # Issue #109：純文件（**/*.md）push 不再觸發本 workflow（與 deploy.yml 同策略；
+    # 每次可省一趟 6 個 workspace build ＋ 全量 typecheck）。混合變更仍會執行。
     paths-ignore:
       - '**/*.md'
   pull_request:

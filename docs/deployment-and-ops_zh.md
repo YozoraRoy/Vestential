@@ -147,7 +147,7 @@ curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/r
 
 - 預期輸出（實測窗內資料）：`would_write`／`written` 為該段 upsert 筆數、`would_delete`／`deleted` 為刪除的推導列數（2021～2026 全窗 70 個月：`written` 合計 **6,283**、`official_overrides` **146**、`failed_months` 0；刪除僅在 DB 內已有舊推導列時才非 0，空表實測為 0，全窗上限約 446 筆）、`covered_months` 為「已覆蓋月 ∪ 本段實際標記成功月」的月數（全窗 70）、`marked_months` 為本段實際標記成功月數（舊版用 `covered.size + 已處理月數` 會謊報）。
 11. **靜態閘門 (`typecheck.yml`，Issue #68 防漏網)**：
-    - 觸發：push 至 `main`＋所有 pull_request。
+    - 觸發：push 至 `main`**僅限程式碼變更**（Issue #109 起只改 `.md` 的 push 以 `paths-ignore: '**/*.md'` 跳過，與 `deploy.yml` 同策略；`.md`＋程式碼的混合變更仍會執行）＋所有 pull_request。
     - 行為：先建依賴 workspaces（core→market-data→database→ai-engine，避免 stale dist）再跑 `npm run typecheck` 全量檢查；`NODE_OPTIONS=--max-old-space-size=6144`（web tsc 需約 6GB，見 §5 Q5）。
 
 ---
