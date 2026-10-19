@@ -9,6 +9,9 @@ name: Typecheck
 on:
   push:
     branches: [main]
+    # Issue #109：純文件（**/*.md）push 不再觸發本 workflow（與 deploy.yml 同策略）
+    paths-ignore:
+      - '**/*.md'
   pull_request:
 
 jobs:
