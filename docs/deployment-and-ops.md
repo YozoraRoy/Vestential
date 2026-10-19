@@ -147,7 +147,7 @@ curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/r
 
 - Expected output (measured data within the window): `would_write`/`written` are the number of upserts in that segment, `would_delete`/`deleted` are the number of derived rows deleted (for the full 70-month window 2021~2026: `written` totals **6,283**, `official_overrides` **146**, `failed_months` 0; deletion is non-zero only when the DB already holds old derived rows, measured as 0 on an empty table, with a full-window cap of about 446 rows), `covered_months` is the number of months of "covered months ∪ months actually marked successfully in this segment" (70 for the full window), and `marked_months` is the number of months actually marked successfully in this segment (the old version falsely reported `covered.size + processed month count`).
 11. **Static gate (`typecheck.yml`, to catch escapes, Issue #68)**:
-    - Trigger: push to `main` + all pull_requests.
+    - Trigger: push to `main` **for code changes only** (since Issue #109 a push that changes only `.md` files is skipped via `paths-ignore: '**/*.md'`, the same policy as `deploy.yml`; a mixed push that also touches code still runs) + all pull_requests.
     - Behaviour: first build the dependency workspaces (core→market-data→database→ai-engine, to avoid a stale dist) and then run the full `npm run typecheck`; `NODE_OPTIONS=--max-old-space-size=6144` (web tsc needs about 6 GB, see §5 Q5).
 
 ---
