@@ -74,7 +74,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </Script>
           </>
         )}
-        <LanguageProvider>
+        <LanguageProvider initialLocale={locale}>
           <Header initialUser={initialUser} />
           {festival?.id === 'mid-autumn' && !(await isFestivalBannerDismissed(festival.dateStr)) && (
             <FestivalBanner

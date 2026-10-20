@@ -1,14 +1,7 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import {
-  defaultLocale,
-  detectLocale,
-  getStoredLocale,
-  isLocale,
-  storeLocale,
-  type Locale,
-} from './config'
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
+import { defaultLocale, isLocale, storeLocale, type Locale } from './config'
 import { dictionaries, type Dict } from './dictionaries'
 
 interface I18nContextValue {
@@ -23,17 +16,25 @@ const I18nContext = createContext<I18nContextValue>({
   setLocale: () => {},
 })
 
-export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(defaultLocale)
-
-  useEffect(() => {
-    const stored = getStoredLocale()
-    if (stored) {
-      setLocaleState(stored)
-      return
-    }
-    setLocaleState(detectLocale(typeof navigator !== 'undefined' ? navigator.language : ''))
-  }, [])
+/**
+ * 語系的唯一來源是 server（`layout.tsx` 的 `getLocale()`：x-locale > cookie > Accept-Language > zh-TW）。
+ * `initialLocale` 由 server 傳入、直接當成 useState 初始值 ⇒ 首屏（SSR HTML）即為該語系，
+ * 且 server／client 首次 render 的初始值相同，不會產生 hydration mismatch。
+ *
+ * 刻意不在 client 端重新推導語系（localStorage／navigator.language／location.pathname）：
+ * `/en/...`、`/ja/...` 已被 middleware rewrite 成無前綴路徑，client 讀不到路徑語系；
+ * 重新推導只會覆寫 server 的結果，造成「先 zh-TW 再切換」的語系閃換。
+ */
+export function LanguageProvider({
+  children,
+  initialLocale,
+}: {
+  children: ReactNode
+  initialLocale: Locale
+}) {
+  const [locale, setLocaleState] = useState<Locale>(
+    isLocale(initialLocale) ? initialLocale : defaultLocale,
+  )
 
   const setLocale = useCallback((next: Locale) => {
     if (!isLocale(next)) return
