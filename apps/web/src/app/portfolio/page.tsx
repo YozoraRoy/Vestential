@@ -219,27 +219,23 @@ export default function PortfolioPage() {
   // #28：紀錄區檢視切換（卡片｜表格，沿用持倉/風險 segmented 風格）。
   // 偏好存 localStorage（key portfolio-records-view）；首次依 matchMedia(md) 決定預設。
   // 手機（md 以下）不渲染切換器與表格本體，一律顯示卡片。
-  const [recordsView, setRecordsView] = useState<'cards' | 'table'>(() => {
-    try {
-      if (typeof window === 'undefined') return 'cards'
-      const stored = window.localStorage.getItem('portfolio-records-view')
-      if (stored === 'cards' || stored === 'table') return stored
-      return window.matchMedia('(min-width: 768px)').matches ? 'table' : 'cards'
-    } catch {
-      return 'cards'
-    }
-  })
-  const [isDesktop, setIsDesktop] = useState(() => {
-    try {
-      if (typeof window === 'undefined') return false
-      return window.matchMedia('(min-width: 768px)').matches
-    } catch {
-      return false
-    }
-  })
+  // #111：首帧必須 deterministic——初始值一律用 server 也算得出來的安全值（'cards'／false），
+  // 不得在 lazy useState 初始化器裡讀 window／localStorage／matchMedia。否則桌面 client
+  // 首帧直接是 table／true，與 SSR 的 cards／false 不符 ⇒ React hydration mismatch
+  // （屬性不修補，切換器 aria-pressed／className 停在 server 值）。瀏覽器偏好與視窗寬度
+  // 一律改在 hydration 後的 useEffect 套用；優先序沿用原設計「使用者偏好 > 寬度」。
+  const [recordsView, setRecordsView] = useState<'cards' | 'table'>('cards')
+  const [isDesktop, setIsDesktop] = useState(false)
   useEffect(() => {
     try {
       const mq = window.matchMedia('(min-width: 768px)')
+      let stored: string | null = null
+      try {
+        stored = window.localStorage.getItem('portfolio-records-view')
+      } catch {}
+      setIsDesktop(mq.matches)
+      setRecordsView(stored === 'cards' || stored === 'table' ? stored : mq.matches ? 'table' : 'cards')
+      // 視窗寬度變化只同步 isDesktop，不擅自改 recordsView（維持原行為）。
       const onChange = () => setIsDesktop(mq.matches)
       mq.addEventListener('change', onChange)
       return () => mq.removeEventListener('change', onChange)
