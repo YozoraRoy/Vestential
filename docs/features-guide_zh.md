@@ -213,6 +213,7 @@
 - **12 節點流程**：Market／Sentiment／News／Fundamentals 四分析師 → Bull／Bear 一輪辯論 → Research Manager 裁決 → Trader 結構化提案（schema 欄位多為選填，缺欄不擋主流程）→ 風險三方（Aggressive／Conservative／Neutral）各發言一次 → Portfolio Manager 定案；Bull／Bear／Trader／風險三方走 quickLLM，Research／Portfolio Manager 走 deepLLM（engine 實測）。
 
 - **範圍**：`/analyze` 僅接受台股代號（純數字 **4~6 碼**，可附 `.TW` / `.TWO`，大小寫皆可）；美股代號（如 AAPL / SPCX）、`2330.US`、含字母代號與 3 碼以下數字一律拒絕。`/portfolio` 仍維持台美雙市場，不受影響。
+- **公司名稱鎖定（Issue #114）**：進 engine 後以本地 DB（零股／股東會紀念品表）查台股中文正名，與 Yahoo Profile 英文名一起寫入 `instrumentContext` 的 `Identity (authoritative)` 區塊；prompt 明令不得以記憶替換公司、回憶資料與該區塊衝突時以該區塊為準（實例：2327 曾被模型寫成台達電）。查無正名時只給代號並要求不得猜測；查名失敗 fail-open，不擋分析。
 - **雙層門禁（quota 扣除前）**：前台即時格式驗證（不發 API）＋後端 `/api/analyze` 格式驗證（回 400，不扣 `analysis_quota`、不建 `analysis_jobs`）；權證／牛熊證以後端 Yahoo `quoteType` 為準（僅 `EQUITY`／`ETF` 放行，其餘擋，不扣 quota、不建 job、不寫 `analysis_records`）。
 - **呈現**：結果 badge 僅 stock／etf／index；既有歷史分析紀錄（含美股 ticker）原樣保留顯示，僅阻擋新建美股分析。
 - **策略閉環輸出（交易策略閉環）**：Market Analyst prompt 要求支撐壓力區間＋失效條件；Trader 報告為結構化區塊（進場區間／停損價／失效條件／分批建議／單筆部位上限％＋風險免責句，三語）；解讀與主報告同一次 quota 呼叫完成，不新增免費額度。

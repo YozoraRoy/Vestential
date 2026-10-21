@@ -22,6 +22,8 @@ export { recognizePortfolioImage } from './recognize-image.js'
 export type { RecognizedPosition, RecognizePortfolioImageResult } from './recognize-image.js'
 export * from './arena/index.js'
 export { FALLBACK_SAFE_MAX_TOKENS, chunkByOutputBudget, mergeChunkEntries } from './llm/budget.js'
+export { buildIdentityContext, sanitizeStockName } from './identity.js'
+export type { IdentityInput } from './identity.js'
 export {
   DEFAULT_CHAIN_PACE_MS,
   DEFAULT_SUMMARY_PACE_MS,

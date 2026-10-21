@@ -11,7 +11,7 @@ export {
   logPlacementEvent, getPlacementEventStats,
   getUserById, getUserIdentities, findOrCreateUser, getUsageCount, consumeAnalysisQuota, refundAnalysisQuota,
   getRecognitionUsage, consumeRecognitionQuota, refundRecognitionQuota,
-  searchStocksByName, fuzzySearchStocksByName, damerauLevenshtein,
+  searchStocksByName, fuzzySearchStocksByName, damerauLevenshtein, getStockNameById,
   deleteAnalysisRecord,
   saveMarketFocus, getMarketFocus, saveMarketFocusMeta, getMarketFocusMeta,
   saveMarketFocusWind, getMarketFocusWind,

@@ -4968,6 +4968,46 @@ export async function searchStocksByName(keyword: string): Promise<Array<{ stock
 }
 
 /**
+ * 依台股代號取中文正名（Issue #114：`/analyze` 身分鎖定用）。
+ * - 來源：`odd_lot_trades`（名稱最標準最新）→ `shareholder_gifts` 備援。
+ * - 精確比對 `stock_id`；排除 `stock_name = stock_id`（純代號不是正名）。
+ * - 去尾端 `*` 註記（例：`國巨*` → `國巨`），其他字元不動。
+ * - 查無／DB 異常一律回 `null`（呼叫端 fail-open，不擋分析）。
+ */
+export async function getStockNameById(stockId: string): Promise<string | null> {
+  const id = (stockId ?? '').trim().toUpperCase()
+  if (!id) return null
+  const clean = (raw: unknown): string | null => {
+    const t = typeof raw === 'string' ? raw.trim().replace(/\*+$/, '').trim() : ''
+    return t && t.toUpperCase() !== id ? t : null
+  }
+  try {
+    const rows = await dbQueryAll<{ stock_name: string }>(
+      `SELECT stock_name FROM odd_lot_trades
+       WHERE stock_id = @id AND stock_name <> stock_id
+       ORDER BY date DESC
+       LIMIT 1`,
+      { id },
+    )
+    const hit = clean(rows[0]?.stock_name)
+    if (hit) return hit
+  } catch {
+    // 落回紀念品表
+  }
+  try {
+    const gifts = await dbQueryAll<{ stock_name: string }>(
+      `SELECT stock_name FROM shareholder_gifts
+       WHERE stock_id = @id AND stock_name <> stock_id
+       LIMIT 1`,
+      { id },
+    )
+    return clean(gifts[0]?.stock_name)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Optimal String Alignment Damerau-Levenshtein 距離（插入/刪除/取代/相鄰交換）。
  * 供模糊比對用；兩個字串相同回 0。
  */

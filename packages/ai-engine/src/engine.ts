@@ -15,7 +15,8 @@ import { FallbackClient } from './llm/fallback-client.js'
 import { LLMUsageTracker } from './llm/usage.js'
 import type { LLMClient } from './llm/client.js'
 import type { TokenUsageSummary, AgentUsage } from './llm/usage.js'
-import { logLlmUsage } from '@stock/database'
+import { logLlmUsage, getStockNameById } from '@stock/database'
+import { buildIdentityContext } from './identity.js'
 import { MemoryLog } from './graph/memory.js'
 import { Reflector } from './graph/reflection.js'
 import { SignalProcessor } from './graph/signal.js'
@@ -373,6 +374,8 @@ export class TradingEngine {
     let historyContext = ''
     let quote: any = null
     let profile: any = null
+    /** Issue #114：本地 DB 查得的台股中文正名（Yahoo Profile 只有英文名）。 */
+    let nameZh: string | null = null
     let assetTypeContext = ''
     let assetType: AssetType = AssetType.Stock
 
@@ -399,6 +402,18 @@ export class TradingEngine {
 - Description: ${profile.description ?? 'N/A'}`
       } catch (e: any) {
         console.warn(`[TradingEngine] Failed to fetch profile for ${resolvedTicker}:`, e.message)
+      }
+
+      // Issue #114：公司中文正名改由本地 DB 取得（Yahoo Profile 只有英文名），
+      // 與 Profile 英文名一起鎖進 identity 區塊，避免模型用記憶把代號配成別家公司。
+      // 查無／DB 異常 fail-open：只是少一段中文名，不擋分析。
+      const plainId = resolvedTicker.replace(/\.(TW|TWO)$/i, '')
+      if (/^\d{4,6}$/.test(plainId)) {
+        try {
+          nameZh = await getStockNameById(plainId)
+        } catch (e: any) {
+          console.warn(`[TradingEngine] Failed to look up zh name for ${plainId}:`, e?.message)
+        }
       }
 
       // ── 標的類型偵測（ETF / 個股 / 指數）──
@@ -442,6 +457,8 @@ ${recent.map(h => `- ${new Date(h.timestamp).toISOString().split('T')[0]}: Open 
       ? `${assetTypeContext}
 
 The instrument to analyze is ${resolvedTicker}.
+
+${buildIdentityContext({ ticker: resolvedTicker, nameZh, nameEn: profile?.name })}
 
 ${profileContext}
 
