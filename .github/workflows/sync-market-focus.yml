@@ -19,13 +19,48 @@ jobs:
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
-          CODE=$(curl -s -o /tmp/mf_resp.json -w "%{http_code}" \
-            --max-time 60 \
-            -X POST \
-            -H "Authorization: Bearer $SYNC_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://vestential.com/api/market-focus/refresh")
-          echo "HTTP $CODE"
+          # 2026-10-22 15:45Z run 39807792120 因 runner DNS 解析失敗（curl exit 6）直接掛掉，
+          # 且 `CODE=$(curl ...)` 在 bash -e 下會讓 step 靜默中止、log 只剩 exit 6。
+          # 這裡對「請求尚未送出」的連線類錯誤（5/6/7）重試，並把 curl exit 明確印出來。
+          CODE=""
+          CURL_EXIT=0
+          for attempt in 1 2 3 4; do
+            if CODE=$(curl -s -o /tmp/mf_resp.json -w "%{http_code}" \
+              --max-time 60 \
+              -X POST \
+              -H "Authorization: Bearer $SYNC_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://vestential.com/api/market-focus/refresh"); then
+              CURL_EXIT=0
+              break
+            else
+              CURL_EXIT=$?
+            fi
+
+            # 5/6/7 = proxy/DNS/連線失敗，請求尚未送出，可安全重試。
+            # 其餘（例如 28 timeout）可能已送出，重試恐重複建立 job，因此不重試。
+            case "$CURL_EXIT" in
+              5|6|7)
+                if [ "$attempt" -lt 4 ]; then
+                  echo "attempt $attempt: curl exit $CURL_EXIT (DNS/connect), retrying in 10s..."
+                  sleep 10
+                else
+                  echo "attempt $attempt: curl exit $CURL_EXIT (DNS/connect), giving up"
+                fi
+                ;;
+              *)
+                echo "attempt $attempt: curl exit $CURL_EXIT (not retryable)"
+                break
+                ;;
+            esac
+          done
+
+          echo "HTTP $CODE (curl exit $CURL_EXIT)"
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "::error::market-focus refresh trigger network failure (curl exit $CURL_EXIT)"
+            exit 1
+          fi
+
           cat /tmp/mf_resp.json
           echo ""
           if [ "$CODE" != "200" ]; then
