@@ -78,6 +78,7 @@ jobs:
               ENABLE_ORYX_BUILD=false \
               WEBSITES_ENABLE_APP_SERVICE_STORAGE=true \
               WEBSITE_RUN_FROM_PACKAGE=0 \
+              WEBSITES_CONTAINER_START_TIME_LIMIT=600 \
               DATABASE_URL="${{ secrets.DATABASE_URL }}" \
               DATABASE_PATH=/home/data/stock.db \
               AUTH_SECRET="${{ secrets.AUTH_SECRET }}" \
