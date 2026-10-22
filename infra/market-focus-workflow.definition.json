@@ -28,8 +28,23 @@
     }
   },
   "actions": {
+    "Check_schedule_window": {
+      "type": "If",
+      "expression": "@not(and(contains(createArray(1, 9, 13, 19), int(formatDateTime(utcNow(), 'HH', 'Taipei Standard Time'))), less(int(formatDateTime(utcNow(), 'mm', 'Taipei Standard Time')), 5)))",
+      "actions": {
+        "Skip_off_schedule": {
+          "type": "Terminate",
+          "inputs": {
+            "runStatus": "Succeeded"
+          }
+        }
+      }
+    },
     "Start_refresh": {
       "type": "Http",
+      "runAfter": {
+        "Check_schedule_window": ["Succeeded"]
+      },
       "inputs": {
         "method": "POST",
         "uri": "@{parameters('siteBaseUrl')}/api/market-focus/refresh",
