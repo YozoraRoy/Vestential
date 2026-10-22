@@ -218,7 +218,7 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
             })
             await sendMarketFocusAlert('LLM 每日總覽回退', alertMsg)
           } else {
-            await sendMarketFocusSummary(job.editionKey ?? undefined)
+            await sendMarketFocusSummary(job.editionKey ?? undefined, false, job.kind === 'publish')
           }
         } catch (e: any) {
           console.error('[MarketFocusJob] email dispatch error:', e)

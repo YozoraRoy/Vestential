@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer'
 import type { MarketFocusItem, MarketFocusMeta } from '@stock/database'
 import { getMarketFocus, getMarketFocusMeta, listActiveMarketFocusSubscribers, getAgentSetting, setAgentSetting } from '@stock/database'
 import { getTaiwanDateStr } from '@/lib/auth'
+import { getTaiwanHour, isNewsletterSendWindow } from './newsletter-window'
 import { DEFAULT_CHIP_THRESHOLDS } from './chip-radar'
 
 export const FALLBACK_SUMMARY_PREFIX = '當日市場焦點：'
@@ -328,11 +329,25 @@ ${confirmUrl}
   return sendMailCore(subject, text, html, email)
 }
 
-export async function sendMarketFocusSummary(forcedEditionKey?: string, force = false): Promise<boolean> {
+export async function sendMarketFocusSummary(
+  forcedEditionKey?: string,
+  force = false,
+  bypassWindow = false,
+): Promise<boolean> {
   const [meta, items] = await Promise.all([getMarketFocusMeta(), getMarketFocus(6, 2)])
   if (!meta?.summary) {
     console.warn('[Notify] market_focus_meta 無內容,略過寄送')
     return false
+  }
+
+  if (!force && !bypassWindow) {
+    const hourTw = getTaiwanHour()
+    if (!isNewsletterSendWindow(hourTw)) {
+      console.log(
+        `[Notify] 現在 ${hourTw}:xx（TW）不在電子報寄送時段（08:00–13:59），略過寄送（凌晨／晚間排程只刷新頁面）`,
+      )
+      return false
+    }
   }
 
   const editionKey = forcedEditionKey || meta.generated_at
@@ -422,7 +437,7 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
 錯誤 : ${message}
 環境 : ${env}
 
-建議 : 查看 GitHub Actions run 或 Azure 容器 log
+建議 : 查看 Azure Logic App run、GitHub Actions run 或容器 log
        ${SITE_LINK}`
   const html = `
     <div style="background:#fffbeb;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
@@ -433,7 +448,7 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
           <div><b>類型</b>: ${escapeHtml(topic)}</div>
           <div><b>錯誤</b>: ${escapeHtml(message)}</div>
           <div><b>環境</b>: ${escapeHtml(env)}</div>
-          <div style="margin-top:14px;font-size:13px;color:#6b7280;">建議查看 GitHub Actions run 或 Azure 容器 log:<br/>${escapeHtml(SITE_LINK)}</div>
+          <div style="margin-top:14px;font-size:13px;color:#6b7280;">建議查看 Azure Logic App run、GitHub Actions run 或容器 log:<br/>${escapeHtml(SITE_LINK)}</div>
         </div>
       </div>
     </div>`

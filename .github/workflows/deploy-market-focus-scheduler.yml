@@ -1,0 +1,46 @@
+name: Deploy market-focus scheduler (Logic App)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_kind:
+        description: "refresh = production run; dry = preview only (no DB write / no email)"
+        required: true
+        default: refresh
+        type: choice
+        options:
+          - refresh
+          - dry
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-market-focus-scheduler
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate Bicep
+        run: az bicep build --file infra/market-focus-scheduler.bicep --outfile "$RUNNER_TEMP/arm.json"
+
+      - name: Deploy Logic App
+        run: |
+          az deployment group create \
+            --name "market-focus-scheduler-$(date +%Y%m%d%H%M%S)" \
+            --resource-group rg-yuzora_roy_ai \
+            --template-file infra/market-focus-scheduler.bicep \
+            --parameters \
+              syncToken="${{ secrets.SYNC_TOKEN }}" \
+              siteBaseUrl="https://vestential.com" \
+              runKind="${{ inputs.run_kind }}" \
+            --output none
+          echo "::notice::market-focus Logic App deployed (runKind=${{ inputs.run_kind }})"

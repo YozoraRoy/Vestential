@@ -79,14 +79,14 @@ Set the following keys under **Settings → Secrets and variables → Actions** 
 
 ## 3. Scheduled Automation
 
-The system uses **11 GitHub Actions workflows** (9 scheduled jobs + deploy + static gate; all times are given in Taiwan time) to keep quotes, health status and social publishing running:
+The system uses **12 GitHub Actions workflows** (9 scheduled jobs + 2 deploy + 1 static gate; **market-focus scheduling now lives in an Azure Logic App**, so only 8 of them still carry cron schedules; all times are given in Taiwan time) to keep quotes, health status and social publishing running:
 
 1. **Odd-lot quote sync (`sync-oddlot.yml`)**:
    - Time: **15:10** Taiwan time on every weekday (after the TWSE publishes post-close odd-lot data).
    - Behaviour: automatically calls `POST /api/odd-lot/refresh?date=YYYYMMDD` and updates the latest odd-lot quotes, authenticated with `SYNC_TOKEN`.
 2. **Market focus news sync (`sync-market-focus.yml`)**:
-   - Time: **every 6 hours** (`0 23,5,11,17 * * *`, UTC 23/05/11/17 → Taiwan 07/13/19/01; since Issue #91 the day's first edition is sent at 7 a.m.).
-   - Behaviour: fetches the latest information from cnyes, Economic Daily News and Yahoo Finance, produces AI key-point summaries and sends the digest email (only the day's first edition is sent).
+   - Schedule: **Azure Logic App** `logic-market-focus-scheduler` at **01:00 / 09:00 / 13:00 / 19:00** Taiwan time (the GitHub cron was removed; `sync-market-focus.yml` remains `workflow_dispatch`-only for manual backfills). See §3.1.
+   - Behaviour: fetches the latest information from cnyes, Economic Daily News and Yahoo Finance, produces AI key-point summaries and sends the digest email. **Only the 09:00 run sends the daily newsletter** (send window 08:00–13:59; the 01:00 run only refreshes the page, and 13:00 acts as the fallback send).
 3. **Health check and auto repair (`health-report.yml`)**:
    - Time: a lightweight check every 4 hours, with a full inspection at 08:00 Taiwan time daily.
    - Behaviour: proactively diagnoses the status of each endpoint; on an anomaly it automatically calls the repair endpoint, and only if the repair fails does it send an alert email to the maintainers.
@@ -111,6 +111,26 @@ The system uses **11 GitHub Actions workflows** (9 scheduled jobs + deploy + sta
 10. **Holding prices + ex-dividend cache sync (`sync-portfolio-prices.yml`)**:
     - Time: **16:00** Taiwan time on every trading day (`0 8 * * 1-5` UTC; holidays are blocked once more inside the API by `isTwseTradingDay`).
     - Behaviour: calls `POST /api/portfolio/sync` (authenticated with `SYNC_TOKEN`) to sweep all holding prices; **it also updates the current-year ex-dividend cache as a side task** (TWSE `TWT48U` daily CSV → the `twse_dividends` table, fetched only when missing and not re-fetched on the same day) **plus the yield history backfill** (`ensureYieldHistoryBackfill`, since #95 a 6-year window starting at `(Y-5)-01`, capped at 6 months per run, with backfilled months recorded in `agent_settings.twse_dividends.covered_months` and resumable; a failure does not block the main flow and alerting follows the existing mechanism). For the data sources and the current-year (YTD) / 5-year average (the 5 complete years up to last year) rules see §1.8 of `docs/features-guide.md`.
+
+### 3.1 Market-focus scheduler (Azure Logic App)
+
+GitHub Actions `schedule` is best-effort: measured over 2026-10-21/22, the four market-focus triggers started **1.5–4.8 hours late** (e.g. the 23:00Z run fired at 00:31–01:24Z), so the "07:00 edition" actually arrived at 08:30–09:30. Scheduling therefore moved to a dedicated Azure Logic App:
+
+- **Resource**: `logic-market-focus-scheduler` (Consumption) in `rg-yuzora_roy_ai`.
+- **Recurrence**: `01:00 / 09:00 / 13:00 / 19:00` `Taipei Standard Time` (one workflow, four hours).
+- **Flow**: `POST {siteBaseUrl}/api/market-focus/refresh` (Bearer `SYNC_TOKEN`, `retryPolicy` 3 × 30 s) → poll `/api/market-focus/refresh/status?jobId=…` every 30 s for up to 30 min → on `failed` / timeout, `POST /api/market-focus/alert` (the app sends the amber alert email through the existing Gmail pipeline).
+- **Safety net**: Azure Monitor metric alert `alert-market-focus-scheduler-failed` (`RunsFailed > 0`, action group `ag-market-focus-scheduler`) emails even when the app itself is unreachable.
+- **Daily email window**: `sendMarketFocusSummary` only sends between **08:00–13:59 TW** (`apps/web/src/lib/newsletter-window.ts`). This prevents the 01:00 run from claiming `email.last_sent_date` and making the 09:00 run skip as a duplicate. Manual admin publish bypasses the window but still respects the daily/edition dedupe.
+- **IaC**: `infra/market-focus-scheduler.bicep` + `infra/market-focus-workflow.definition.json`. Deploy with the `Deploy market-focus scheduler (Logic App)` workflow (`workflow_dispatch`, `run_kind=refresh|dry`), or locally:
+
+```powershell
+az deployment group create -g rg-yuzora_roy_ai `
+  -f infra/market-focus-scheduler.bicep `
+  -p syncToken="$env:SYNC_TOKEN" siteBaseUrl="https://vestential.com" runKind=refresh
+```
+
+- **Dry test**: deploy with `runKind=dry` (or run the workflow with `run_kind=dry`); the job previews only — no DB write, no email, no social post.
+- **Rollback**: re-enable the cron in `sync-market-focus.yml` and disable the Logic App via `az resource update --ids <logicAppId> --set properties.state=Disabled` (or the portal).
 
 **One-off data repair endpoint (for `SYNC_TOKEN` ops; Issue #95)**: `POST /api/admin/dividends/repair`
 

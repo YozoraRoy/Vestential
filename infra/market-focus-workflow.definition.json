@@ -1,0 +1,195 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "siteBaseUrl": {
+      "type": "String"
+    },
+    "syncToken": {
+      "type": "SecureString"
+    },
+    "runKind": {
+      "type": "String",
+      "defaultValue": "refresh"
+    }
+  },
+  "triggers": {
+    "Recurrence": {
+      "type": "Recurrence",
+      "recurrence": {
+        "frequency": "Day",
+        "interval": 1,
+        "timeZone": "Taipei Standard Time",
+        "schedule": {
+          "hours": [1, 9, 13, 19],
+          "minutes": [0]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Start_refresh": {
+      "type": "Http",
+      "inputs": {
+        "method": "POST",
+        "uri": "@{parameters('siteBaseUrl')}/api/market-focus/refresh",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
+        },
+        "body": {
+          "skipSocial": false,
+          "kind": "@{parameters('runKind')}"
+        },
+        "retryPolicy": {
+          "type": "Fixed",
+          "count": 3,
+          "interval": "PT30S"
+        }
+      }
+    },
+    "Send_trigger_failure": {
+      "type": "Http",
+      "runAfter": {
+        "Start_refresh": ["Failed", "TimedOut"]
+      },
+      "inputs": {
+        "method": "POST",
+        "uri": "@{parameters('siteBaseUrl')}/api/market-focus/alert",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
+        },
+        "body": {
+          "subject": "市場焦點排程：觸發失敗",
+          "message": "@{concat('Logic App 無法觸發 refresh（已重試 3 次）。UTC: ', utcNow(), ' / statusCode: ', string(coalesce(outputs('Start_refresh')?['statusCode'], 'n/a')))}"
+        },
+        "retryPolicy": {
+          "type": "Fixed",
+          "count": 2,
+          "interval": "PT15S"
+        }
+      }
+    },
+    "Initialize_status": {
+      "type": "InitializeVariable",
+      "runAfter": {
+        "Start_refresh": ["Succeeded"]
+      },
+      "inputs": {
+        "variables": [
+          {
+            "name": "status",
+            "type": "string",
+            "value": "unknown"
+          }
+        ]
+      }
+    },
+    "Wait_for_job": {
+      "type": "Until",
+      "runAfter": {
+        "Initialize_status": ["Succeeded"]
+      },
+      "expression": "@or(equals(variables('status'), 'done'), equals(variables('status'), 'failed'))",
+      "limit": {
+        "count": 60,
+        "timeout": "PT30M"
+      },
+      "actions": {
+        "Delay": {
+          "type": "Wait",
+          "inputs": {
+            "interval": {
+              "count": 30,
+              "unit": "Second"
+            }
+          }
+        },
+        "Get_status": {
+          "type": "Http",
+          "runAfter": {
+            "Delay": ["Succeeded"]
+          },
+          "inputs": {
+            "method": "GET",
+            "uri": "@{concat(parameters('siteBaseUrl'), '/api/market-focus/refresh/status?jobId=', body('Start_refresh')?['jobId'])}",
+            "headers": {
+              "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
+            }
+          },
+          "retryPolicy": {
+            "type": "Fixed",
+            "count": 2,
+            "interval": "PT15S"
+          }
+        },
+        "Set_status": {
+          "type": "SetVariable",
+          "runAfter": {
+            "Get_status": ["Succeeded"]
+          },
+          "inputs": {
+            "name": "status",
+            "value": "@{coalesce(body('Get_status')?['job']?['status'], 'running')}"
+          }
+        }
+      }
+    },
+    "If_failed": {
+      "type": "If",
+      "runAfter": {
+        "Wait_for_job": ["Succeeded"]
+      },
+      "expression": "@not(equals(variables('status'), 'done'))",
+      "actions": {
+        "Send_job_failure": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('siteBaseUrl')}/api/market-focus/alert",
+            "headers": {
+              "Content-Type": "application/json",
+              "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
+            },
+            "body": {
+              "subject": "市場焦點排程：refresh 失敗",
+              "message": "@{concat('jobId=', coalesce(body('Start_refresh')?['jobId'], 'n/a'), '\nstatus=', variables('status'), '\nstage=', coalesce(body('Get_status')?['job']?['stage'], 'n/a'), '\nerror=', coalesce(body('Get_status')?['job']?['error'], 'n/a'))}"
+            },
+            "retryPolicy": {
+              "type": "Fixed",
+              "count": 2,
+              "interval": "PT15S"
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      }
+    },
+    "Send_poll_failure": {
+      "type": "Http",
+      "runAfter": {
+        "Wait_for_job": ["Failed", "TimedOut"]
+      },
+      "inputs": {
+        "method": "POST",
+        "uri": "@{parameters('siteBaseUrl')}/api/market-focus/alert",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
+        },
+        "body": {
+          "subject": "市場焦點排程：狀態輪詢失敗／逾時",
+          "message": "@{concat('輪詢 job 狀態失敗或超過 30 分鐘。jobId=', coalesce(body('Start_refresh')?['jobId'], 'n/a'), ' / UTC: ', utcNow())}"
+        },
+        "retryPolicy": {
+          "type": "Fixed",
+          "count": 2,
+          "interval": "PT15S"
+        }
+      }
+    }
+  }
+}

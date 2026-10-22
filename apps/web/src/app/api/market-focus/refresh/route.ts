@@ -19,13 +19,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
   let skipSocial = false
+  let kind: 'refresh' | 'dry' = 'refresh'
   try {
     const body = await req.json().catch(() => ({}))
     skipSocial = body.skipSocial === true
+    // 只開放 refresh/dry；publish 僅限後台管理員。
+    if (body.kind === 'dry') kind = 'dry'
   } catch {}
   try {
     await migrate()
-    const job = startMarketFocusJob({ kind: 'refresh', skipSocial })
+    const job = startMarketFocusJob({ kind, skipSocial })
     return NextResponse.json({
       success: true,
       accepted: true,
