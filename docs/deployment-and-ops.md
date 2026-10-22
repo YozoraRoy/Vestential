@@ -79,7 +79,7 @@ Set the following keys under **Settings → Secrets and variables → Actions** 
 
 ## 3. Scheduled Automation
 
-The system uses **12 GitHub Actions workflows** (9 scheduled jobs + 2 deploy + 1 static gate; **market-focus scheduling now lives in an Azure Logic App**, so only 8 of them still carry cron schedules; all times are given in Taiwan time) to keep quotes, health status and social publishing running:
+The system uses **12 GitHub Actions workflows** (8 scheduled jobs + 1 manual backfill + 2 deploy + 1 static gate; **market-focus scheduling now lives in an Azure Logic App**, so `sync-market-focus.yml` no longer carries a cron; all times are given in Taiwan time) to keep quotes, health status and social publishing running:
 
 1. **Odd-lot quote sync (`sync-oddlot.yml`)**:
    - Time: **15:10** Taiwan time on every weekday (after the TWSE publishes post-close odd-lot data).
