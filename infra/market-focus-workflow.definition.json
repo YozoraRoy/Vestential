@@ -117,11 +117,6 @@
             "headers": {
               "Authorization": "@{concat('Bearer ', parameters('syncToken'))}"
             }
-          },
-          "retryPolicy": {
-            "type": "Fixed",
-            "count": 2,
-            "interval": "PT15S"
           }
         },
         "Set_status": {
