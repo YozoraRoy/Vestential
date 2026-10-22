@@ -30,7 +30,7 @@
   "actions": {
     "Check_schedule_window": {
       "type": "If",
-      "expression": "@not(and(contains(createArray(1, 9, 13, 19), int(formatDateTime(utcNow(), 'HH', 'Taipei Standard Time'))), less(int(formatDateTime(utcNow(), 'mm', 'Taipei Standard Time')), 10)))",
+      "expression": "@not(and(contains(createArray(1, 9, 13, 19), int(formatDateTime(addHours(utcNow(), 8), 'HH'))), less(int(formatDateTime(addHours(utcNow(), 8), 'mm')), 10)))",
       "actions": {
         "Skip_off_schedule": {
           "type": "Terminate",

@@ -86,7 +86,7 @@ The system uses **12 GitHub Actions workflows** (9 scheduled jobs + 2 deploy + 1
    - Behaviour: automatically calls `POST /api/odd-lot/refresh?date=YYYYMMDD` and updates the latest odd-lot quotes, authenticated with `SYNC_TOKEN`.
 2. **Market focus news sync (`sync-market-focus.yml`)**:
    - Schedule: **Azure Logic App** `logic-market-focus-scheduler` at **01:00 / 09:00 / 13:00 / 19:00** Taiwan time (the GitHub cron was removed; `sync-market-focus.yml` remains `workflow_dispatch`-only for manual backfills). See §3.1.
-   - Behaviour: fetches the latest information from cnyes, Economic Daily News and Yahoo Finance, produces AI key-point summaries and sends the digest email. **Only the 09:00 run sends the daily newsletter** (send window 08:00–13:59; the 01:00 run only refreshes the page, and 13:00 acts as the fallback send).
+   - Behaviour: fetches the latest information from cnyes, Economic Daily News and Yahoo Finance, produces AI key-point summaries and sends the digest email. **Only the 09:00 run sends the daily newsletter** (send window 08:00–13:59; the 01:00 run only refreshes the page, and 13:00 acts as the fallback send). If the 09:00 refresh produces no new edition, it still sends the latest unsent edition (the daily/edition guards keep it to one email per day).
 3. **Health check and auto repair (`health-report.yml`)**:
    - Time: a lightweight check every 4 hours, with a full inspection at 08:00 Taiwan time daily.
    - Behaviour: proactively diagnoses the status of each endpoint; on an anomaly it automatically calls the repair endpoint, and only if the repair fails does it send an alert email to the maintainers.
