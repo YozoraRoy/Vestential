@@ -1,10 +1,9 @@
 name: Sync market focus (AI-filtered news)
 
 on:
-  schedule:
-    # 每 6 小時一次(UTC): 23:00 / 05:00 / 11:00 / 17:00 對應 TW 07:00 / 13:00 / 19:00 / 01:00
-    # （Issue #91：每日首版改早上 7 點寄，開盤前收到；仍每日 4 班）
-    - cron: '0 23,5,11,17 * * *'
+  # 2026-10-22：排程已移到 Azure Logic App（logic-market-focus-scheduler，
+  # 01:00/09:00/13:00/19:00 TW）。這裡只保留手動補跑，勿把 cron 加回來，
+  # 否則會與 Logic App 重複觸發（GitHub 排程實測延遲 1.5–4.8 小時）。
   workflow_dispatch:
 
 jobs:
