@@ -5,6 +5,7 @@ import { getMarketFocusMeta, logMarketFocusEvent, getLatestMarketFocusLog, clean
 import { refreshMarketFocusDetailed, previewMarketFocus, backfillMissingSummaries, backfillMissingReasons } from '@/lib/market-focus'
 import type { MarketFocusStage } from '@/lib/market-focus'
 import { sendMarketFocusAlert, sendMarketFocusSummary, isSummaryFallback } from '@/lib/email'
+import { getTaiwanHour, isNewsletterSendWindow } from '@/lib/newsletter-window'
 import { triggerSocialPublish } from '@/lib/social-trigger'
 import type { SocialPostPlatform } from '@stock/database'
 
@@ -189,9 +190,17 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
         }
       }
 
+      // 早上寄送時段（08:00–13:59）即使本輪沒有新版次，也要嘗試寄當日電子報：
+      // 凌晨 01:00 那輪只刷新頁面（時段外不寄），它產生的版次要在 09:00 送達。
+      // sendMarketFocusSummary 內仍有「每日一封 + 同版次」護欄，不會重複洗版。
+      const morningSend = job.kind === 'refresh' && isNewsletterSendWindow(getTaiwanHour())
       if (!hasNewEdition) {
-        console.log(`[MarketFocusJob] 無新重大新聞通過門檻（新增: ${newCount} 則），保留上一版總覽，略過 Email 與社群發布。`)
-      } else {
+        console.log(
+          `[MarketFocusJob] 無新重大新聞通過門檻（新增: ${newCount} 則），保留上一版總覽${morningSend ? '；早上時段仍嘗試寄電子報' : '，略過 Email 與社群發布'}。`,
+        )
+      }
+
+      if (hasNewEdition || morningSend) {
         // Email：回退偵測同原流程
         setStage('email')
         try {
@@ -223,17 +232,17 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
         } catch (e: any) {
           console.error('[MarketFocusJob] email dispatch error:', e)
         }
+      }
 
-        // 社群：refresh 必發；publish 依勾選；skipSocial=true 時跳過
-        if (!job.skipSocial && (job.kind === 'refresh' || job.alsoSocial)) {
-          setStage('social')
-          try {
-            const social = await triggerSocialPublish()
-            job.socialResults = social?.results ?? []
-          } catch (e: any) {
-            console.error('[MarketFocusJob] social publish error:', e)
-            job.socialResults = [{ platform: 'instagram', status: 'failed', error: e?.message ?? String(e) }]
-          }
+      // 社群：只有真的產生新版次才發，避免重複貼同一版。
+      if (hasNewEdition && !job.skipSocial && (job.kind === 'refresh' || job.alsoSocial)) {
+        setStage('social')
+        try {
+          const social = await triggerSocialPublish()
+          job.socialResults = social?.results ?? []
+        } catch (e: any) {
+          console.error('[MarketFocusJob] social publish error:', e)
+          job.socialResults = [{ platform: 'instagram', status: 'failed', error: e?.message ?? String(e) }]
         }
       }
     }
