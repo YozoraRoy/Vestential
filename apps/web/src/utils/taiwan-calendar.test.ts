@@ -30,6 +30,10 @@ describe('TAIWAN_MARKET_HOLIDAYS｜Issue #66 與官方 holidaySchedule 一致', 
     expect(TAIWAN_MARKET_HOLIDAYS.has('2026-10-09')).toBe(true)
     expect(TAIWAN_MARKET_HOLIDAYS.has('2026-02-27')).toBe(true)
   })
+
+  it('含 2026-10-23（薔琵颱風侵襲臨時休市）', () => {
+    expect(TAIWAN_MARKET_HOLIDAYS.has('2026-10-23')).toBe(true)
+  })
 })
 
 describe('isTaiwanMarketTradingDay｜Issue #66 復驗', () => {
@@ -49,6 +53,9 @@ describe('isTaiwanMarketTradingDay｜Issue #66 復驗', () => {
   it('週末仍休市：2026-10-10（週六）=== false', () => {
     expect(isTaiwanMarketTradingDay(localDate(2026, 10, 10))).toBe(false)
   })
+  it('2026-10-23（週五，薔琵颱風休市）為休市 === false', () => {
+    expect(isTaiwanMarketTradingDay(localDate(2026, 10, 23))).toBe(false)
+  })
 })
 
 describe('getLastMarketTradingDay｜Issue #66 日曆修正後', () => {
@@ -58,7 +65,13 @@ describe('getLastMarketTradingDay｜Issue #66 日曆修正後', () => {
   it('2026-10-09（休市）往回取為 2026-10-08', () => {
     expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 9)))).toBe('2026-10-08')
   })
-  it('2026-10-26（休市週一）往回取為 2026-10-23（週五）', () => {
-    expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 26)))).toBe('2026-10-23')
+  it('2026-10-26（休市週一）往回取為 2026-10-22（週四，因 10-23 颱風休市、10-24/25 週末）', () => {
+    expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 26)))).toBe('2026-10-22')
+  })
+  it('2026-10-24（週六）往回取為 2026-10-22（週四，因 10-23 颱風休市）', () => {
+    expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 24)))).toBe('2026-10-22')
+  })
+  it('2026-10-23（颱風休市週五）往回取為 2026-10-22', () => {
+    expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 23)))).toBe('2026-10-22')
   })
 })
