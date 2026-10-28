@@ -18,7 +18,7 @@ jobs:
         run: |
           CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 30 \
             -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
-            "https://stock-platform-roy.azurewebsites.net/api/social/token-health")
+            "https://vestential.com/api/social/token-health")
           echo "token-health HTTP $CODE"
           echo "---"
           cat /tmp/health.json

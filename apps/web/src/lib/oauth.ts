@@ -2,12 +2,14 @@ import type { NextResponse } from 'next/server'
 import type { AuthProvider } from '@stock/database'
 
 export const OAUTH_COOKIE = 'stock_oauth'
-const OAUTH_MAX_AGE = 10 * 60
+const OAUTH_MAX_AGE = 30 * 60
 
 export interface OAuthState {
   state: string
   codeVerifier: string
   redirect: string
+  /** 上次 callback 已因 state 驗證失敗而重跑過一次登入（避免無限重試迴圈）。 */
+  retried?: boolean
 }
 
 export function serializeOAuthCookie(data: OAuthState): string {
@@ -36,6 +38,12 @@ export function applyOAuthCookie(res: NextResponse, data: OAuthState): NextRespo
     maxAge: OAUTH_MAX_AGE,
   })
   return res
+}
+
+/** 只接受站內相對路徑，避免開放轉址（`//evil.com`、`/\evil.com` 一律回退）。 */
+export function safeRedirectPath(raw: unknown, fallback = '/'): string {
+  if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return fallback
+  return raw
 }
 
 export interface OAuthProfile {

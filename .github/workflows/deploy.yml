@@ -162,7 +162,7 @@ jobs:
           echo "Waiting for app to start from standalone build..."
           HEALTHY=0
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            BODY=$(curl -s --max-time 15 "https://stock-platform-roy.azurewebsites.net/api/health" 2>/dev/null || echo "")
+            BODY=$(curl -s --max-time 15 "https://vestential.com/api/health" 2>/dev/null || echo "")
             MS=$(echo "$BODY" | jq -r '.checks.marketFocusLogs.retentionDays // empty' 2>/dev/null)
             if [ "$MS" = "7" ] && [ "$(echo "$BODY" | jq -r '.ok // false' 2>/dev/null)" = "true" ]; then
               echo "App healthy (new build confirmed: marketFocusLogs.retentionDays=7) after attempt $i"

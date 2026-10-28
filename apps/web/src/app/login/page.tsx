@@ -29,6 +29,15 @@ function LoginContent() {
   const redirect = searchParams.get('redirect') || '/'
   const safeRedirect = redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
 
+  const errorCode = searchParams.get('error')
+  const providerParam = searchParams.get('provider')
+  const errorProvider = providerParam === 'google' || providerParam === 'line' ? providerParam : null
+  const errorMessage =
+    errorCode === 'state_mismatch' ? dict.login.errorStateMismatch
+      : errorCode === 'provider_denied' ? dict.login.errorProviderDenied
+        : errorCode === 'callback_failed' ? dict.login.errorCallbackFailed
+          : null
+
   const [checking, setChecking] = useState(true)
   const [devLoggingIn, setDevLoggingIn] = useState(false)
   const [checkError, setCheckError] = useState<string | null>(null)
@@ -80,6 +89,23 @@ function LoginContent() {
             {dict.login.subtitle}
           </p>
         </div>
+
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mb-6 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-300"
+          >
+            <p>{errorMessage}</p>
+            {errorProvider && (
+              <a
+                href={loginUrl(errorProvider)}
+                className="mt-2 inline-block text-xs font-medium text-[var(--accent)] hover:underline"
+              >
+                {dict.login.retry}
+              </a>
+            )}
+          </div>
+        )}
 
         <div className="space-y-3">
           <a

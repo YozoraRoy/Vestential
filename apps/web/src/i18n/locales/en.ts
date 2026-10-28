@@ -218,6 +218,10 @@ export const en: Dict = {
     note2: 'Public information and past analyses are still browsable without signing in.',
     checking: 'Checking sign-in status...',
     devLoginError: 'Local sign-in failed',
+    errorStateMismatch: 'Sign-in stopped halfway, so the authorization never finished. Usually the browser dropped the temporary sign-in data or the connection blinked — trying again normally works.',
+    errorProviderDenied: 'You cancelled on the authorization screen, so you are not signed in yet. Pick an account again to continue.',
+    errorCallbackFailed: 'Something went wrong while signing you in and it could not finish. Try again in a moment.',
+    retry: 'Try again',
   },
   privacy: {
     metaTitle: 'Privacy Policy — Vestential',

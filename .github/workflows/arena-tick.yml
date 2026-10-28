@@ -85,7 +85,7 @@ jobs:
             -X POST \
             -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://stock-platform-roy.azurewebsites.net/api/agent-arena/tick?${QUERY}")
+            "https://vestential.com/api/agent-arena/tick?${QUERY}")
           echo "HTTP $CODE"
           cat /tmp/arena_tick.json
           echo ""
@@ -115,7 +115,7 @@ jobs:
             sleep 10
             LAST=$(curl -s --max-time 30 \
               -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
-              "https://stock-platform-roy.azurewebsites.net/api/agent-arena/tick/status?jobId=${JOB_ID}")
+              "https://vestential.com/api/agent-arena/tick/status?jobId=${JOB_ID}")
             STATUS=$(printf '%s' "$LAST" | jq -r '.status // empty')
             echo "poll#$i status=${STATUS}"
             if [ "$STATUS" = "done" ]; then

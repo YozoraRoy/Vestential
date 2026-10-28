@@ -218,6 +218,10 @@ export const zhTW: Dict = {
     note2: '未登入仍可瀏覽公開資訊與歷史分析紀錄。',
     checking: '檢查登入狀態...',
     devLoginError: '本機登入失敗',
+    errorStateMismatch: '登入流程中途斷了，這次授權沒能完成。通常是瀏覽器清掉了登入用的暫存資料，或網路剛好斷一下；重新試一次多半就好了。',
+    errorProviderDenied: '你在授權畫面按了取消，所以還沒登入。要繼續的話，重新選一個帳號登入就行。',
+    errorCallbackFailed: '登入時出了點狀況，這次沒能完成。稍等一下再試一次。',
+    retry: '再試一次',
   },
   privacy: {
     metaTitle: '隱私權政策 — Vestential',

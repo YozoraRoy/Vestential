@@ -194,6 +194,10 @@ export interface Dict {
     note2: string
     checking: string
     devLoginError: string
+    errorStateMismatch: string
+    errorProviderDenied: string
+    errorCallbackFailed: string
+    retry: string
   }
   privacy: {
     metaTitle: string

@@ -37,7 +37,7 @@ jobs:
             -X POST \
             -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://stock-platform-roy.azurewebsites.net/api/odd-lot/refresh?date=${{ steps.date.outputs.target }}")
+            "https://vestential.com/api/odd-lot/refresh?date=${{ steps.date.outputs.target }}")
           echo "HTTP $CODE"
           cat /tmp/oddlot_resp.json
           echo ""
