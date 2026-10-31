@@ -14,10 +14,12 @@ export async function GET(req: Request) {
 
   if (stockId) {
     const trades = await dbQueryAll(`
-      SELECT date, stock_id, stock_name, price, volume, bid_price, bid_volume, ask_price, ask_volume
-      FROM odd_lot_trades
-      WHERE stock_id = @stock_id
-      ORDER BY date DESC
+      SELECT t.date, t.stock_id, t.stock_name, t.price, t.volume, t.bid_price, t.bid_volume, t.ask_price, t.ask_volume,
+             si.industry_code, si.industry_name
+      FROM odd_lot_trades t
+      LEFT JOIN stock_industry si ON si.stock_id = t.stock_id
+      WHERE t.stock_id = @stock_id
+      ORDER BY t.date DESC
       LIMIT 30
     `, { stock_id: stockId })
 
@@ -47,7 +49,8 @@ export async function GET(req: Request) {
            t.bid_price, t.bid_volume, t.ask_price, t.ask_volume,
            g.gift_name, g.meeting_date, g.distribution_method,
            g.last_buy_date, g.gift_status, g.claim_rule, g.claim_rule_source, g.mops_gift_text,
-           g.validation_status, g.validation_reason, g.twse_meeting_date
+           g.validation_status, g.validation_reason, g.twse_meeting_date,
+           si.industry_code, si.industry_name
     FROM odd_lot_trades t
     LEFT JOIN (
       SELECT stock_id, gift_name, meeting_date, distribution_method, last_buy_date,
@@ -56,6 +59,7 @@ export async function GET(req: Request) {
              ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY meeting_date DESC) AS rn
       FROM shareholder_gifts
     ) g ON g.stock_id = t.stock_id AND g.rn = 1
+    LEFT JOIN stock_industry si ON si.stock_id = t.stock_id
     WHERE t.date = @date
     ORDER BY t.volume DESC
     LIMIT 1500

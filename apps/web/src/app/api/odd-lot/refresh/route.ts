@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { revalidateTag } from 'next/cache'
-import { fetchTwseOddLots, fetchStockGift, migrate } from '@stock/database'
+import { fetchTwseOddLots, fetchTwseIndustry, backfillNonStockIndustries, fetchStockGift, migrate } from '@stock/database'
 import { getLastMarketTradingDay, isTaiwanMarketTradingDay } from '@/utils/taiwan-calendar'
 import { authorizeSync } from '@/lib/sync-auth'
 import { getCurrentUserFromCookies } from '@/lib/auth'
@@ -56,6 +56,7 @@ export async function POST(req: Request) {
         success: true,
         throttled: true,
         oddLotCount: 0,
+        industryCount: 0,
         giftCount: 0,
         targetDate,
         timestamp: new Date().toISOString(),
@@ -64,6 +65,21 @@ export async function POST(req: Request) {
 
     await migrate()
     const oddLotCount = await fetchTwseOddLots(targetDate)
+
+    // Issue #121：板塊（TWSE 官方產業別 + 非公司標的歸類）附掛同步。
+    // 兩段各自 try/catch：任一失敗只 log、不阻斷零股寫入、不轉 500，industryCount 為兩者相加。
+    let industryCount = 0
+    try {
+      industryCount = await fetchTwseIndustry() // 來源：t187ap03_L（上市公司產業別）
+    } catch (e) {
+      console.error('[API/odd-lot/refresh] industry sync (t187ap03_L) failed (ignored):', e)
+    }
+    try {
+      industryCount += await backfillNonStockIndustries(targetDate) // 來源：odd_lot_trades 代號規則（ETF／債券 ETF／DR）
+    } catch (e) {
+      console.error('[API/odd-lot/refresh] industry backfill (non-stock codes) failed (ignored):', e)
+    }
+
     const giftCount = await fetchStockGift()
     lastRun.set(targetDate, Date.now())
     revalidateTag('odd-lot')
@@ -72,6 +88,7 @@ export async function POST(req: Request) {
       success: true,
       throttled: false,
       oddLotCount,
+      industryCount,
       giftCount,
       targetDate,
       timestamp: new Date().toISOString(),

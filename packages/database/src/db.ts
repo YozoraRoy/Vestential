@@ -639,6 +639,16 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       CREATE INDEX IF NOT EXISTS idx_dca_plans_user ON dca_plans(user_id);
       CREATE INDEX IF NOT EXISTS idx_dca_plans_guest ON dca_plans(guest_uid);
 
+      -- Issue #121：零股頁「板塊」篩選用的 TWSE 官方產業別（t187ap03_L）。
+      -- stock_id 主鍵 ⇒ 重複同步為 upsert（INSERT OR REPLACE / MERGE）不長重複列。
+      CREATE TABLE IF NOT EXISTS stock_industry (
+        stock_id      TEXT PRIMARY KEY,
+        industry_code TEXT,
+        industry_name TEXT,
+        market        TEXT,
+        updated_at    TEXT
+      );
+
     `)
 
     return _db
@@ -1390,6 +1400,20 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_dca_plans_user ON dca_plans(user_id);
         CREATE INDEX idx_dca_plans_guest ON dca_plans(guest_uid);
+      END
+    `)
+
+    // Issue #121：stock_industry（TWSE 官方產業別；stock_id 主鍵 ⇒ MERGE 冪等）。
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'stock_industry')
+      BEGIN
+        CREATE TABLE stock_industry (
+          stock_id      NVARCHAR(20) NOT NULL PRIMARY KEY,
+          industry_code NVARCHAR(10),
+          industry_name NVARCHAR(50),
+          market        NVARCHAR(20),
+          updated_at    NVARCHAR(30)
+        );
       END
     `)
 

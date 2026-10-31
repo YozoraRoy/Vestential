@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import {
   Gift,
   Search,
@@ -19,6 +19,9 @@ import {
   History,
   X,
   RefreshCw,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import {
   isTaiwanMarketTradingDay,
@@ -29,6 +32,17 @@ import {
 import { useI18n } from '@/i18n/LanguageProvider'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import {
+  INDUSTRY_ALL,
+  INDUSTRY_BOND_ETF,
+  INDUSTRY_DR,
+  INDUSTRY_ETF,
+  INDUSTRY_UNCLASSIFIED,
+  countByIndustry,
+  industryLabel,
+  matchesIndustry,
+  splitIndustryChips,
+} from '@/lib/industry'
 
 export interface OddLotItem {
   date: string
@@ -52,6 +66,8 @@ export interface OddLotItem {
   validation_status?: string | null
   validation_reason?: string | null
   twse_meeting_date?: string | null
+  industry_code?: string | null
+  industry_name?: string | null
 }
 
 export type GiftCategory = 'ALL' | 'EGIFT' | 'CARD' | 'KITCHEN' | 'CARE' | 'LIFESTYLE' | 'PENDING' | 'NO_GIFT' | 'OTHER'
@@ -59,6 +75,7 @@ export type GiftCategory = 'ALL' | 'EGIFT' | 'CARD' | 'KITCHEN' | 'CARE' | 'LIFE
 export type SortField =
   | 'default'
   | 'stock'
+  | 'industry'
   | 'gift'
   | 'category'
   | 'last_buy_date'
@@ -470,11 +487,13 @@ interface OddLotViewProps {
 }
 
 export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddLotViewProps) {
-  const { dict } = useI18n()
+  const { dict, locale } = useI18n()
   const ui = dict.oddLot
   const typo = useTableTypography()
 
   const [selectedCategory, setSelectedCategory] = useState<GiftCategory>('ALL')
+  const [selectedIndustry, setSelectedIndustry] = useState<string>(INDUSTRY_ALL)
+  const [industryExpanded, setIndustryExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState(initialQuery)
   const [page, setPage] = useState(1)
 
@@ -567,6 +586,25 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
     return counts
   }, [dedupedItems])
 
+  // ── 板塊（Issue #121）：DB 只存官方中文名，顯示依當前語系轉換 ──
+  const industryDisplay = useCallback((name?: string | null): string => {
+    const raw = (name ?? '').trim()
+    if (!raw) return ''
+    if (raw === INDUSTRY_ETF) return ui.industryEtf
+    if (raw === INDUSTRY_BOND_ETF) return ui.industryBondEtf
+    if (raw === INDUSTRY_DR) return ui.industryDr
+    return industryLabel(raw, locale)
+  }, [locale, ui])
+  const industryChipLabel = (key: string): string =>
+    key === INDUSTRY_UNCLASSIFIED ? ui.industryUnclassified : industryDisplay(key) || key
+  const industrySortKey = (item: OddLotItem): string =>
+    (item.industry_name ?? '').trim() || INDUSTRY_UNCLASSIFIED
+
+  const industryChips = useMemo(
+    () => splitIndustryChips(countByIndustry(dedupedItems)),
+    [dedupedItems],
+  )
+
   const isLastBuyDateExpired = (lastBuyDate: string | null | undefined, meetingDate?: string | null): boolean => {
     if (!lastBuyDate) return false
     const match = lastBuyDate.match(/^(\d{1,2})\/(\d{1,2})$/)
@@ -635,16 +673,22 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       if (selectedCategory !== 'ALL') {
         if (cat !== selectedCategory) return false
       }
+      if (selectedIndustry !== INDUSTRY_ALL) {
+        if (!matchesIndustry(item, selectedIndustry)) return false
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase()
         const matchId = item.stock_id.toLowerCase().includes(q)
         const matchName = item.stock_name.toLowerCase().includes(q)
         const matchGift = (item.gift_name ?? '').toLowerCase().includes(q)
-        return matchId || matchName || matchGift
+        const matchIndustry =
+          (item.industry_name ?? '').toLowerCase().includes(q) ||
+          industryDisplay(item.industry_name).toLowerCase().includes(q)
+        return matchId || matchName || matchGift || matchIndustry
       }
       return true
     })
-  }, [dedupedItems, hideNoGift, hideExpired, onlyAllowAgent, onlyHighCp, selectedCategory, searchQuery])
+  }, [dedupedItems, hideNoGift, hideExpired, onlyAllowAgent, onlyHighCp, selectedCategory, selectedIndustry, searchQuery, industryDisplay])
 
   const sortedItems = useMemo(() => {
     if (sortField === 'default' || sortOrder === 'none') {
@@ -657,6 +701,8 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       switch (sortField) {
         case 'stock':
           return a.stock_id.localeCompare(b.stock_id) * modifier
+        case 'industry':
+          return industrySortKey(a).localeCompare(industrySortKey(b), 'zh-TW') * modifier
         case 'gift':
           return (a.gift_name || '').localeCompare(b.gift_name || '', 'zh-TW') * modifier
         case 'category':
@@ -718,6 +764,10 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
 
   const handleCategoryChange = (cat: GiftCategory) => {
     setSelectedCategory(cat)
+    setPage(1)
+  }
+  const handleIndustryChange = (industry: string) => {
+    setSelectedIndustry(industry)
     setPage(1)
   }
   const handleSearchChange = (q: string) => {
@@ -970,6 +1020,88 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
             })}
           </div>
         </div>
+
+        {/* Issue #121：板塊（TWSE 官方產業別）篩選；依當日筆數前 10 大 + 「其他板塊 (N)」展開 */}
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)] mb-2.5 font-medium">
+            <Layers className="w-3.5 h-3.5 text-[var(--accent)]" />
+            <span>{ui.industryFilterLabel}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => handleIndustryChange(INDUSTRY_ALL)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                selectedIndustry === INDUSTRY_ALL
+                  ? 'bg-[var(--accent)] text-white border-[var(--accent)] shadow-lg shadow-[var(--accent)]/20'
+                  : 'bg-white/5 text-[var(--text-secondary)] border-white/5 hover:border-white/20 hover:text-white'
+              }`}
+            >
+              <span>{ui.industryAll}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                  selectedIndustry === INDUSTRY_ALL ? 'bg-white/20 text-white' : 'bg-white/10 text-[var(--text-secondary)]'
+                }`}
+              >
+                {dedupedItems.length.toLocaleString()}
+              </span>
+            </button>
+
+            {industryChips.top.map(({ name, count }) => (
+              <button
+                key={name}
+                onClick={() => handleIndustryChange(name)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  selectedIndustry === name
+                    ? 'bg-[var(--accent)] text-white border-[var(--accent)] shadow-lg shadow-[var(--accent)]/20'
+                    : 'bg-white/5 text-[var(--text-secondary)] border-white/5 hover:border-white/20 hover:text-white'
+                }`}
+              >
+                <span>{industryChipLabel(name)}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                    selectedIndustry === name ? 'bg-white/20 text-white' : 'bg-white/10 text-[var(--text-secondary)]'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            ))}
+
+            {industryChips.rest.length > 0 && (
+              <button
+                onClick={() => setIndustryExpanded(prev => !prev)}
+                aria-expanded={industryExpanded}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-white/10 bg-white/5 text-[var(--text-secondary)] hover:border-white/20 hover:text-white transition-all cursor-pointer"
+              >
+                <span>{ui.industryOther.replace('{n}', String(industryChips.rest.length))}</span>
+                {industryExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                <span className="sr-only">{industryExpanded ? ui.industryCollapse : ui.industryExpand}</span>
+              </button>
+            )}
+
+            {industryExpanded &&
+              industryChips.rest.map(({ name, count }) => (
+                <button
+                  key={name}
+                  onClick={() => handleIndustryChange(name)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    selectedIndustry === name
+                      ? 'bg-[var(--accent)] text-white border-[var(--accent)] shadow-lg shadow-[var(--accent)]/20'
+                      : 'bg-white/5 text-[var(--text-secondary)] border-white/5 hover:border-white/20 hover:text-white'
+                  }`}
+                >
+                  <span>{industryChipLabel(name)}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                      selectedIndustry === name ? 'bg-white/20 text-white' : 'bg-white/10 text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              ))}
+          </div>
+        </div>
       </div>
 
       {filteredItems.length === 0 ? (
@@ -977,7 +1109,7 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
           <Gift className="w-8 h-8 text-[var(--text-secondary)] mx-auto mb-3 opacity-50" />
           <p className="font-medium text-base text-white mb-1">{ui.emptyTitle}</p>
           <p className="text-xs">
-            {hideNoGift || onlyAllowAgent || onlyHighCp
+            {hideNoGift || onlyAllowAgent || onlyHighCp || selectedIndustry !== INDUSTRY_ALL
               ? ui.emptyFilteredHint
               : ui.emptySearchHint}
           </p>
@@ -1014,6 +1146,11 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                   {ui.statusFilteredByCategory}
                 </span>
               )}
+              {selectedIndustry !== INDUSTRY_ALL && (
+                <span className="text-[11px] text-[var(--accent)] bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-2 py-0.5 rounded-md">
+                  {ui.statusFilteredByIndustry.replace('{name}', industryChipLabel(selectedIndustry))}
+                </span>
+              )}
             </div>
             <span>
               {ui.pageInfo
@@ -1035,6 +1172,7 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                     #
                   </th>
                   {renderSortHeader(ui.colStock, 'stock')}
+                  {renderSortHeader(ui.colIndustry, 'industry')}
                   {renderSortHeader(ui.colGift, 'gift')}
                   {renderSortHeader(ui.colCategory, 'category')}
                   {renderSortHeader(ui.colRestriction, 'restriction')}
@@ -1100,6 +1238,18 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                             <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100" />
                           </span>
                         </a>
+                      </td>
+
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        {(() => {
+                          const industryText = industryDisplay(item.industry_name)
+                          if (!industryText) return <span className="text-white/30 text-xs">—</span>
+                          return (
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold border bg-white/5 text-white/70 border-white/10">
+                              {industryText}
+                            </span>
+                          )
+                        })()}
                       </td>
 
                       <td className="px-4 py-3.5">

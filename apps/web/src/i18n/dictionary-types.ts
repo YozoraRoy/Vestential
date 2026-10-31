@@ -345,6 +345,17 @@ export interface Dict {
     historyLoading: string
     historyYearSuffix: string
     historyClose: string
+    industryFilterLabel: string
+    industryAll: string
+    industryOther: string
+    industryUnclassified: string
+    colIndustry: string
+    statusFilteredByIndustry: string
+    industryEtf: string
+    industryBondEtf: string
+    industryDr: string
+    industryExpand: string
+    industryCollapse: string
   }
   ai: {
     settingsTitle: string

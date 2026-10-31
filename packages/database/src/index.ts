@@ -76,6 +76,15 @@ export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TAB
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'
 export type { Database } from 'better-sqlite3'
 export { fetchTwseOddLots, parseDatedOddLotResponse, deleteOddLotByDate, listOddLotDateCounts } from './fetchers/twse-odd-lot.js'
+export {
+  fetchTwseIndustry,
+  backfillNonStockIndustries,
+  buildNonStockRows,
+  parseIndustryRows,
+  classifyNonStockCode,
+  TWSE_INDUSTRY_NAMES,
+} from './fetchers/twse-industry.js'
+export type { IndustryRow } from './fetchers/twse-industry.js'
 export { fetchStockGift, fetchStockGiftRows } from './fetchers/stock-gift.js'
 export type { GiftRow } from './fetchers/stock-gift.js'
 export {
