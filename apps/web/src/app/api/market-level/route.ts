@@ -92,7 +92,7 @@ export async function POST(req: Request) {
     // 4. 寫入 DB
     await upsertMarketLevel({
       tradeDate: today,
-      taiex: taiex ?? history[0]?.taiex ?? 49949.91,
+      taiex: taiex ?? history[0]?.taiex ?? 45211.83,
       peRatio: pe,
       pbRatio: pb,
       dividendYield: dy,
