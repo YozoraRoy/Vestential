@@ -8,6 +8,7 @@ import {
   Newspaper,
   Sparkles,
   ArrowRight,
+  Gauge,
 } from 'lucide-react'
 import Link from 'next/link'
 import { getDict, getLocale } from '@/i18n/server'
@@ -146,6 +147,14 @@ export default async function Home() {
       title: dict.home.agentTitle,
       desc: dict.home.agentDesc,
       accent: 'violet',
+      developing: false,
+    },
+    {
+      href: '/market-level',
+      icon: Gauge,
+      title: '大盤水位儀表板',
+      desc: '加權指數歷史分位與五段水位燈號（PER/PBR 估值河流帶），每日 10 秒掌握位階',
+      accent: 'accent',
       developing: false,
     },
   ] as const

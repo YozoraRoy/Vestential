@@ -648,6 +648,21 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
         market        TEXT,
         updated_at    TEXT
       );
+      -- Issue #74：大盤水位儀表板（加權指數 PER/PBR/殖利率歷史分位與水位燈號）。
+      CREATE TABLE IF NOT EXISTS market_levels (
+        trade_date           TEXT PRIMARY KEY,
+        taiex                REAL,
+        pe_ratio             REAL,
+        pb_ratio             REAL,
+        dividend_yield       REAL,
+        pe_percentile        REAL,
+        pb_percentile        REAL,
+        composite_percentile REAL,
+        level_status         TEXT,
+        updated_at           TEXT DEFAULT (datetime('now', 'localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_market_levels_trade_date ON market_levels(trade_date DESC);
+
 
     `)
 
@@ -1414,6 +1429,26 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
           market        NVARCHAR(20),
           updated_at    NVARCHAR(30)
         );
+      END
+    `)
+
+    // Issue #74：market_levels（大盤水位歷史分位與燈號）。
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'market_levels')
+      BEGIN
+        CREATE TABLE market_levels (
+          trade_date           NVARCHAR(20) NOT NULL PRIMARY KEY,
+          taiex                FLOAT NULL,
+          pe_ratio             FLOAT NULL,
+          pb_ratio             FLOAT NULL,
+          dividend_yield       FLOAT NULL,
+          pe_percentile        FLOAT NULL,
+          pb_percentile        FLOAT NULL,
+          composite_percentile FLOAT NULL,
+          level_status         NVARCHAR(30) NULL,
+          updated_at           DATETIME2 DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_market_levels_trade_date ON market_levels(trade_date DESC);
       END
     `)
 
@@ -7264,4 +7299,191 @@ export async function getLlmUsageMinuteReport(opts: { day: string }): Promise<Ll
     peak,
     overMinutes: buckets.filter((b) => b.overThreshold).map((b) => b.minute),
   }
+}
+
+
+// ─── Issue #74 大盤水位儀表板（Market Levels）─────────────────────────
+export type MarketLevelStatus = 'extreme_cold' | 'cold' | 'fair' | 'warm' | 'overheated'
+
+export interface MarketLevelRow {
+  trade_date: string
+  taiex: number | null
+  pe_ratio: number | null
+  pb_ratio: number | null
+  dividend_yield: number | null
+  pe_percentile: number | null
+  pb_percentile: number | null
+  composite_percentile: number | null
+  level_status: MarketLevelStatus | null
+  updated_at?: string
+}
+
+export interface MarketLevelInput {
+  tradeDate: string
+  taiex?: number | null
+  peRatio?: number | null
+  pbRatio?: number | null
+  dividendYield?: number | null
+  pePercentile?: number | null
+  pbPercentile?: number | null
+  compositePercentile?: number | null
+  levelStatus?: MarketLevelStatus | null
+}
+
+const MARKET_LEVEL_COLUMNS = 'trade_date, taiex, pe_ratio, pb_ratio, dividend_yield, pe_percentile, pb_percentile, composite_percentile, level_status, updated_at'
+
+const marketLevelMemoryStore: MarketLevelRow[] = []
+
+function normalizeMarketLevelInput(r: MarketLevelInput): MarketLevelRow | null {
+  const tradeDate = (r.tradeDate ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) return null
+  return {
+    trade_date: tradeDate,
+    taiex: r.taiex != null && Number.isFinite(Number(r.taiex)) ? Number(r.taiex) : null,
+    pe_ratio: r.peRatio != null && Number.isFinite(Number(r.peRatio)) ? Number(r.peRatio) : null,
+    pb_ratio: r.pbRatio != null && Number.isFinite(Number(r.pbRatio)) ? Number(r.pbRatio) : null,
+    dividend_yield: r.dividendYield != null && Number.isFinite(Number(r.dividendYield)) ? Number(r.dividendYield) : null,
+    pe_percentile: r.pePercentile != null && Number.isFinite(Number(r.pePercentile)) ? Number(r.pePercentile) : null,
+    pb_percentile: r.pbPercentile != null && Number.isFinite(Number(r.pbPercentile)) ? Number(r.pbPercentile) : null,
+    composite_percentile: r.compositePercentile != null && Number.isFinite(Number(r.compositePercentile)) ? Number(r.compositePercentile) : null,
+    level_status: r.levelStatus ?? null,
+  }
+}
+
+/** 寫入或更新單日大盤水位資料（trade_date 主鍵冪等）。 */
+export async function upsertMarketLevel(input: MarketLevelInput): Promise<void> {
+  const row = normalizeMarketLevelInput(input)
+  if (!row) throw new Error('invalid market level row')
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      await pool.request()
+        .input('tradeDate', row.trade_date)
+        .input('taiex', row.taiex)
+        .input('peRatio', row.pe_ratio)
+        .input('pbRatio', row.pb_ratio)
+        .input('dividendYield', row.dividend_yield)
+        .input('pePercentile', row.pe_percentile)
+        .input('pbPercentile', row.pb_percentile)
+        .input('compositePercentile', row.composite_percentile)
+        .input('levelStatus', row.level_status)
+        .query(`
+          MERGE market_levels AS target
+          USING (SELECT @tradeDate AS trade_date) AS src
+          ON target.trade_date = src.trade_date
+          WHEN MATCHED THEN
+            UPDATE SET
+              taiex = @taiex,
+              pe_ratio = @peRatio,
+              pb_ratio = @pbRatio,
+              dividend_yield = @dividendYield,
+              pe_percentile = @pePercentile,
+              pb_percentile = @pbPercentile,
+              composite_percentile = @compositePercentile,
+              level_status = @levelStatus,
+              updated_at = GETDATE()
+          WHEN NOT MATCHED THEN
+            INSERT (trade_date, taiex, pe_ratio, pb_ratio, dividend_yield, pe_percentile, pb_percentile, composite_percentile, level_status)
+            VALUES (@tradeDate, @taiex, @peRatio, @pbRatio, @dividendYield, @pePercentile, @pbPercentile, @compositePercentile, @levelStatus);
+        `)
+      return
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      db.prepare(`
+        INSERT INTO market_levels (trade_date, taiex, pe_ratio, pb_ratio, dividend_yield, pe_percentile, pb_percentile, composite_percentile, level_status, updated_at)
+        VALUES (@trade_date, @taiex, @pe_ratio, @pb_ratio, @dividend_yield, @pe_percentile, @pb_percentile, @composite_percentile, @level_status, datetime('now', 'localtime'))
+        ON CONFLICT(trade_date) DO UPDATE SET
+          taiex = excluded.taiex,
+          pe_ratio = excluded.pe_ratio,
+          pb_ratio = excluded.pb_ratio,
+          dividend_yield = excluded.dividend_yield,
+          pe_percentile = excluded.pe_percentile,
+          pb_percentile = excluded.pb_percentile,
+          composite_percentile = excluded.composite_percentile,
+          level_status = excluded.level_status,
+          updated_at = datetime('now', 'localtime')
+      `).run(row)
+      return
+    }
+  }
+  // 記憶體 store 兜底
+  const idx = marketLevelMemoryStore.findIndex((m) => m.trade_date === row.trade_date)
+  if (idx >= 0) {
+    marketLevelMemoryStore[idx] = { ...row, updated_at: new Date().toISOString() }
+  } else {
+    marketLevelMemoryStore.push({ ...row, updated_at: new Date().toISOString() })
+  }
+}
+
+/** 批次寫入或更新大盤水位資料（回傳成功筆數）。 */
+export async function upsertMarketLevels(inputs: MarketLevelInput[]): Promise<number> {
+  let count = 0
+  for (const input of inputs) {
+    try {
+      await upsertMarketLevel(input)
+      count++
+    } catch (e) {
+      console.error('[upsertMarketLevels] row failed:', input.tradeDate, e)
+    }
+  }
+  return count
+}
+
+/** 取得大盤水位歷史列表（依 trade_date 降序排列，最新在前）。 */
+export async function getMarketLevels(limit = 1200): Promise<MarketLevelRow[]> {
+  const maxRows = Math.max(1, Math.min(limit, 5000))
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool.request().query(`
+        SELECT TOP (${maxRows}) ${MARKET_LEVEL_COLUMNS}
+        FROM market_levels
+        ORDER BY trade_date DESC
+      `)
+      return res.recordset as MarketLevelRow[]
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      return db.prepare(`
+        SELECT ${MARKET_LEVEL_COLUMNS}
+        FROM market_levels
+        ORDER BY trade_date DESC
+        LIMIT ?
+      `).all(maxRows) as MarketLevelRow[]
+    }
+  }
+  return [...marketLevelMemoryStore]
+    .sort((a, b) => (b.trade_date > a.trade_date ? 1 : -1))
+    .slice(0, maxRows)
+}
+
+/** 取得最新一筆大盤水位資料。 */
+export async function getLatestMarketLevel(): Promise<MarketLevelRow | null> {
+  const rows = await getMarketLevels(1)
+  return rows[0] ?? null
+}
+
+/** 依交易日查詢大盤水位。 */
+export async function getMarketLevelByDate(tradeDate: string): Promise<MarketLevelRow | null> {
+  const date = tradeDate.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool.request()
+        .input('tradeDate', date)
+        .query(`SELECT ${MARKET_LEVEL_COLUMNS} FROM market_levels WHERE trade_date = @tradeDate`)
+      return (res.recordset[0] as MarketLevelRow) ?? null
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      const row = db.prepare(`SELECT ${MARKET_LEVEL_COLUMNS} FROM market_levels WHERE trade_date = ?`).get(date)
+      return (row as MarketLevelRow) ?? null
+    }
+  }
+  return marketLevelMemoryStore.find((m) => m.trade_date === date) ?? null
 }

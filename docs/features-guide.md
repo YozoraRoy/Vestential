@@ -217,3 +217,18 @@ On the backend it performs asynchronous deduplication via normalized headline fe
 - **Two-layer gatekeeping (before quota deduction)**: real-time format validation in the front end (no API call) + format validation in the backend `/api/analyze` (returns 400, without deducting `analysis_quota` or creating an `analysis_jobs` entry); warrants/bull-bear certificates are judged by the backend Yahoo `quoteType` (only `EQUITY`/`ETF` pass, the rest are blocked, without deducting quota, creating a job or writing `analysis_records`).
 - **Presentation**: the result badge is only stock/etf/index; existing historical analysis records (including US tickers) are kept and shown as-is, and only new US analyses are blocked.
 - **Strategy-loop output (trading-strategy loop)**: the Market Analyst prompt requires support/resistance ranges + invalidation conditions; the Trader report is a structured block (entry range / stop-loss price / invalidation conditions / scaling advice / per-trade position cap % + a risk disclaimer sentence, in three languages); the interpretation is completed in the same quota call as the main report, without adding free allowance.
+
+---
+
+## 10. 📊 Market Level Dashboard (`/market-level`, Issue #74)
+
+- **Purpose & Value Proposition**: provides an objective valuation gauge for the broader Taiwan stock market (TAIEX), calculating 5-year rolling percentiles and standard deviation bands (Mean, $\pm 1\sigma$, $\pm 2\sigma$) from TWSE official Daily Market Valuation data (`BWIBBU_d` median PE, PB, and dividend yield) and closing index quotes (`MI_INDEX`).
+- **5-Tier Valuation Signal**:
+  - `Extreme Cold` ($<20\%$): deeply undervalued with high margin of safety.
+  - `Cold` ($20\% \sim 40\%$): historically depressed valuation.
+  - `Fair` ($40\% \sim 60\%$): fair valuation baseline around historical median.
+  - `Warm` ($60\% \sim 80\%$): elevated valuation, risk caution advised.
+  - `Overheated` ($>80\%$): historical peak valuation, high-altitude persistence risk noted.
+- **Mobile-First UX**: top status card with visual gauge indicator and plain-language explanation, 4 key metrics, 5-year valuation band toggles (P/E and P/B), and recent trading-day history table.
+- **Compliance & Disclaimer**: strictly presents objective historical statistical facts without trading advice, price predictions, or entry/exit recommendations. Prominently highlights that valuation signals may stay in overheated/undervalued zones for months during secular bull/bear expansions.
+
