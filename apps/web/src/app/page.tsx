@@ -1,7 +1,6 @@
 import {
   Search,
   PieChart,
-  Wallet,
   Activity,
   TrendingUp,
   Bot,
@@ -126,10 +125,20 @@ export default async function Home() {
       developing: false,
     },
     {
-      href: '/portfolio',
-      icon: Wallet,
-      title: dict.home.portfolioTitle,
-      desc: dict.home.portfolioDesc,
+      href: '/market-level',
+      icon: Gauge,
+      title:
+        locale === 'en'
+          ? 'Market Level Gauge'
+          : locale === 'ja'
+          ? '大盤水準メーター'
+          : '大盤水位儀表板',
+      desc:
+        locale === 'en'
+          ? '5-year rolling percentiles and 5-tier valuation signals (PER/PBR bands) for TAIEX.'
+          : locale === 'ja'
+          ? '加権指数の5年パーセンタイルとPER/PBR評価バンドによる5段階市場水準メーター。'
+          : '加權指數歷史分位與五段水位燈號（PER/PBR 估值河流帶），每日 10 秒掌握位階。',
       accent: 'green',
       developing: false,
     },
@@ -147,14 +156,6 @@ export default async function Home() {
       title: dict.home.agentTitle,
       desc: dict.home.agentDesc,
       accent: 'violet',
-      developing: false,
-    },
-    {
-      href: '/market-level',
-      icon: Gauge,
-      title: '大盤水位儀表板',
-      desc: '加權指數歷史分位與五段水位燈號（PER/PBR 估值河流帶），每日 10 秒掌握位階',
-      accent: 'accent',
       developing: false,
     },
   ] as const
