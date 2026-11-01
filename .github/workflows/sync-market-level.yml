@@ -1,0 +1,31 @@
+name: Sync Market Level (TWSE TAIEX & BWIBBU)
+
+on:
+  schedule:
+    # 每週一至五 台灣時間 15:30 (UTC 07:30)，TWSE 盤後指數與 BWIBBU_d 公布後抓取
+    - cron: '30 7 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trigger market-level refresh on Azure
+        run: |
+          echo "Triggering market level sync at $(date -u)"
+          CODE=$(curl -s -o /tmp/market_level_resp.json -w "%{http_code}" \
+            --max-time 180 \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://vestential.com/api/market-level")
+          echo "HTTP $CODE"
+          cat /tmp/market_level_resp.json
+          echo ""
+          if [ "$CODE" != "200" ]; then
+            echo "::error::market-level sync failed (HTTP $CODE)"
+            exit 1
+          fi

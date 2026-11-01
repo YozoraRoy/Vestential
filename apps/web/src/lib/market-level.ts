@@ -284,11 +284,11 @@ export async function fetchTwseTaiex(dateStr: string): Promise<number | null> {
     if (!res.ok) return null
     const list = await res.json()
     if (!Array.isArray(list)) return null
-    // 尋找「發行量加權股價指數」
-    const match = list.find((item: any) =>
-      String(item['指數'] ?? item.IndexName ?? '').includes('發行量加權股價指數') ||
-      String(item['指數'] ?? item.IndexName ?? '').includes('加權指數')
-    )
+    // 嚴格比對「發行量加權股價指數」，避免誤抓陣列首筆「寶島股價指數」或其他衍生指數
+    const match =
+      list.find((item: any) => (item['指數'] ?? item.IndexName) === '發行量加權股價指數') ??
+      list.find((item: any) => (item['指數'] ?? item.IndexName) === '加權指數') ??
+      list.find((item: any) => String(item['指數'] ?? item.IndexName ?? '').includes('發行量加權股價指數'))
     if (!match) return null
     const closeStr = String(match['收盤指數'] ?? match.ClosingIndex ?? '').replace(/,/g, '')
     const val = Number(closeStr)
