@@ -51,3 +51,30 @@ export function roundFreshness(roundDate: string, todayStr: string): RoundFreshn
   if (!isTwseTradingDay(todayStr)) return { kind: 'closed', roundDate }
   return { kind: 'stale', roundDate }
 }
+
+/**
+ * 取得最近一個已完成收盤同步的交易日（YYYY-MM-DD）。
+ * 台北時區交易日 16:00 前（包含 00:00~16:00 盤前）不預期今日資料已同步，以「前一個交易日」為基準；
+ * 16:00 後（若今日為交易日）才以今日為基準；休市日往前回溯最近一個交易日。
+ */
+export function getLastCompletedTradingDay(now: Date = new Date()): string {
+  const taipeiHour = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Taipei', hour: '2-digit', hour12: false }).format(now),
+  )
+  const today = taipeiTodayStr(now)
+  const isTodayTrading = isTwseTradingDay(today)
+
+  if (isTodayTrading && taipeiHour >= 16) {
+    return today
+  }
+
+  let cur = new Date(Date.parse(`${today}T12:00:00+08:00`) - 86400000)
+  for (let i = 0; i < 30; i++) {
+    const curStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(cur)
+    if (isTwseTradingDay(curStr)) {
+      return curStr
+    }
+    cur = new Date(cur.getTime() - 86400000)
+  }
+  return today
+}

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vites
 
 // ─── temp DB 隔離（必須在 import @stock/database 之前生效） ────────
 vi.hoisted(() => {
-  const base = process.env.TEMP || process.env.TMPDIR || '/tmp'
-  const dir = `${base}\\arena-tick-job-test-${process.pid}`
-  process.env.DATABASE_PATH = `${dir}\\arena-tick.db`
+  const base = (process.env.TEMP || process.env.TMPDIR || '/tmp').replace(/\\/g, '/')
+  const dir = `${base}/arena-tick-job-test-${process.pid}`
+  process.env.DATABASE_PATH = `${dir}/arena-tick.db`
   delete process.env.DATABASE_URL // 強制 SQLite 後端
 })
 

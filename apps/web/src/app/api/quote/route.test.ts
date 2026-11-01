@@ -163,3 +163,29 @@ describe('GET /api/quote｜不得 500（各式輸入）', () => {
     expect([200, 400, 404]).toContain(res.status)
   })
 })
+
+describe('GET /api/quote｜Issue #119 D 台股代號正規化與零價防護', () => {
+  it('台股純數字代號自動補 .TW，不外洩裸代號至 Yahoo', async () => {
+    await GET(req('2330', 'TW'))
+    expect(provider.getQuote).toHaveBeenCalledWith('2330.TW', 'TW')
+    expect(provider.getProfile).toHaveBeenCalledWith('2330.TW', 'TW')
+  })
+
+  it('provider 回傳 price <= 0 時，quote 被清為 null（不得回傳 0 價）', async () => {
+    provider.getQuote.mockResolvedValue({ ...quote2330, price: 0 })
+    provider.getProfile.mockResolvedValue(profile2330)
+    const res = await GET(req('2330', 'TW'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.quote).toBeNull()
+    expect(body.profile).toEqual(profile2330)
+  })
+
+  it('provider 回傳 price <= 0 且 profile 未命中時，回 404（絕不回 200 帶 0 價）', async () => {
+    provider.getQuote.mockResolvedValue({ ...quote2330, price: 0 })
+    provider.getProfile.mockResolvedValue(emptyProfile('2330.TW'))
+    const res = await GET(req('2330', 'TW'))
+    expect(res.status).toBe(404)
+    await expect(res.json()).resolves.toEqual({ error: 'symbol not found' })
+  })
+})

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { registry } from '@stock/market-data'
-import { getTwseDividendsByYear, migrate } from '@stock/database'
-import { isTwseTradingDay, taipeiTodayStr } from '../../../lib/twse-calendar'
+import { getStockNameById, getTwseDividendsByYear, migrate } from '@stock/database'
+import { getLastCompletedTradingDay, isTwseTradingDay, taipeiTodayStr } from '../../../lib/twse-calendar'
 import { getDividendsCacheInfo } from '../../../lib/twse-dividends'
 import {
   analyzeExDividendEvents,
@@ -133,15 +133,12 @@ export async function GET() {
     const truncated = symbols.length > MAX_SYMBOLS
     const picked = symbols.slice(0, MAX_SYMBOLS)
 
-    // TWT48U 降級判定：交易日但快取非今日＝預告可能異動／同步缺檔。
-    const degraded = isTradingDay && cacheAsOf !== today
-    const degradedReason = !isTradingDay
-      ? null
-      : cacheAsOf !== today
-        ? 'stale-cache'
-        : null
+    // TWT48U 降級判定：以最近已完成交易日為基準（交易日 16:00 前以昨交易日為準，16:00 後才要求今日快取）。
+    const expectedTradingDay = getLastCompletedTradingDay()
+    const degraded = !cacheAsOf || cacheAsOf < expectedTradingDay
+    const degradedReason = degraded ? 'stale-cache' : null
     if (degraded) {
-      void alertExDividendFetchFailed(`快取停留於 ${cacheAsOf ?? '無紀錄'}（今日 ${today} 為交易日）`)
+      void alertExDividendFetchFailed(`快取停留於 ${cacheAsOf ?? '無紀錄'}（預期最新交易日為 ${expectedTradingDay}）`)
     }
 
     const provider = registry.get('yahoo-finance')
@@ -199,9 +196,15 @@ export async function GET() {
         statsReason = s.insufficient ? 'insufficient' : 'ok'
       }
 
+      let displayName = q?.name ?? null
+      try {
+        const zh = await getStockNameById(symbol)
+        if (zh) displayName = zh
+      } catch {}
+
       return {
         symbol,
-        name: q?.name ?? null,
+        name: displayName,
         ex_date: upcoming.ex_date,
         ex_last_buy_date: computeExLastBuyDate(upcoming.ex_date, isTwseTradingDay),
         days_to_ex: daysUntilEx(today, upcoming.ex_date),

@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 
 // ─── temp DB 隔離（必須在 import @stock/database 之前生效；目錄與 llm-usage-report.test.ts 區隔） ───
 vi.hoisted(() => {
-  const base = process.env.TEMP || process.env.TMPDIR || '/tmp'
-  const dir = `${base}\\llm-usage-fallback46-test-${process.pid}`
-  process.env.DATABASE_PATH = `${dir}\\llm-usage.db`
+  const base = (process.env.TEMP || process.env.TMPDIR || '/tmp').replace(/\\/g, '/')
+  const dir = `${base}/llm-usage-fallback46-test-${process.pid}`
+  process.env.DATABASE_PATH = `${dir}/llm-usage.db`
   delete process.env.DATABASE_URL // 強制 SQLite 後端
 })
 

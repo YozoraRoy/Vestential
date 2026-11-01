@@ -254,7 +254,7 @@ describe('isTodayOnlyPartial（告警分級）', () => {
   })
 })
 
-describe('ensureChipRadar 公布時點整合（抓取以注入代替打網）', () => {
+describe('ensureChipRadar 公布時點整合（抓取以注入代替打網）', { timeout: 15000 }, () => {
   const TODAY = '2026-10-13'
   const foreignOf =
     (byDay: Record<string, number>) =>

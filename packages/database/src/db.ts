@@ -1619,7 +1619,7 @@ export async function getPlacementEventStats(): Promise<{
     `SELECT e.user_id, u.display_name, COUNT(*) AS count
      FROM placement_events e
      LEFT JOIN users u ON u.id = e.user_id
-     WHERE e.event = 'backtest_run' GROUP BY e.user_id ORDER BY count DESC LIMIT 20`,
+     WHERE e.event = 'backtest_run' GROUP BY e.user_id, u.display_name ORDER BY count DESC LIMIT 20`,
   )
   return { pageViews, runCount, runBySymbol, runByUser }
 }
