@@ -34,6 +34,7 @@ function plan(month: string, upserts = 3, deletes = 1): DividendsMonthPlan {
       derivedValue: 27.25,
     })),
     skipped: 0,
+    officialAvailable: true,
   }
 }
 
@@ -94,36 +95,37 @@ describe('handleDividendsRepair', () => {
     expect(planMonth).not.toHaveBeenCalled()
   })
 
-  it('repair：dryRun 預設 true → 只回 would_write／would_delete，不寫不刪不標記', async () => {
+  it('repair：dryRun 預設 true → 只回 would_write／would_delete，不寫不刪不標記（依 pending 處理）', async () => {
     const { deps: d, applyPlan, markCovered } = deps()
     const r = await handleDividendsRepair({ authorized: true, body: { action: 'repair' } }, d)
     expect(r.status).toBe(200)
     expect(r.body.dryRun).toBe(true)
     expect(r.body.written).toBe(0)
     expect(r.body.deleted).toBe(0)
-    expect(r.body.would_write).toBe(18) // 6 個月 × 3
+    expect(r.body.would_write).toBe(18) // 6 個未覆蓋月 × 3
     expect(r.body.would_delete).toBe(6)
     expect(r.body.processed).toBe(6)
-    expect(r.body.next_month).toBe('2026-04')
-    expect(r.body.remaining).toBe(1)
+    // 6 個 pending 月一次全取完，無下一個月
+    expect(r.body.next_month).toBeNull()
+    expect(r.body.remaining).toBe(0)
     expect(applyPlan).not.toHaveBeenCalled()
     expect(markCovered).not.toHaveBeenCalled()
   })
 
-  it('repair＋dryRun:false → 逐月套用（顯式 dryRun:false）並標記已覆蓋；連跑兩次結果一致（冪等）', async () => {
+  it('repair＋dryRun:false → 依 pending 逐月套用並標記已覆蓋；連跑兩次結果一致（冪等）', async () => {
     const { deps: d, applyPlan, markCovered } = deps()
     const first = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 3 } }, d)
     expect(first.body.written).toBe(9)
     expect(first.body.deleted).toBe(3)
     expect(first.body.official_overrides).toBe(3)
-    expect(first.body.next_month).toBe('2026-07')
+    // #97：pending 為 2026-09..2026-04，取 3 個月後下一個待處理月為 2026-06
+    expect(first.body.next_month).toBe('2026-06')
     expect(applyPlan).toHaveBeenCalledTimes(3)
     // #95 P2：apply 必須收到 dryRun 關閉（舊版沒傳 → 實跑 no-op）
     expect(applyPlan.mock.calls.map((c) => c[1])).toEqual([{ dryRun: false }, { dryRun: false }, { dryRun: false }])
-    expect(markCovered).toHaveBeenCalledWith(['2026-10', '2026-09', '2026-08'])
-    // covered_months = 既有 {2026-10} ∪ 實際標記成功的 3 個月 = 3（2026-10 已存在；
-    // 舊版 `covered.size + applied.length` 會謊報成 4）
-    expect(first.body.covered_months).toBe(3)
+    expect(markCovered).toHaveBeenCalledWith(['2026-09', '2026-08', '2026-07'])
+    // covered_months = 既有 {2026-10} ∪ 實際標記成功的 3 個月 = 4
+    expect(first.body.covered_months).toBe(4)
     expect(first.body.marked_months).toBe(3)
 
     const second = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 3 } }, d)
@@ -185,5 +187,80 @@ describe('handleDividendsRepair', () => {
     expect(applyPlan).toHaveBeenCalledTimes(2)
     const months = r.body.months as Array<Record<string, unknown>>
     expect(months.find((m) => m.month === '2026-09')?.error).toContain('429')
+  })
+
+  // ─── #97 回歸：連續 3 次預設呼叫必須逐步推進直到 remaining=0 ──────
+  it('repair #97：連續 3 次預設呼叫依序推進未覆蓋月份，直到 remaining=0 且 next_month=null', async () => {
+    const dynamicCovered = new Set<string>(['2026-10'])
+    const planMonth = vi.fn(async (m: string) => plan(m))
+    const applyPlan = vi.fn(async () => ({ written: 3, deleted: 1, ok: true, reason: null }))
+    const markCovered = vi.fn(async (months: string[]) => {
+      for (const m of months) dynamicCovered.add(m)
+      return months
+    })
+    const coverageFn = vi.fn(async () => ({
+      years: coverage.years,
+      windowMonths: coverage.windowMonths,
+      coveredMonths: Array.from(dynamicCovered),
+    }))
+
+    const d: DividendsRepairDeps = {
+      coverage: coverageFn,
+      planMonth,
+      applyPlan,
+      markCovered,
+    }
+
+    // 第 1 次：limit 2 → 處理 2026-09, 2026-08；下一個為 2026-07，剩餘 4 個
+    const r1 = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 2 } }, d)
+    expect(r1.status).toBe(200)
+    expect(r1.body.processed).toBe(2)
+    expect(r1.body.next_month).toBe('2026-07')
+    expect(r1.body.remaining).toBe(4)
+    expect(markCovered).toHaveBeenLastCalledWith(['2026-09', '2026-08'])
+
+    // 第 2 次：limit 2 → 處理 2026-07, 2026-06；下一個為 2026-05，剩餘 2 個
+    const r2 = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 2 } }, d)
+    expect(r2.status).toBe(200)
+    expect(r2.body.processed).toBe(2)
+    expect(r2.body.next_month).toBe('2026-05')
+    expect(r2.body.remaining).toBe(2)
+    expect(markCovered).toHaveBeenLastCalledWith(['2026-07', '2026-06'])
+
+    // 第 3 次：limit 2 → 處理 2026-05, 2026-04；全部覆蓋完畢，next_month=null，remaining=0
+    const r3 = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 2 } }, d)
+    expect(r3.status).toBe(200)
+    expect(r3.body.processed).toBe(2)
+    expect(r3.body.next_month).toBeNull()
+    expect(r3.body.remaining).toBe(0)
+    expect(markCovered).toHaveBeenLastCalledWith(['2026-05', '2026-04'])
+
+    // 第 4 次：所有月已覆蓋，無 pending
+    const r4 = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 2 } }, d)
+    expect(r4.body.processed).toBe(0)
+    expect(r4.body.remaining).toBe(0)
+    expect(r4.body.next_month).toBeNull()
+  })
+
+  // ─── #96 回歸：官方表抓取失敗且有權息列時，不得標記覆蓋 ──────
+  it('repair #96：官方表不可用（officialAvailable=false）且含 unresolved 權息列時，不標記該月覆蓋', async () => {
+    const planWithUnresolved: DividendsMonthPlan = {
+      month: '2026-09',
+      upserts: [{ symbol: '2330', ex_date: '2026-09-16', cash_dividend: 4 }],
+      officialOverrides: 0,
+      unresolved: [{ symbol: '1773', ex_date: '2026-09-20', kind: '權息', derivedValue: 27.25 }],
+      deleteCandidates: [],
+      skipped: 0,
+      officialAvailable: false,
+    }
+    const { deps: d, markCovered } = deps({
+      planMonth: vi.fn(async () => planWithUnresolved),
+    })
+    const r = await handleDividendsRepair({ authorized: true, body: { action: 'repair', dryRun: false, limit: 1 } }, d)
+    expect(r.status).toBe(200)
+    expect(r.body.written).toBe(3)
+    // 官方表不可用且有 unresolved，applied 陣列為空，不 markCovered
+    expect(markCovered).not.toHaveBeenCalled()
+    expect(r.body.marked_months).toBe(0)
   })
 })

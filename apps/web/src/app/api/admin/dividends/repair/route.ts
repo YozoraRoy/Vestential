@@ -35,9 +35,10 @@ export const maxDuration = 300
  *   一律顯式帶 `dryRun`，非 dry-run 才會真的 upsert／刪除）
  * - `{ "action": "repair", "dryRun": false, "from": "2026-01", "to": "2026-09" }`：指定區間
  *
- * 分段語意：每段都從 `[from,to]` 的**最新月往舊**取 `limit` 個月（同一段重跑結果一致＝冪等），
- * 故 `next_month` 只是「本段之後的下一個月」、不是進度游標；整窗需用 `to` 逐段往回走
- * （把上一段的 `next_month` 填進 `to`），實測 5 段 × `limit:12` 跑完全窗 70 個月。
+ * 分段續跑語意（#97）：
+ * - 未指定 from/to 時：預設從未覆蓋月（pending）依序由新往舊取 limit 個月，`next_month` 為下一個
+ *   待處理的未覆蓋月，`remaining` 為剩餘未覆蓋月數；管理端可重複呼叫相同 payload 續跑直到 `remaining: 0`。
+ * - 指定 from/to 時：針對指定區間由新往舊取 limit 個月，支援強制重跑與自訂分段（可帶上一段 `next_month` 為 `to`）。
  */
 export async function POST(req: Request) {
   const authorized = authorizeSync(req)

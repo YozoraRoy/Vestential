@@ -462,6 +462,8 @@ export interface DividendsMonthPlan {
   deleteCandidates: Array<{ symbol: string; ex_date: string; derivedValue: number }>
   /** 解析略過列數。 */
   skipped: number
+  /** 官方股利分派表是否可用（null 表抓取失敗/逾時/瞬斷）。若不可用且 unresolved > 0，不得標記該月覆蓋。 */
+  officialAvailable: boolean
 }
 
 /**
@@ -470,14 +472,19 @@ export interface DividendsMonthPlan {
  *
  * #101：息列（含官方值覆寫者，見下方 spread）保留 `prev_close`；權／權息列改由官方表
  * 補值時不帶前收（該列現金股利來源非 TWT49U 息值，前收無對應語意）→ DB 存 null。
+ *
+ * #96：官方表抓取失敗（official === null）時，不得將權息推導列列入 deleteCandidates
+ * （避免瞬斷誤刪）；只有在 official !== null 且查無官方值時，才判定為待刪除。
  */
 export async function planTwt49uMonth(
   month: string,
   official: OfficialDividendRow[] | null,
+  fetchFn: (month: string) => Promise<Twt49uParseResult> = fetchTwt49uMonth,
 ): Promise<DividendsMonthPlan> {
-  const { rows, unresolved, skipped } = await fetchTwt49uMonth(month)
+  const { rows, unresolved, skipped } = await fetchFn(month)
   const upserts: TwseDividendInput[] = []
   let officialOverrides = 0
+  const officialAvailable = official !== null
   for (const r of rows) {
     const officialCash = matchOfficialDividend(official, r.symbol, r.ex_date, r.cash_dividend, '息')
     if (officialCash != null && Math.abs(officialCash - r.cash_dividend) > 1e-9) {
@@ -495,11 +502,12 @@ export async function planTwt49uMonth(
       officialOverrides++
       continue
     }
-    if (u.derivedValue != null && u.derivedValue > 0) {
+    // #96：官方表成功且查無官方精確值時，才判定刪除；官方表失敗時不刪除任何推導列
+    if (officialAvailable && u.derivedValue != null && u.derivedValue > 0) {
       deleteCandidates.push({ symbol: u.symbol, ex_date: u.ex_date, derivedValue: u.derivedValue })
     }
   }
-  return { month, upserts, officialOverrides, unresolved, deleteCandidates, skipped }
+  return { month, upserts, officialOverrides, unresolved, deleteCandidates, skipped, officialAvailable }
 }
 
 export interface DividendsWriteResult {
@@ -755,10 +763,17 @@ export async function ensureYieldHistoryBackfill(
       okMonths++
       written += applied.written
       deleted += applied.deleted
-      try {
-        await markCovered([mo])
-      } catch (e: unknown) {
-        lastError = `mark-covered-failed: ${e instanceof Error ? e.message : String(e)}`
+      // #96：官方表不可用（officialAvailable=false）且該月有 unresolved 權息列時，
+      // 降級套用息列但不得標記覆蓋（保留在 pending 供下輪重試補值，避免永久從缺）。
+      const canCover = plan.officialAvailable || plan.unresolved.length === 0
+      if (canCover) {
+        try {
+          await markCovered([mo])
+        } catch (e: unknown) {
+          lastError = `mark-covered-failed: ${e instanceof Error ? e.message : String(e)}`
+        }
+      } else {
+        lastError = `degraded-official-unresolved: ${mo}`
       }
     }
 

@@ -135,7 +135,10 @@ az deployment group create -g rg-yuzora_roy_ai `
 **One-off data repair endpoint (for `SYNC_TOKEN` ops; Issue #95)**: `POST /api/admin/dividends/repair`
 
 - With the new TWT49U parsing (taking `right value + dividend value` for dividend rows) + the official `t187ap45_L`, it re-fetches historical months, overwrites erroneous rows and deletes the rights-and-dividend rows produced by "price-spread derivation"; `dryRun` defaults to `true` (returning only the estimated counts).
-- It processes `limit` months at a time (1..12). **Note that `next_month` is merely "the month after this segment", not a progress cursor**: each segment takes `limit` months from the newest month of the `[from,to]` range backwards (re-running always yields the same result = idempotent), so for the full 70-month window you must **walk back segment by segment using `to`** (putting the previous segment's `next_month` into `to`); measured, 5 segments × `limit:12` covers the whole window (a single month of TWT49U takes about 1.5 seconds; the official table `t187ap45_L` is 2.47 MB, about 6 seconds of gzip transfer locally and **40~60 seconds across regions (Azure Canada Central)**, hence `T187AP45_FETCH_TIMEOUT_MS = 120 seconds`, which would have timed out every time at the pre-#95-P4 value of 20 seconds).
+- It processes `limit` months at a time (1..12).
+  - **Resumable semantics (#97)**: without `from`/`to`, it defaults to processing uncovered months (`pending`) in NEW→OLD order, `next_month` points to the next pending month, and `remaining` reflects the remaining uncovered months. Administrators can simply repeat the same request (`{"action":"repair","dryRun":false,"limit":12}`) in a loop until `remaining: 0`.
+  - **Explicit range override**: when `from` or `to` is specified, it targets that explicit slice in NEW→OLD order (idempotent, supporting manual overrides or walk-back using `to`).
+  - **Official table failure resiliency (#96)**: if `t187ap45_L` fails or times out, dividend rows are written degraded but rights/dividend rows are neither deleted nor marked covered (retained in pending for subsequent retry).
 - #95 P2 fix: `writeDividendsMonthPlan` no longer has a dry-run default (it always takes `dryRun` explicitly), and only `dryRun:false` actually upserts/deletes; `covered_months` counts only months that were "actually marked successfully".
 
 ```powershell
@@ -144,22 +147,17 @@ curl.exe -s --max-time 60 -X POST "https://vestential.com/api/admin/dividends/re
   -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
   -d '{"action":"assess"}'
 
-# 2) Preview (read-only): the write/delete plan for the newest 6 months in the window
+# 2) Preview (read-only): the write/delete plan for the next 6 pending months
 curl.exe -s --max-time 120 -X POST "https://vestential.com/api/admin/dividends/repair" `
   -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
   -d '{"action":"repair","limit":6}'
 
-# 3) Execute: only writes with dryRun:false (idempotent, can be re-run)
+# 3) Execute: only writes with dryRun:false; repeat this exact command until remaining=0 and next_month is null (#97)
 curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
   -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
   -d '{"action":"repair","dryRun":false,"limit":12}'
 
-# Whole window (70 months) walking back segment by segment: put the previous segment's next_month into to, repeating until next_month is null
-curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
-  -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
-  -d '{"action":"repair","dryRun":false,"limit":12,"to":"2025-10"}'
-
-# A specific range can also be given (e.g. 2026-01~2026-09)
+# 4) Explicit range (optional): e.g. force re-run 2026-01~2026-09
 curl.exe -s --max-time 300 -X POST "https://vestential.com/api/admin/dividends/repair" `
   -H "Authorization: Bearer $env:SYNC_TOKEN" -H "Content-Type: application/json" `
   -d '{"action":"repair","dryRun":false,"from":"2026-01","to":"2026-09","limit":12}'

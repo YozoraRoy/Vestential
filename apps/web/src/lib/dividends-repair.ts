@@ -142,9 +142,13 @@ export async function handleDividendsRepair(
   if (opts.body?.to != null && to == null) {
     return { status: 400, body: { success: false, error: "to 須為 'YYYY-MM'（或 YYYY-MM-DD）" } }
   }
+  // #97：未指定 from 與 to 時（預設續跑），候選集為未覆蓋月 pending；
+  // 指定 from 或 to 時（強制重跑／指定區間），候選集為區間內的 inWindow
+  const hasExplicitRange = from != null || to != null
   const inWindow = windowMonths.filter((m) => (!from || m >= from) && (!to || m <= to))
+  const candidates = hasExplicitRange ? inWindow : pending
   const limit = clampLimit(opts.body?.limit)
-  const batch = inWindow.slice(0, limit)
+  const batch = candidates.slice(0, limit)
 
   const results: Array<Record<string, unknown>> = []
   const applied: string[] = []
@@ -169,7 +173,11 @@ export async function handleDividendsRepair(
         if (!applied2.ok) throw new Error(`apply not written: ${applied2.reason ?? 'unknown'}`)
         written = applied2.written
         deleted = applied2.deleted
-        applied.push(month)
+        // #96：官方表不可用（officialAvailable=false）且該月有 unresolved 權息列時，不標記該月覆蓋（下輪重試補值）
+        const canCover = plan.officialAvailable !== false || plan.unresolved.length === 0
+        if (canCover) {
+          applied.push(month)
+        }
         totalWrite += written
         totalDelete += deleted
       }
@@ -206,7 +214,7 @@ export async function handleDividendsRepair(
   }
 
   const lastProcessed = batch[batch.length - 1]
-  const nextMonth = inWindow.length > batch.length ? inWindow[batch.length] : null
+  const nextMonth = candidates.length > batch.length ? candidates[batch.length] : null
 
   return {
     status: 200,
@@ -229,7 +237,7 @@ export async function handleDividendsRepair(
       covered_months: new Set([...covered, ...markedMonths]).size,
       marked_months: markedMonths.length,
       next_month: nextMonth,
-      remaining: Math.max(0, inWindow.length - batch.length),
+      remaining: Math.max(0, candidates.length - batch.length),
       note: dryRun
         ? '預覽：未抓取比對以外的寫入／刪除；帶 dryRun:false 才執行'
         : 'upsert 精確值＋刪除價差推導列；冪等（可重跑，結果一致）',

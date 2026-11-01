@@ -9,6 +9,7 @@ import {
   matchOfficialDividend,
   parseCoveredMonths,
   backfillMonthWindow,
+  planTwt49uMonth,
   writeDividendsMonthPlan,
   ensureYieldHistoryBackfill,
   T187AP45_FETCH_TIMEOUT_MS,
@@ -265,6 +266,7 @@ function monthPlan(month = '2026-09'): DividendsMonthPlan {
     unresolved: [],
     deleteCandidates: [{ symbol: '1773', ex_date: '2025-06-13', derivedValue: 27.25 }],
     skipped: 0,
+    officialAvailable: true,
   }
 }
 
@@ -378,6 +380,79 @@ describe('ensureYieldHistoryBackfill（#95 P2：只有確實寫入才 markMonths
     expect(res.status).toBe('done')
     expect(db.upsertTwseDividends).not.toHaveBeenCalled()
     expect(d.markCovered).not.toHaveBeenCalled()
+  })
+
+  // ─── #96 回歸：官方表瞬斷且含權息列時不標記覆蓋 ──────
+  it('#96：官方表瞬斷（official === null）且該月含 unresolved 權息列 → 息列照寫入但不 markCovered', async () => {
+    const d = deps()
+    d.planMonth = vi.fn(async (month: string) => ({
+      month,
+      upserts: [{ symbol: '2330', ex_date: `${month}-16`, cash_dividend: 5 }],
+      officialOverrides: 0,
+      unresolved: [{ symbol: '1773', ex_date: `${month}-20`, kind: '權息', derivedValue: 27.25 }],
+      deleteCandidates: [],
+      skipped: 0,
+      officialAvailable: false,
+    }))
+    const res = await ensureYieldHistoryBackfill('2026-10-16', { maxMonths: 1, official: null, deps: d })
+    expect(res.written).toBe(2)
+    expect(res.deleted).toBe(0)
+    expect(db.upsertTwseDividends).toHaveBeenCalledTimes(1)
+    // 官方表不可用且有權息列，不得 markCovered
+    expect(d.markCovered).not.toHaveBeenCalled()
+    expect(res.reason).toContain('degraded-official-unresolved')
+  })
+
+  it('#96：官方表瞬斷（official === null）但該月為純息列（無 unresolved） → 正常 markCovered', async () => {
+    const d = deps()
+    d.planMonth = vi.fn(async (month: string) => ({
+      month,
+      upserts: [{ symbol: '2330', ex_date: `${month}-16`, cash_dividend: 5 }],
+      officialOverrides: 0,
+      unresolved: [],
+      deleteCandidates: [],
+      skipped: 0,
+      officialAvailable: false,
+    }))
+    const res = await ensureYieldHistoryBackfill('2026-10-16', { maxMonths: 1, official: null, deps: d })
+    expect(res.written).toBe(2)
+    expect(d.markCovered).toHaveBeenCalledWith(['2026-09'])
+  })
+})
+
+describe('planTwt49uMonth（#96 資料韌性：官方表瞬斷防護）', () => {
+  const fakeFetchTwt49u = async (_month: string) => ({
+    month: '2026-09',
+    rows: [{ symbol: '2330', ex_date: '2026-09-16', cash_dividend: 5, prev_close: 1000 }],
+    unresolved: [{ symbol: '1773', ex_date: '2026-09-20', kind: '權息', derivedValue: 27.25 }],
+    skipped: 0,
+  })
+
+  it('官方表瞬斷（official === null）→ 不刪除任何推導列（deleteCandidates 為空），officialAvailable=false', async () => {
+    const plan = await planTwt49uMonth('2026-09', null, fakeFetchTwt49u)
+    expect(plan.officialAvailable).toBe(false)
+    expect(plan.upserts).toHaveLength(1)
+    expect(plan.upserts[0]?.symbol).toBe('2330')
+    expect(plan.deleteCandidates).toEqual([])
+    expect(plan.unresolved).toHaveLength(1)
+  })
+
+  it('官方表成功（official !== null）但查無精確值 → 列入 deleteCandidates，officialAvailable=true', async () => {
+    const plan = await planTwt49uMonth('2026-09', [], fakeFetchTwt49u)
+    expect(plan.officialAvailable).toBe(true)
+    expect(plan.deleteCandidates).toEqual([{ symbol: '1773', ex_date: '2026-09-20', derivedValue: 27.25 }])
+  })
+
+  it('官方表成功（official !== null）且匹配精確值 → 覆寫並放入 upserts，不列入 deleteCandidates', async () => {
+    const official: OfficialDividendRow[] = [
+      { symbol: '1773', boardDate: '2026-08-01', cash: 3.5, dividendYear: '115' },
+    ]
+    const plan = await planTwt49uMonth('2026-09', official, fakeFetchTwt49u)
+    expect(plan.officialAvailable).toBe(true)
+    expect(plan.deleteCandidates).toEqual([])
+    expect(plan.upserts).toHaveLength(2)
+    const row1773 = plan.upserts.find((r) => r.symbol === '1773')
+    expect(row1773?.cash_dividend).toBe(3.5)
   })
 })
 
