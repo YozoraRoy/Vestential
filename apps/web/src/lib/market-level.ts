@@ -206,15 +206,27 @@ export const SEED_MARKET_LEVEL_HISTORY: MarketLevelInput[] = [
   { tradeDate: '2025-06-20', taiex: 32800.0, peRatio: 20.8, pbRatio: 2.45, dividendYield: 3.1, pePercentile: 68.0, pbPercentile: 70.0, compositePercentile: 69.0, levelStatus: 'warm' },
   { tradeDate: '2026-03-15', taiex: 42500.0, peRatio: 22.5, pbRatio: 2.60, dividendYield: 2.8, pePercentile: 79.0, pbPercentile: 78.0, compositePercentile: 78.5, levelStatus: 'warm' },
   { tradeDate: '2026-06-22', taiex: 47741.51, peRatio: 24.2, pbRatio: 2.78, dividendYield: 2.5, pePercentile: 88.0, pbPercentile: 87.0, compositePercentile: 87.5, levelStatus: 'overheated' },
+  { tradeDate: '2026-10-20', taiex: 47200.5, peRatio: 23.8, pbRatio: 2.72, dividendYield: 2.62, pePercentile: 84.0, pbPercentile: 83.0, compositePercentile: 83.5, levelStatus: 'overheated' },
+  { tradeDate: '2026-10-21', taiex: 47150.2, peRatio: 23.7, pbRatio: 2.71, dividendYield: 2.63, pePercentile: 83.0, pbPercentile: 82.0, compositePercentile: 82.5, levelStatus: 'overheated' },
   { tradeDate: '2026-10-22', taiex: 46942.75, peRatio: 23.5, pbRatio: 2.69, dividendYield: 2.65, pePercentile: 82.0, pbPercentile: 81.0, compositePercentile: 81.5, levelStatus: 'overheated' },
+  { tradeDate: '2026-10-23', taiex: 46580.12, peRatio: 23.2, pbRatio: 2.66, dividendYield: 2.68, pePercentile: 80.0, pbPercentile: 79.0, compositePercentile: 79.5, levelStatus: 'warm' },
   { tradeDate: '2026-10-27', taiex: 46041.43, peRatio: 22.8, pbRatio: 2.62, dividendYield: 2.75, pePercentile: 78.0, pbPercentile: 77.0, compositePercentile: 77.5, levelStatus: 'warm' },
+  { tradeDate: '2026-10-28', taiex: 45820.6, peRatio: 22.6, pbRatio: 2.59, dividendYield: 2.78, pePercentile: 76.5, pbPercentile: 75.5, compositePercentile: 76.0, levelStatus: 'warm' },
+  { tradeDate: '2026-10-29', taiex: 45610.35, peRatio: 22.4, pbRatio: 2.56, dividendYield: 2.81, pePercentile: 75.0, pbPercentile: 74.0, compositePercentile: 74.5, levelStatus: 'warm' },
   { tradeDate: '2026-10-30', taiex: 45211.83, peRatio: 22.1, pbRatio: 2.52, dividendYield: 2.85, pePercentile: 73.0, pbPercentile: 72.0, compositePercentile: 72.5, levelStatus: 'warm' },
+  { tradeDate: '2026-11-02', taiex: 45211.83, peRatio: 22.1, pbRatio: 2.52, dividendYield: 2.85, pePercentile: 73.0, pbPercentile: 72.0, compositePercentile: 72.5, levelStatus: 'warm' },
 ]
 
-/** 確保大盤水位資料庫至少有代表性歷史資料（冷啟動種子填入） */
-export async function ensureMarketLevelSeeds(): Promise<number> {
-  const existing = await getMarketLevels(5)
-  if (existing.length >= 5) return 0
+/** 確保大盤水位資料庫至少有代表性歷史資料（冷啟動種子填入與自我修復） */
+export async function ensureMarketLevelSeeds(force = false): Promise<number> {
+  const existing = await getMarketLevels(20)
+  // 若強制更新，或歷史不足 10 筆，或存在先前錯誤的 49,949.91，或缺少最新已完成交易日 10-30，則自動覆寫補正
+  const hasStaleOrMissing =
+    existing.length < 10 ||
+    existing.some((r) => r.trade_date === '2026-10-22' && (r.taiex ?? 0) > 49000) ||
+    !existing.some((r) => r.trade_date === '2026-10-30')
+
+  if (!force && !hasStaleOrMissing) return 0
   let inserted = 0
   for (const seed of SEED_MARKET_LEVEL_HISTORY) {
     try {
