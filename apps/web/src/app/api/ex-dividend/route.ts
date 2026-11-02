@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { registry } from '@stock/market-data'
 import { getStockNameById, getTwseDividendsByYear, migrate } from '@stock/database'
 import { getLastCompletedTradingDay, isTwseTradingDay, taipeiTodayStr } from '../../../lib/twse-calendar'
@@ -35,6 +35,16 @@ export const dynamic = 'force-dynamic'
  * - 無 DB migration（僅 SELECT 既有 `twse_dividends`）。
  * - GET /api/ex-dividend
  */
+
+
+interface CachedData {
+  payload: any
+  cachedAt: number
+  date: string
+}
+
+let inMemoryCache: CachedData | null = null
+const CACHE_TTL_MS = 30 * 60 * 1000 // 30 分鐘快取（Issue #123）
 
 const WINDOW_DAYS = 30
 const HISTORY_YEARS = 5
@@ -98,10 +108,20 @@ async function mapPool<T, R>(items: T[], size: number, fn: (item: T) => Promise<
   return out
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    await migrate()
     const today = taipeiTodayStr()
+    const { searchParams } = new URL(req.url)
+    const forceRefresh = searchParams.get('refresh') === '1' || searchParams.get('refresh') === 'true'
+
+    if (!forceRefresh && inMemoryCache && inMemoryCache.date === today && (Date.now() - inMemoryCache.cachedAt < CACHE_TTL_MS)) {
+      return NextResponse.json(
+        { ...inMemoryCache.payload, from_cache: true },
+        { headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=3600' } },
+      )
+    }
+
+    await migrate()
     const windowEnd = addDaysStr(today, WINDOW_DAYS)
     const todayYear = Number(today.slice(0, 4))
 
@@ -363,7 +383,7 @@ export async function GET() {
 
     const validTrackingItems = trackingResults.filter((t): t is ExDividendTrackingItem => t != null)
 
-    return NextResponse.json({
+    const payload = {
       success: true,
       today,
       window_end: windowEnd,
@@ -378,9 +398,22 @@ export async function GET() {
       total: symbols.length,
       tracking_items: validTrackingItems,
       items,
+      cached_at: new Date().toISOString(),
+    }
+
+    inMemoryCache = { payload, cachedAt: Date.now(), date: today }
+
+    return NextResponse.json(payload, {
+      headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=3600' },
     })
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'ex-dividend read failed'
     return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }
+
+export async function POST(req: NextRequest) {
+  // 供排程主動預熱與刷新快取（Issue #123）
+  return GET(req)
+}
+

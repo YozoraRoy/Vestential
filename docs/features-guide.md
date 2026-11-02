@@ -280,4 +280,9 @@ On the backend it performs asynchronous deduplication via normalized headline fe
   - Reference Price: $\text{Pre-Close} - \text{Cash Dividend}$
   - Fill Percentage: $\frac{\text{Current Price} - \text{Reference Price}}{\text{Cash Dividend}} \times 100\%$
   - Elapsed Days: calculated from actual calendar trading days post ex-dividend date.
+- **High-Performance Caching & Dense Table UX (Issue #123)**:
+  - **In-Memory Caching & Prewarm**: Eliminates repetitive 5-year Yahoo Finance multi-symbol batch calculations on every page load (Server in-memory TTL 30 minutes, sub-10ms response). Supports `?refresh=1` and `POST /api/ex-dividend` for scheduled daily prewarming.
+  - **Asset Classification Filter**: Segmented control for `All`, `Stocks`, and `ETFs` with instant counter indicators.
+  - **Instant Symbol / Name Search**: Real-time filtering by ticker or traditional Chinese company name (e.g., `0056`, `台積電`).
+  - **Default Table View with Card Toggle**: Defaults to an information-dense, mobile-responsive table layout (status badges, cash dividend, reference price, current price, mini progress bar, and historical benchmark); card view remains available via a one-click toggle.
 
