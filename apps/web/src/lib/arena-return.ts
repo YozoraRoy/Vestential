@@ -61,3 +61,45 @@ export function unifiedArenaReturn(
   }
   return { pct: arenaCashEstimatePct(cash, initialCapital), asOf: null, estimated: true }
 }
+
+export interface ArenaReturnBreakdown {
+  /** 總累計報酬率 % */
+  totalReturnPct: number
+  /** 股息貢獻報酬率 % (totalDividends / initialCapital * 100) */
+  dividendReturnPct: number
+  /** 資本利得 / 價差損益報酬率 % (totalReturnPct - dividendReturnPct) */
+  capitalGainPct: number
+  /** 累計股息總額 */
+  totalDividends: number
+}
+
+/**
+ * 總報酬率透明拆解（Issue #122）：
+ * 將累積報酬率拆解為「資本利得（價差）」與「股息收益（現金股利）」。
+ * 讓持有高股息標的除息時的現金流反饋一目了然。
+ */
+export function breakdownArenaReturn(
+  totalReturnPct: number,
+  initialCapital: number,
+  totalDividends: number,
+): ArenaReturnBreakdown {
+  if (!Number.isFinite(initialCapital) || initialCapital <= 0) {
+    return {
+      totalReturnPct: 0,
+      dividendReturnPct: 0,
+      capitalGainPct: 0,
+      totalDividends: Math.max(0, totalDividends || 0),
+    }
+  }
+  const cleanDividends = Math.max(0, Number.isFinite(totalDividends) ? totalDividends : 0)
+  const dividendReturnPct = Math.round((cleanDividends / initialCapital) * 10000) / 100
+  const capitalGainPct = Math.round((totalReturnPct - dividendReturnPct) * 100) / 100
+
+  return {
+    totalReturnPct,
+    dividendReturnPct,
+    capitalGainPct,
+    totalDividends: cleanDividends,
+  }
+}
+

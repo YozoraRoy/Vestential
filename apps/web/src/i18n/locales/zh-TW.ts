@@ -1071,6 +1071,15 @@ export const zhTW: Dict = {
     phaseTrade: '盤中決策',
     phasePostclose: '收後自評',
     drawerClose: '關閉',
+    colDividends: '累計獲配股息',
+    dividendContribution: '股息貢獻',
+    capitalGain: '資本利得',
+    dividendIncome: '股息收益',
+    dividendCreditsTitle: '股息入帳',
+    noDividendCredits: '尚無除權息現金股利入帳紀錄',
+    dividendDetailNote: '持有標的除息時，現金股利將自動併入可用現金與總權益。',
+    colDividendPerShare: '每股股利',
+    colTotalDividend: '入帳股息',
   },
   festival: {
     midAutumn: {

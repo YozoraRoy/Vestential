@@ -34,6 +34,7 @@ import {
   arenaCashEstimatePct,
   latestArenaSnapshot,
   unifiedArenaReturn,
+  breakdownArenaReturn,
 } from '@/lib/arena-return'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
@@ -116,6 +117,17 @@ interface StateData {
   latestRound?: RoundDetail | null
 }
 
+interface DividendCredit {
+  id: number
+  agent_id?: number
+  symbol: string
+  symbol_name?: string | null
+  ex_date: string
+  shares: number
+  amount: number
+  created_at?: string
+}
+
 interface Holding {
   symbol: string
   symbol_name: string | null
@@ -155,6 +167,8 @@ interface MyData {
   snapshots: Array<{ round_date: string; equity: number; cash: number; return_pct: number }>
   trades: Trade[]
   decisionLogs?: DecisionLog[]
+  dividendCredits?: DividendCredit[]
+  totalDividends?: number
 }
 
 interface AgentDetailData {
@@ -178,6 +192,8 @@ interface AgentDetailData {
   snapshots: Array<{ round_date: string; equity: number; cash: number; return_pct: number }>
   trades: Trade[]
   decisionLogs?: DecisionLog[]
+  dividendCredits?: DividendCredit[]
+  totalDividends?: number
 }
 
 const STRATEGIES: Array<{ id: string; key: keyof Dict['portfolio'] }> = [
@@ -273,11 +289,11 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
   const [detailData, setDetailData] = useState<AgentDetailData | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailMaximized, setDetailMaximized] = useState(false)
-  const [detailTab, setDetailTab] = useState<'holdings' | 'timeline' | 'trades'>('holdings')
+  const [detailTab, setDetailTab] = useState<'holdings' | 'timeline' | 'trades' | 'dividends'>('holdings')
 
   const openAgentDetail = async (
     agentId: number,
-    defaultTab: 'holdings' | 'timeline' | 'trades' = 'holdings',
+    defaultTab: 'holdings' | 'timeline' | 'trades' | 'dividends' = 'holdings',
     seedRow?: LeaderboardRow,
   ) => {
     setDetailAgentId(agentId)
@@ -289,6 +305,8 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
         snapshots: my.snapshots,
         trades: my.trades,
         decisionLogs: my.decisionLogs,
+        dividendCredits: my.dividendCredits,
+        totalDividends: my.totalDividends,
       })
       return
     }
@@ -314,6 +332,8 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
         snapshots: seedRow.equity != null ? [{ round_date: seedRow.round_date || '', equity: seedRow.equity, cash: seedRow.cash || 0, return_pct: seedRow.return_pct || 0 }] : [],
         trades: [],
         decisionLogs: [],
+        dividendCredits: [],
+        totalDividends: 0,
       })
     } else {
       setDetailData(null)
@@ -1421,9 +1441,15 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                       detailData.agent.cash,
                     )
                     const detailLatest = latestArenaSnapshot(detailData.snapshots ?? [])
+                    const totalDividends = detailData.totalDividends ?? detailData.dividendCredits?.reduce((s, c) => s + (Number(c.amount) || 0), 0) ?? 0
+                    const breakdown = breakdownArenaReturn(
+                      detailUnified.pct,
+                      detailData.agent.initial_capital,
+                      totalDividends,
+                    )
                     return (
                       <>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                           <div className="p-3 rounded-xl bg-[var(--bg-secondary)] border border-white/5">
                             <span className="text-xs text-[var(--text-secondary)] block mb-1">目前總權益</span>
                             <span className="text-sm sm:text-base font-bold font-mono text-[var(--text-primary)]">
@@ -1450,6 +1476,13 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                             >
                               {fmt(detailUnified.pct, 2)}%
                             </span>
+                            {totalDividends > 0 && (
+                              <div className="mt-1 flex items-center gap-1 text-[10px] font-mono text-[var(--text-secondary)] whitespace-nowrap">
+                                <span>價差 {fmt(breakdown.capitalGainPct, 2)}%</span>
+                                <span>|</span>
+                                <span className="text-[var(--accent-green)]">股息 +{fmt(breakdown.dividendReturnPct, 2)}%</span>
+                              </div>
+                            )}
                           </div>
                           <div className="p-3 rounded-xl bg-[var(--bg-secondary)] border border-white/5">
                             <span className="text-xs text-[var(--text-secondary)] block mb-1">可用現金</span>
@@ -1457,6 +1490,18 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                               {d.currency}
                               {fmt(detailData.agent.cash)}
                             </span>
+                          </div>
+                          <div className="p-3 rounded-xl bg-[var(--bg-secondary)] border border-white/5">
+                            <span className="text-xs text-[var(--text-secondary)] block mb-1">{d.colDividends}</span>
+                            <span className="text-sm sm:text-base font-bold font-mono text-[var(--accent-green)]">
+                              {d.currency}
+                              {fmt(totalDividends)}
+                            </span>
+                            {totalDividends > 0 && (
+                              <span className="mt-1 block text-[10px] font-mono text-[var(--text-secondary)] whitespace-nowrap">
+                                {d.dividendContribution} +{fmt(breakdown.dividendReturnPct, 2)}%
+                              </span>
+                            )}
                           </div>
                           <div className="p-3 rounded-xl bg-[var(--bg-secondary)] border border-white/5">
                             <span className="text-xs text-[var(--text-secondary)] block mb-1">已運行輪數</span>
@@ -1508,6 +1553,17 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                       }`}
                     >
                       🔄 {d.tradesTitle} ({detailData.trades?.length ?? 0})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDetailTab('dividends')}
+                      className={`pb-2.5 transition flex items-center gap-1.5 border-b-2 ${
+                        detailTab === 'dividends'
+                          ? 'border-[var(--accent)] text-[var(--accent)] font-semibold'
+                          : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      💰 {d.dividendCreditsTitle} ({detailData.dividendCredits?.length ?? 0})
                     </button>
                   </div>
 
@@ -1650,6 +1706,67 @@ export function AgentArenaView({ homePath, loginPath }: { homePath: string; logi
                       )}
                     </div>
                   )}
+
+                  {/* Tab 內容：股息入帳流水（Issue #122） */}
+                  {detailTab === 'dividends' && (() => {
+                    const totalDivs = detailData.totalDividends ?? detailData.dividendCredits?.reduce((s, c) => s + (Number(c.amount) || 0), 0) ?? 0
+                    const unified = unifiedArenaReturn(detailData.snapshots, detailData.agent.initial_capital, detailData.agent.cash)
+                    const bdown = breakdownArenaReturn(unified.pct, detailData.agent.initial_capital, totalDivs)
+                    return (
+                      <div>
+                        {!detailData.dividendCredits || detailData.dividendCredits.length === 0 ? (
+                          <div className="p-8 text-center rounded-xl border border-white/5 bg-[var(--bg-secondary)] space-y-1">
+                            <p className="text-sm font-medium text-[var(--text-primary)]">{d.noDividendCredits}</p>
+                            <p className="text-xs text-[var(--text-secondary)]">{d.dividendDetailNote}</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="p-3 rounded-xl bg-[var(--accent-green)]/10 border border-[var(--accent-green)]/20 flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <span className="text-[var(--text-primary)]">{d.dividendDetailNote}</span>
+                              <span className="font-mono font-bold text-[var(--accent-green)] text-sm">
+                                {d.colDividends}：{d.currency}{fmt(totalDivs)}（+{fmt(bdown.dividendReturnPct, 2)}%）
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto rounded-xl border border-white/5">
+                              <table className={tableClass(typo, 'w-full')}>
+                                <thead>
+                                  <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] bg-white/[0.02] border-b border-white/5')}>
+                                    <th className="px-3 py-2 font-medium">除息日期</th>
+                                    <th className="px-3 py-2 font-medium">{d.colSymbol}</th>
+                                    <th className="px-3 py-2 font-medium">名稱</th>
+                                    <th className="px-3 py-2 font-medium text-right">{d.colShares}</th>
+                                    <th className="px-3 py-2 font-medium text-right">{d.colDividendPerShare}</th>
+                                    <th className="px-3 py-2 font-medium text-right">{d.colTotalDividend}</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {detailData.dividendCredits.map((c) => {
+                                    const matchedHolding = detailData.holdings?.find((h) => h.symbol === c.symbol);
+                                    const name = c.symbol_name || matchedHolding?.symbol_name || '—';
+                                    const perShare = c.shares > 0 ? c.amount / c.shares : null;
+                                    return (
+                                      <tr key={c.id} className="hover:bg-white/[0.02]">
+                                        <td className="px-3 py-2.5 font-mono text-xs text-[var(--text-secondary)]">{c.ex_date}</td>
+                                        <td className="px-3 py-2.5 font-mono font-medium text-[var(--accent)]">{c.symbol}</td>
+                                        <td className="px-3 py-2.5 text-[var(--text-primary)]">{name}</td>
+                                        <td className="px-3 py-2.5 text-right font-mono text-[var(--text-primary)]">{fmt(c.shares)} 股</td>
+                                        <td className="px-3 py-2.5 text-right font-mono text-[var(--text-secondary)]">
+                                          {perShare != null ? `${d.currency}${fmt(perShare, 2)}` : '—'}
+                                        </td>
+                                        <td className="px-3 py-2.5 text-right font-mono text-[var(--accent-green)] font-bold">
+                                          +{d.currency}{fmt(c.amount)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>

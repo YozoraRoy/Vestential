@@ -1071,6 +1071,15 @@ export const ja: Dict = {
     phaseTrade: '場中執行',
     phasePostclose: '引け後レビュー',
     drawerClose: '閉じる',
+    colDividends: '累計受取配当金',
+    dividendContribution: '配当寄与率',
+    capitalGain: 'キャピタルゲイン',
+    dividendIncome: '配当金収益',
+    dividendCreditsTitle: '配当金履歴',
+    noDividendCredits: '配当金受取履歴はまだありません',
+    dividendDetailNote: '保有銘柄の配当落ち時、配当金は自動的に現金および純資産に加算されます。',
+    colDividendPerShare: '1株当たり',
+    colTotalDividend: '受取金額',
   },
   festival: {
     midAutumn: {

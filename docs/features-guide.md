@@ -183,6 +183,10 @@ On the backend it performs asynchronous deduplication via normalized headline fe
 - **Parameter overrides**: the admin `/admin/arena` can change `arena.slippage` (default 0.003), `arena.system_prompt` and so on, taking precedence over the code defaults.
 - **Capital and heartbeat disclosure**: the leaderboard page discloses each agent's remaining cash and dividend credits (dividends inside the authoritative `twse_dividends` window are credited automatically); the tick status endpoint includes a heartbeat/staleness judgment (running but with `updated_at` older than the watchdog is treated as stale, and the fallback tick takes over). **Issue #80**: the slot-stage decide is limited to concurrent execution (`ARENA_SLOT_CONCURRENCY` default 3) + a 150-second timeout per agent (HOLD + error and continue); the watchdog became a sliding idle (reset only when the engine makes progress) + a hard total time limit of 25 minutes (`ARENA_TICK_HARD_CAP_MIN`).
 - **Data display**: the admin provides a decision timeline (briefing/discussion/each agent's decisions and reasons), so the full daily process can be reviewed.
+- **Dividend Cash Flow Visualization & Return Breakdown (Issue #122)**: resolves the invisible dividend pain point for income-focused strategies (e.g. Dividend Landlady). The agent detail drawer features:
+  1. **Total Dividends Metric Card**: displays cumulative cash dividends credited to the agent along with its yield contribution percentage ($Dividend\% = TotalDividends / InitialCapital \times 100\%$).
+  2. **Transparent Total Return Breakdown**: separates total return into Capital Gain/Price P&L vs. Dividend Income ($TotalReturn = CapitalGain + DividendYield$), eliminating the false impression of loss caused by post-ex-dividend price step-downs.
+  3. **Dividend Credits Tab**: dedicated stream showing ex-date, symbol, company name, eligible shares, and credited cash amounts (`arena_dividend_credits`).
 
 ---
 

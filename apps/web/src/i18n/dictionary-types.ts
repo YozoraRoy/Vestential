@@ -1021,6 +1021,15 @@ export interface Dict {
     phaseTrade: string
     phasePostclose: string
     drawerClose: string
+    colDividends: string
+    dividendContribution: string
+    capitalGain: string
+    dividendIncome: string
+    dividendCreditsTitle: string
+    noDividendCredits: string
+    dividendDetailNote: string
+    colDividendPerShare: string
+    colTotalDividend: string
   }
   festival: {
     midAutumn: {

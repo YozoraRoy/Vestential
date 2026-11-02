@@ -11,6 +11,7 @@ import {
   getArenaSnapshots,
   getArenaTrades,
   getArenaDecisionLogs,
+  getArenaDividendCredits,
 } from '@stock/database'
 import { INVESTMENT_FRAMEWORKS } from '@stock/ai-engine'
 
@@ -36,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: '找不到該 agent' }, { status: 404 })
     }
 
-    const [holdings, snapshots, trades, decisionLogs] = await Promise.all([
+    const [holdings, snapshots, trades, decisionLogs, dividendCredits] = await Promise.all([
       getArenaHoldings(agent.id).catch((err) => {
         console.error('[Arena API] getArenaHoldings failed:', err)
         return []
@@ -53,10 +54,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
         console.error('[Arena API] getArenaDecisionLogs failed:', err)
         return []
       }),
+      getArenaDividendCredits(agent.id).catch((err) => {
+        console.error('[Arena API] getArenaDividendCredits failed:', err)
+        return []
+      }),
     ])
 
+    const totalDividends = dividendCredits.reduce((sum, c) => sum + (Number(c.amount) || 0), 0)
+
     return NextResponse.json(
-      { agent, holdings, snapshots, trades, decisionLogs },
+      { agent, holdings, snapshots, trades, decisionLogs, dividendCredits, totalDividends },
       { headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' } },
     )
   } catch (err: any) {

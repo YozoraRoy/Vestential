@@ -1071,6 +1071,15 @@ export const en: Dict = {
     phaseTrade: 'Intraday Execution',
     phasePostclose: 'Post-close Review',
     drawerClose: 'Close',
+    colDividends: 'Total Dividends',
+    dividendContribution: 'Yield Contrib.',
+    capitalGain: 'Capital Gain',
+    dividendIncome: 'Dividend Income',
+    dividendCreditsTitle: 'Dividend Credits',
+    noDividendCredits: 'No dividend credits recorded yet',
+    dividendDetailNote: 'Cash dividends from held stocks are credited to available cash and total equity automatically.',
+    colDividendPerShare: 'Per Share',
+    colTotalDividend: 'Credit Amount',
   },
   festival: {
     midAutumn: {

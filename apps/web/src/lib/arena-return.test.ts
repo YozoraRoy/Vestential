@@ -4,6 +4,7 @@ import {
   arenaCashEstimatePct,
   latestArenaSnapshot,
   unifiedArenaReturn,
+  breakdownArenaReturn,
 } from './arena-return'
 
 // Issue #38：排行榜與歷程共用同一累計報酬率函式（最新快照、同一 rounding）。
@@ -55,5 +56,37 @@ describe('unifiedArenaReturn（排行榜＋歷程共用）', () => {
   it('無快照：現金公式估算且標示 estimated', () => {
     const r = unifiedArenaReturn([], 500000, 200000)
     expect(r).toEqual({ pct: -60, asOf: null, estimated: true })
+  })
+})
+
+describe('breakdownArenaReturn（Issue #122：總報酬率拆解 價差 vs 股息）', () => {
+  it('正常拆解：總報酬 +0.26%，本金 500,000，股息 4,000 (0.8%) → 價差 -0.54%', () => {
+    const res = breakdownArenaReturn(0.26, 500000, 4000)
+    expect(res).toEqual({
+      totalReturnPct: 0.26,
+      dividendReturnPct: 0.8,
+      capitalGainPct: -0.54,
+      totalDividends: 4000,
+    })
+  })
+
+  it('無股息時：股息貢獻為 0，價差等於總報酬', () => {
+    const res = breakdownArenaReturn(5.5, 500000, 0)
+    expect(res).toEqual({
+      totalReturnPct: 5.5,
+      dividendReturnPct: 0,
+      capitalGainPct: 5.5,
+      totalDividends: 0,
+    })
+  })
+
+  it('本金非正常數值時防除零與防呆', () => {
+    const res = breakdownArenaReturn(2.5, 0, 1000)
+    expect(res).toEqual({
+      totalReturnPct: 0,
+      dividendReturnPct: 0,
+      capitalGainPct: 0,
+      totalDividends: 1000,
+    })
   })
 })
