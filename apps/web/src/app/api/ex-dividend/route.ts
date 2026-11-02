@@ -8,8 +8,10 @@ import {
   assetKindLabel,
   classifyAssetKind,
   computeExLastBuyDate,
+  computeLiveFillProgress,
   daysUntilEx,
   type ExDividendStats,
+  type LiveFillProgress,
 } from '../../../lib/ex-dividend-engine'
 import {
   alertExDividendFetchFailed,
@@ -61,6 +63,26 @@ export interface ExDividendItem {
   asset_label: string
   stats: (ExDividendStats & { years_incomplete: boolean; history_since: string | null }) | null
   stats_reason: 'ok' | 'insufficient' | 'no-history'
+}
+
+/** Issue #93：進行中填息進度追蹤項目 */
+export interface ExDividendTrackingItem {
+  symbol: string
+  name: string | null
+  ex_date: string
+  cash_dividend: number
+  prev_close: number
+  reference_price: number
+  current_price: number
+  progress_pct: number
+  status: 'filled' | 'filling' | 'discount'
+  status_label: string
+  filled_in_days: number | null
+  days_since_ex: number
+  asset_kind: 'etf' | 'stock' | 'unknown'
+  asset_label: string
+  avg_fill_days: number | null
+  fill_score: number | null
 }
 
 async function mapPool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -241,6 +263,106 @@ export async function GET() {
     }
     if (completed.length > 0) void alertFillCompleted(completed)
 
+    // Issue #93：計算過去 60 天內剛除息標的的填息進度追蹤
+    const sixtyDaysAgo = addDaysStr(today, -60)
+    const recentEvents: { symbol: string; ex_date: string; cash_dividend: number; prev_close: number | null }[] = []
+    for (const y of readYears) {
+      const list = await getTwseDividendsByYear(y).catch(() => [])
+      for (const r of list) {
+        if (r.ex_date >= sixtyDaysAgo && r.ex_date <= today && r.cash_dividend > 0) {
+          recentEvents.push({
+            symbol: r.symbol,
+            ex_date: r.ex_date,
+            cash_dividend: r.cash_dividend,
+            prev_close: r.prev_close ?? null,
+          })
+        }
+      }
+    }
+
+    recentEvents.sort((a, b) => (a.ex_date > b.ex_date ? -1 : 1))
+    const trackingPicked = recentEvents.slice(0, 30)
+
+    const trackingResults = await mapPool(
+      trackingPicked,
+      HISTORY_CONCURRENCY,
+      async (ev): Promise<ExDividendTrackingItem | null> => {
+        try {
+          const yahooSymbol = `${ev.symbol}.TW`
+          const history = await provider.getHistory(yahooSymbol, 'TW', addDaysStr(ev.ex_date, -10), today).catch(() => [])
+          const byDate = new Map<string, number>()
+          for (const h of history) {
+            if (Number.isFinite(h.close) && h.close > 0) {
+              byDate.set(toTaipeiDate(h.timestamp), h.close)
+            }
+          }
+          const bars = [...byDate.entries()]
+            .map(([date, close]) => ({ date, close }))
+            .sort((a, b) => (a.date < b.date ? -1 : 1))
+
+          if (bars.length === 0) return null
+
+          const currentPrice = bars[bars.length - 1]!.close
+
+          let prevClose = ev.prev_close
+          if (prevClose == null || prevClose <= 0) {
+            for (let i = 0; i < bars.length; i++) {
+              if (bars[i]!.date < ev.ex_date) prevClose = bars[i]!.close
+            }
+          }
+          if (!prevClose || prevClose <= 0) prevClose = currentPrice
+
+          const barsAfterEx = bars.filter((b) => b.date >= ev.ex_date)
+          const progress = computeLiveFillProgress(prevClose, ev.cash_dividend, currentPrice, barsAfterEx)
+
+          let displayName = quoteMap.get(ev.symbol)?.name ?? null
+          try {
+            const zh = await getStockNameById(ev.symbol)
+            if (zh) displayName = zh
+          } catch {}
+
+          const q = quoteMap.get(ev.symbol)
+          const assetKind = classifyAssetKind(q?.quoteType ?? '')
+
+          const histEvents = (historyBySymbol.get(ev.symbol) ?? [])
+            .filter((r) => r.ex_date < ev.ex_date)
+            .map((r) => ({ exDate: r.ex_date, cashDividend: r.cash_dividend }))
+          let avgFillDays: number | null = null
+          let fillScore: number | null = null
+          if (bars.length > 0 && histEvents.length >= 3) {
+            const st = analyzeExDividendEvents(bars, histEvents)
+            if (!st.insufficient) {
+              avgFillDays = st.avgFillDays
+              fillScore = st.fillScore
+            }
+          }
+
+          return {
+            symbol: ev.symbol,
+            name: displayName,
+            ex_date: ev.ex_date,
+            cash_dividend: ev.cash_dividend,
+            prev_close: progress.prevClose,
+            reference_price: progress.referencePrice,
+            current_price: progress.currentPrice,
+            progress_pct: progress.progressPct,
+            status: progress.status,
+            status_label: progress.statusLabel,
+            filled_in_days: progress.filledInDays,
+            days_since_ex: progress.daysSinceEx,
+            asset_kind: assetKind,
+            asset_label: assetKindLabel(assetKind),
+            avg_fill_days: avgFillDays,
+            fill_score: fillScore,
+          }
+        } catch {
+          return null
+        }
+      },
+    )
+
+    const validTrackingItems = trackingResults.filter((t): t is ExDividendTrackingItem => t != null)
+
     return NextResponse.json({
       success: true,
       today,
@@ -254,6 +376,7 @@ export async function GET() {
       coverage: [...coverage, ...histCoverage],
       truncated,
       total: symbols.length,
+      tracking_items: validTrackingItems,
       items,
     })
   } catch (e: unknown) {

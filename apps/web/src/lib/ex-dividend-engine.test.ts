@@ -5,6 +5,7 @@ import {
   classifyAssetKind,
   computeExLastBuyDate,
   computeFillScore,
+  computeLiveFillProgress,
   daysUntilEx,
   MIN_EVENTS_FOR_SCORE,
   type ExDividendPriceBar,
@@ -248,5 +249,44 @@ describe('computeFillScore｜評分公式', () => {
   it('缺值以 0 計；全滿為 100', () => {
     expect(computeFillScore(null, null, null)).toBe(0)
     expect(computeFillScore(1, 1, 1)).toBe(100)
+  })
+})
+
+describe('Issue #93 computeLiveFillProgress｜即時填息進度計算', () => {
+  it('已填息：現價達到或超過除息前收盤', () => {
+    // 前收 100，除息 5 元，參考價 95，現價 101
+    const res = computeLiveFillProgress(100, 5, 101, [
+      { date: '2026-10-01', close: 96 },
+      { date: '2026-10-02', close: 98 },
+      { date: '2026-10-03', close: 100.5 },
+    ])
+    expect(res.status).toBe('filled')
+    expect(res.filledInDays).toBe(3)
+    expect(res.referencePrice).toBe(95)
+    expect(res.statusLabel).toBe('已填息（3天）')
+  })
+
+  it('填息中：現價在參考價與除息前收盤之間', () => {
+    // 前收 100，除息 5 元，參考價 95，現價 98（進度 60%）
+    const res = computeLiveFillProgress(100, 5, 98, [
+      { date: '2026-10-01', close: 96 },
+      { date: '2026-10-02', close: 98 },
+    ])
+    expect(res.status).toBe('filling')
+    expect(res.progressPct).toBe(60)
+    expect(res.filledInDays).toBeNull()
+    expect(res.statusLabel).toBe('填息中 60%')
+  })
+
+  it('貼息中：現價跌破除息參考價', () => {
+    // 前收 100，除息 5 元，參考價 95，現價 93（進度 -40%）
+    const res = computeLiveFillProgress(100, 5, 93, [
+      { date: '2026-10-01', close: 94 },
+      { date: '2026-10-02', close: 93 },
+    ])
+    expect(res.status).toBe('discount')
+    expect(res.progressPct).toBe(-40)
+    expect(res.filledInDays).toBeNull()
+    expect(res.statusLabel).toBe('貼息中 -40%')
   })
 })

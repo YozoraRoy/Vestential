@@ -187,6 +187,31 @@ export default async function Home() {
         </figure>
       </section>
 
+      {/* 🚀 Feature Quick Bar */}
+      <div className="mb-10 flex flex-wrap items-center justify-center gap-3">
+        <Link
+          href={localizePath(locale, '/ex-dividend')}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-medium text-emerald-300 transition shadow-sm"
+        >
+          <span>🔥 除權息填息追蹤</span>
+          <span className="text-[10px] text-emerald-400/70">→</span>
+        </Link>
+        <Link
+          href={localizePath(locale, '/gift-map')}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-xs font-medium text-amber-300 transition shadow-sm"
+        >
+          <span>🎁 紀念品攻略地圖</span>
+          <span className="text-[10px] text-amber-400/70">→</span>
+        </Link>
+        <Link
+          href={localizePath(locale, '/market-level')}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-xs font-medium text-blue-300 transition shadow-sm"
+        >
+          <span>📊 大盤水位儀表板</span>
+          <span className="text-[10px] text-blue-400/70">→</span>
+        </Link>
+      </div>
+
       {/* ② Core features */}
       <section aria-labelledby="core-features" className="mb-14">
         <SectionHeading id="core-features" icon={Sparkles} title={dict.home.coreFeaturesTitle} />

@@ -37,6 +37,7 @@ export interface Dict {
     marketFocus: string
     agentArena: string
     journal: string
+    exDividend: string
   }
   switcher: {
     label: string

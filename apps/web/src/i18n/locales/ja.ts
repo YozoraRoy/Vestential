@@ -30,6 +30,7 @@ export const ja: Dict = {
     marketFocus: 'マーケットフォーカス',
     agentArena: 'AIアリーナ',
     journal: '取引日誌',
+    exDividend: '配当落ち',
   },
   switcher: {
     label: '言語を選択',

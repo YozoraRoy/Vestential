@@ -252,4 +252,28 @@ On the backend it performs asynchronous deduplication via normalized headline fe
   - **MOPS Official Disclosure Verification**: Expandable card view showing official MOPS announcement text excerpt and source link.
   - **Compliance & Disclaimer**: Strictly reminds investors that final gift distribution details, distribution locations, and odd-lot rules are governed by each company's official meeting notice.
 
+---
+
+## 12. 📈 Ex-Dividend Fill Progress & Prediction (`/ex-dividend`, Issue #93)
+
+- **Purpose & User Value**: Solves the critical investor pain point "Will the stock fill its dividend gap after ex-dividend?". Provides dual-perspective actionable tools: predicting dividend-filling probability and tracking live post-ex-dividend recovery progress.
+- **Dual-View Dashboard**:
+  - **🔥 Recent Ex-Dividend Fill Progress Tracking (`live_tracking`)**:
+    - Focuses on stocks that went ex-dividend within the past 60 days.
+    - **Visual Fill Progress Bar**: Visualizes recovery progress ($0\% \sim 100\%+$) with real-time stock prices.
+    - **Three Status Tiers**:
+      - `Filled (已填息)`: Current price has recovered to or exceeded the pre-ex-dividend close.
+      - `Filling (填息中 X%)`: Stock price is trading between ex-dividend reference price and pre-close.
+      - `Discount (貼息中 -X%)`: Stock price has dropped below the ex-dividend reference price.
+    - **Benchmark Comparison**: Displays elapsed trading days alongside historical average fill days to assess recovery speed.
+  - **📅 Upcoming 30-Day Ex-Dividend Calendar (`upcoming_preview`)**:
+    - Displays upcoming cash dividends, estimated yield, 5-year average fill rate, and predicted fill duration.
+    - Integrated with TWSE official schedule announcements (`TWT48U` / `TWT49U`).
+- **Site Navigation & Discoverability**:
+  - **Home Page Quick Bar**: Directly accessible via the "🔥 除權息填息追蹤" action button located right under the Hero section.
+  - **Global Top Navigation**: Embedded in the global desktop navigation bar and mobile hamburger menu across Traditional Chinese, English, and Japanese.
+- **Mathematical Formulations**:
+  - Reference Price: $\text{Pre-Close} - \text{Cash Dividend}$
+  - Fill Percentage: $\frac{\text{Current Price} - \text{Reference Price}}{\text{Cash Dividend}} \times 100\%$
+  - Elapsed Days: calculated from actual calendar trading days post ex-dividend date.
 

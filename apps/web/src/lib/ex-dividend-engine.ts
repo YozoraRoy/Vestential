@@ -309,3 +309,80 @@ function windowLenOf(bars: ExDividendPriceBar[], exDate: string): number {
   }
   return idx < 0 ? 0 : bars.length - idx
 }
+
+/** Issue #93：進行中填息進度追蹤 */
+export type LiveFillStatus = 'filled' | 'filling' | 'discount'
+
+export interface LiveFillProgress {
+  referencePrice: number
+  prevClose: number
+  currentPrice: number
+  cashDividend: number
+  progressPct: number
+  status: LiveFillStatus
+  statusLabel: string
+  filledInDays: number | null
+  daysSinceEx: number
+}
+
+/**
+ * 計算單一除息事件當前的填息進度與狀態
+ * @param prevClose 除息前收盤價
+ * @param cashDividend 每股現金股利
+ * @param currentPrice 最新現價
+ * @param barsAfterEx 除息日（含）之後的日 K 線（用於回溯填息天數）
+ */
+export function computeLiveFillProgress(
+  prevClose: number,
+  cashDividend: number,
+  currentPrice: number,
+  barsAfterEx: { date: string; close: number }[] = [],
+): LiveFillProgress {
+  const refPrice = Math.round((prevClose - cashDividend) * 100) / 100
+  const daysSinceEx = barsAfterEx.length
+
+  // 檢查除息後是否曾達成填息
+  let filledInDays: number | null = null
+  for (let i = 0; i < barsAfterEx.length; i++) {
+    if (barsAfterEx[i]!.close >= prevClose) {
+      filledInDays = i + 1
+      break
+    }
+  }
+
+  const isCurrentlyFilled = currentPrice >= prevClose
+  const hasEverFilled = filledInDays != null || isCurrentlyFilled
+
+  let rawPct = 0
+  if (cashDividend > 0) {
+    rawPct = ((currentPrice - refPrice) / cashDividend) * 100
+  }
+  const progressPct = Math.round(rawPct * 10) / 10
+
+  let status: LiveFillStatus
+  let statusLabel: string
+
+  if (hasEverFilled) {
+    status = 'filled'
+    statusLabel = filledInDays ? `已填息（${filledInDays}天）` : '已填息'
+  } else if (currentPrice >= refPrice) {
+    status = 'filling'
+    statusLabel = `填息中 ${Math.max(0, progressPct)}%`
+  } else {
+    status = 'discount'
+    statusLabel = `貼息中 ${progressPct}%`
+  }
+
+  return {
+    referencePrice: refPrice,
+    prevClose,
+    currentPrice,
+    cashDividend,
+    progressPct,
+    status,
+    statusLabel,
+    filledInDays,
+    daysSinceEx,
+  }
+}
+

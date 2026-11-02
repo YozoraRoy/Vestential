@@ -30,6 +30,7 @@ export const en: Dict = {
     marketFocus: 'Market Focus',
     agentArena: 'AI Arena',
     journal: 'Journal',
+    exDividend: 'Ex-Dividend',
   },
   switcher: {
     label: 'Select language',

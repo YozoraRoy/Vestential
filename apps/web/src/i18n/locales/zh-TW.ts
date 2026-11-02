@@ -30,6 +30,7 @@ export const zhTW: Dict = {
     marketFocus: '市場焦點',
     agentArena: 'AI 競技場',
     journal: '交易日誌',
+    exDividend: '除權息填息',
   },
   switcher: {
     label: '選擇語言',
