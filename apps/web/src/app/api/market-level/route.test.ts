@@ -18,15 +18,15 @@ describe('Issue #74 /api/market-level route', () => {
     vi.clearAllMocks()
     dbMock.getMarketLevels.mockResolvedValue([
       {
-        trade_date: '2026-10-30',
+        trade_date: '2026-11-02',
         taiex: 45211.83,
-        pe_ratio: 22.1,
-        pb_ratio: 2.52,
-        dividend_yield: 2.85,
-        pe_percentile: 73.0,
-        pb_percentile: 72.0,
-        composite_percentile: 72.5,
-        level_status: 'warm',
+        pe_ratio: 25.8,
+        pb_ratio: 4.10,
+        dividend_yield: 1.58,
+        pe_percentile: 86.5,
+        pb_percentile: 87.0,
+        composite_percentile: 86.75,
+        level_status: 'overheated',
       },
     ])
   })
@@ -37,7 +37,7 @@ describe('Issue #74 /api/market-level route', () => {
     const json = await res.json()
     expect(json.success).toBe(true)
     expect(json.current).toBeDefined()
-    expect(json.current.levelStatus).toBe('warm')
+    expect(json.current.levelStatus).toBe('overheated')
     expect(json.disclaimer).toContain('合規警語與免責聲明')
     expect(json.history).toBeDefined()
   })

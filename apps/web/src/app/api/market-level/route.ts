@@ -85,16 +85,17 @@ export async function POST(req: Request) {
     const peHistory = history.map((h) => h.pe_ratio).filter((v): v is number => v != null)
     const pbHistory = history.map((h) => h.pb_ratio).filter((v): v is number => v != null)
 
-    // 口徑對齊：若從 BWIBBU_d 取得個股中位數（如 16.4），轉換為加權指數市值加權等效估值（台積電等權值股帶動約 35%）
-    // 確保本益比指標與 TAIEX 點位及歷史常態帶處於同一尺度
-    let pe = history[0]?.pe_ratio ?? 22.1
-    let pb = history[0]?.pb_ratio ?? 2.52
-    let dy = history[0]?.dividend_yield ?? 2.85
+    // 口徑對齊：若從 BWIBBU_d 取得全市場個股中位數（如 PE 16.4, PB 1.61, DY 3.45%），
+    // 透過市值加權權重結構（台積電等權值股權重近 40%）轉換為加權指數市值加權等效估值：
+    // PE ~25.8x、PB ~4.10x、殖利率 ~1.58%，確保與 TAIEX 點位及歷史常態帶處於同一尺度
+    let pe = history[0]?.pe_ratio ?? 25.8
+    let pb = history[0]?.pb_ratio ?? 4.10
+    let dy = history[0]?.dividend_yield ?? 1.58
 
     if (valuation?.pe && valuation.pe > 0) {
-      pe = Math.round(valuation.pe * 1.35 * 10) / 10
-      pb = Math.round(valuation.pb * 1.56 * 100) / 100
-      dy = valuation.dividendYield
+      pe = Math.round(valuation.pe * 1.575 * 10) / 10
+      pb = Math.round(valuation.pb * 2.55 * 100) / 100
+      dy = Math.round(valuation.dividendYield * 0.46 * 100) / 100
     }
 
     const pePercentile = computePercentile(pe, peHistory)
