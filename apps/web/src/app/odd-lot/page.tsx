@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { unstable_cache } from 'next/cache'
 import { dbQueryAll, dbQueryFirst, ensureSeedData } from '@stock/database'
 import { OddLotView, type OddLotItem } from '@/components/odd-lot-view'
@@ -185,6 +186,13 @@ export default async function OddLotPage({
               </span>
             </div>
           )}
+          <Link
+            href="/gift-map"
+            className="bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs text-emerald-300 font-medium transition shadow-sm"
+          >
+            <Gift className="w-4 h-4 text-emerald-400" />
+            <span>🎁 紀念品攻略地圖</span>
+          </Link>
           <div className="bg-[var(--bg-card)] border border-white/10 px-4 py-2 rounded-xl flex items-center gap-2 text-xs">
             <Gift className="w-4 h-4 text-[var(--accent-green)]" />
             <span>{d.giftBadge}</span>

@@ -232,3 +232,24 @@ On the backend it performs asynchronous deduplication via normalized headline fe
 - **Mobile-First UX**: top status card with visual gauge indicator and plain-language explanation, 4 key metrics, 5-year valuation band toggles (P/E and P/B), and recent trading-day history table.
 - **Compliance & Disclaimer**: strictly presents objective historical statistical facts without trading advice, price predictions, or entry/exit recommendations. Prominently highlights that valuation signals may stay in overheated/undervalued zones for months during secular bull/bear expansions.
 
+---
+
+## 11. 🎁 Shareholder Gifts Calendar & Guide (`/gift-map`, Issue #118)
+
+- **Purpose & User Value**: Productizes Vestential's odd-lot and shareholder gift databases (`shareholder_gifts` and MOPS meeting announcements) into an actionable countdown and claim guide tailored for odd-lot retail investors:
+  - Answers the critical questions: "Can I still buy in time?", "Can 1-share holders claim the gift?", and "Do I need to cast an electronic vote?".
+- **Key Modules & Capabilities**:
+  - **Countdown Clock**: Real-time countdown to the last buy date (`TODAY`, `T-3`, `T-7`, and `UPCOMING`) with Taiwan trading calendar integration.
+  - **Eligibility Normalization**: Accurately classifies eligibility into 5 standard tiers:
+    - `ONE_SHARE` (1-share holders eligible / all shareholders).
+    - `VOTE_REQUIRED` (Electronic voting via TDCC e-Vote required to claim).
+    - `MEETING_ONLY` (Physical attendance at annual shareholder meeting required).
+    - `NO_GIFT` (Company explicitly declared no gift distributed).
+    - `UNKNOWN` (Pending official company announcement).
+  - **Dual-View Support**:
+    - `Active Countdown` (2027 Season Prep): Anticipates upcoming shareholder meeting announcement cutoffs.
+    - `Review / Showcase` (2026 Historical Recap): Highlights popular corporate gifts (Taroko, China Steel, UMC, Wowprime, etc.) to prevent off-season empty states.
+  - **MOPS Official Disclosure Verification**: Expandable card view showing official MOPS announcement text excerpt and source link.
+  - **Compliance & Disclaimer**: Strictly reminds investors that final gift distribution details, distribution locations, and odd-lot rules are governed by each company's official meeting notice.
+
+
