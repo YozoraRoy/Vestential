@@ -285,4 +285,10 @@ On the backend it performs asynchronous deduplication via normalized headline fe
   - **Asset Classification Filter**: Segmented control for `All`, `Stocks`, and `ETFs` with instant counter indicators.
   - **Instant Symbol / Name Search**: Real-time filtering by ticker or traditional Chinese company name (e.g., `0056`, `台積電`).
   - **Default Table View with Card Toggle**: Defaults to an information-dense, mobile-responsive table layout (status badges, cash dividend, reference price, current price, mini progress bar, and historical benchmark); card view remains available via a one-click toggle.
+- **Precision Formatting & Navigation Hub (Issue #125)**:
+  - **2-Decimal Precision**: Strictly limits post-ex price displays (prev close, ex reference price, and current price) to a clean maximum of 2 decimal places (`fmtPrice`).
+  - **Pruned Table Columns**: Pruned the redundant historical benchmark column to focus purely on active fill progress, prices, and actionable links.
+  - **Deterministic ETF / Stock Identification**: Replaced fragile single Yahoo quoteType checks with TWSE/TPEx official numbering rules (`00` prefix, active ETFs, leveraged/inverse/bond ETFs like `00994A`, `00679B`) combined with semantic Chinese keyword matching. Common stocks and `-KY` foreign stocks (e.g. 2762 World Fitness-KY) are accurately distinguished.
+  - **Direct Backtest Execution**: Clicking a ticker automatically redirects to `/backtest?symbol=XXXX` and auto-executes quantitative backtesting.
+  - **Yahoo Finance Direct Link**: Added quick-access external link (`https://tw.stock.yahoo.com/quote/{symbol}.TW`) for instant real-time charts and order book inspection.
 

@@ -11,14 +11,16 @@ import {
   X,
   LayoutList,
   LayoutGrid,
+  ExternalLink,
 } from 'lucide-react'
 import { TableSkeleton } from '@/components/table-skeleton'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import { classifyAssetKind, assetKindLabel } from '@/lib/ex-dividend-engine'
 
-// Issue #67 & #93 & #123：除權息填息力預測＋填息進度追蹤
+// Issue #67 & #93 & #123 & #125：除權息填息力預測＋填息進度追蹤
 // 文案紅線：僅歷史統計＋免責，禁「預測/保證」字眼；機率＝過去填息事件佔比。
-// 支援：ETF分類篩選、代號/名稱即時搜尋、預設列表表格(Table View)與卡片化切換。
+// 支援：ETF精確分類（00開頭/主動型）、代號直達回測、Yahoo外部連結、小數點2位、表格精簡。
 
 interface ExDividendEventFill {
   exDate: string
@@ -107,6 +109,12 @@ function fmtPct(ratio: number | null): string {
   return `${(ratio * 100).toFixed(1)}%`
 }
 
+/** 價格與股利格式化（Issue #125：最多小數點 2 位） */
+function fmtPrice(val: number | null | undefined): string {
+  if (val == null || !Number.isFinite(val)) return '—'
+  return val.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+}
+
 function countdownBadge(days: number | null): { text: string; hot: boolean } {
   if (days == null) return { text: '—', hot: false }
   if (days < 0) return { text: '已除息', hot: false }
@@ -175,6 +183,11 @@ export default function ExDividendPage() {
     }
   }
 
+  // 前端精確判定資產種類（Issue #125：結合代號正規式 + 名稱關鍵字 + KY判斷）
+  const resolveKind = (quoteType: string | undefined, symbol: string, name: string | null | undefined) => {
+    return classifyAssetKind(quoteType, symbol, name)
+  }
+
   // 排序未來預告標的
   const sortedUpcomingItems = [...(data?.items ?? [])].sort((a, b) => {
     if (sortBy === 'score') {
@@ -185,10 +198,11 @@ export default function ExDividendPage() {
     return a.ex_date < b.ex_date ? -1 : a.ex_date > b.ex_date ? 1 : a.symbol.localeCompare(b.symbol)
   })
 
-  // 搜尋過濾：填息追蹤
+  // 搜尋與種類過濾：填息追蹤
   const filteredTrackingItems = (data?.tracking_items ?? []).filter((item) => {
-    if (assetFilter === 'etf' && item.asset_kind !== 'etf') return false
-    if (assetFilter === 'stock' && item.asset_kind !== 'stock') return false
+    const kind = resolveKind(undefined, item.symbol, item.name)
+    if (assetFilter === 'etf' && kind !== 'etf') return false
+    if (assetFilter === 'stock' && kind !== 'stock') return false
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase()
       const matchSymbol = item.symbol.toLowerCase().includes(q)
@@ -198,10 +212,11 @@ export default function ExDividendPage() {
     return true
   })
 
-  // 搜尋過濾：未來預告
+  // 搜尋與種類過濾：未來預告
   const filteredUpcomingItems = sortedUpcomingItems.filter((item) => {
-    if (assetFilter === 'etf' && item.asset_kind !== 'etf') return false
-    if (assetFilter === 'stock' && item.asset_kind !== 'stock') return false
+    const kind = resolveKind(item.quote_type, item.symbol, item.name)
+    if (assetFilter === 'etf' && kind !== 'etf') return false
+    if (assetFilter === 'stock' && kind !== 'stock') return false
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase()
       const matchSymbol = item.symbol.toLowerCase().includes(q)
@@ -211,14 +226,14 @@ export default function ExDividendPage() {
     return true
   })
 
-  // 數量統計
+  // 數量統計（以強化後的精準分類為基準）
   const totalTrackingCount = data?.tracking_items?.length ?? 0
-  const etfTrackingCount = data?.tracking_items?.filter((i) => i.asset_kind === 'etf').length ?? 0
-  const stockTrackingCount = data?.tracking_items?.filter((i) => i.asset_kind === 'stock').length ?? 0
+  const etfTrackingCount = data?.tracking_items?.filter((i) => resolveKind(undefined, i.symbol, i.name) === 'etf').length ?? 0
+  const stockTrackingCount = data?.tracking_items?.filter((i) => resolveKind(undefined, i.symbol, i.name) === 'stock').length ?? 0
 
   const totalUpcomingCount = data?.items?.length ?? 0
-  const etfUpcomingCount = data?.items?.filter((i) => i.asset_kind === 'etf').length ?? 0
-  const stockUpcomingCount = data?.items?.filter((i) => i.asset_kind === 'stock').length ?? 0
+  const etfUpcomingCount = data?.items?.filter((i) => resolveKind(i.quote_type, i.symbol, i.name) === 'etf').length ?? 0
+  const stockUpcomingCount = data?.items?.filter((i) => resolveKind(i.quote_type, i.symbol, i.name) === 'stock').length ?? 0
 
   const currentAllCount = tab === 'tracking' ? totalTrackingCount : totalUpcomingCount
   const currentStockCount = tab === 'tracking' ? stockTrackingCount : stockUpcomingCount
@@ -330,7 +345,7 @@ export default function ExDividendPage() {
                 )}
               </div>
 
-              {/* ETF / 個股 分類篩選（Issue #123） */}
+              {/* ETF / 個股 分類篩選（Issue #123 & #125） */}
               <div className="inline-flex rounded-lg bg-black/20 p-0.5 border border-white/10 self-start sm:self-auto shrink-0">
                 <button
                   type="button"
@@ -437,20 +452,19 @@ export default function ExDividendPage() {
                   <p className="text-xs">請嘗試調整搜尋關鍵字或分類篩選條件。</p>
                 </div>
               ) : viewMode === 'table' ? (
-                /* ── 列表表格模式（Table View，預設） ── */
+                /* ── 列表表格模式（Table View，預設，已精簡欄位） ── */
                 <div className="overflow-x-auto rounded-xl border border-white/5 bg-[var(--bg-card)]">
                   <table className={tableClass(typo, 'w-full text-xs')}>
                     <thead>
                       <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] bg-white/[0.02] border-b border-white/5 whitespace-nowrap')}>
                         <th className="px-3.5 py-2.5 font-medium">狀態</th>
-                        <th className="px-3 py-2.5 font-medium">標的</th>
-                        <th className="px-3 py-2.5 font-medium">除息日</th>
-                        <th className="px-3 py-2.5 font-medium text-right">現金股利</th>
-                        <th className="px-3 py-2.5 font-medium text-right">除息前收 / 參考價</th>
-                        <th className="px-3 py-2.5 font-medium text-right">最新現價</th>
-                        <th className="px-3.5 py-2.5 font-medium min-w-[150px]">填息進度</th>
-                        <th className="px-3.5 py-2.5 font-medium">填息天數實證</th>
-                        <th className="px-3 py-2.5 font-medium text-right">操作</th>
+                        <th className="px-3.5 py-2.5 font-medium">標的</th>
+                        <th className="px-3.5 py-2.5 font-medium">除息日</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">現金股利</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">除息前收 / 參考價</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">最新現價</th>
+                        <th className="px-3.5 py-2.5 font-medium min-w-[160px]">填息進度</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">量化回測</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -458,6 +472,8 @@ export default function ExDividendPage() {
                         const isFilled = item.status === 'filled'
                         const isFilling = item.status === 'filling'
                         const barWidth = Math.min(100, Math.max(0, item.progress_pct))
+                        const kind = resolveKind(undefined, item.symbol, item.name)
+                        const label = assetKindLabel(kind)
 
                         return (
                           <tr key={item.symbol} className="hover:bg-white/[0.02] transition">
@@ -476,12 +492,13 @@ export default function ExDividendPage() {
                               </span>
                             </td>
 
-                            {/* 標的代號與名稱 */}
-                            <td className="px-3 py-3 whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
+                            {/* 標的代號、名稱、分類標籤、Yahoo超連結（Issue #125） */}
+                            <td className="px-3.5 py-3 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <Link
-                                  href={`/odd-lot?symbol=${item.symbol}`}
+                                  href={`/backtest?symbol=${item.symbol}`}
                                   className="font-bold text-sm font-mono text-[var(--accent)] hover:underline"
+                                  title="點擊直接進行量化回測"
                                 >
                                   {item.symbol}
                                 </Link>
@@ -491,37 +508,47 @@ export default function ExDividendPage() {
                                   </span>
                                 )}
                                 <span className="text-[10px] px-1 py-px rounded border border-white/10 text-[var(--text-secondary)]">
-                                  {item.asset_label}
+                                  {label}
                                 </span>
+                                <a
+                                  href={`https://tw.stock.yahoo.com/quote/${item.symbol}.TW`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 hover:text-white px-1.5 py-px rounded bg-white/5 border border-white/10 transition"
+                                  title={`在 Yahoo 奇摩股市查看 ${item.symbol}`}
+                                >
+                                  <span>Yahoo</span>
+                                  <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                                </a>
                               </div>
                             </td>
 
                             {/* 除息日 */}
-                            <td className="px-3 py-3 whitespace-nowrap">
+                            <td className="px-3.5 py-3 whitespace-nowrap">
                               <span className="font-mono text-zinc-300">{item.ex_date}</span>
                               <span className="text-[10px] text-[var(--text-secondary)] block">
                                 第 {item.days_since_ex} 交易日
                               </span>
                             </td>
 
-                            {/* 現金股利 */}
-                            <td className="px-3 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
-                              NT$ {item.cash_dividend}
+                            {/* 現金股利（格式化至 2 位小數） */}
+                            <td className="px-3.5 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                              NT$ {fmtPrice(item.cash_dividend)}
                             </td>
 
-                            {/* 前收 / 參考價 */}
-                            <td className="px-3 py-3 text-right font-mono whitespace-nowrap text-zinc-300">
-                              <div>{item.prev_close}</div>
-                              <div className="text-[10px] text-zinc-400">參考 {item.reference_price}</div>
+                            {/* 前收 / 參考價（格式化至 2 位小數） */}
+                            <td className="px-3.5 py-3 text-right font-mono whitespace-nowrap text-zinc-300">
+                              <div>{fmtPrice(item.prev_close)}</div>
+                              <div className="text-[10px] text-zinc-400">參考 {fmtPrice(item.reference_price)}</div>
                             </td>
 
-                            {/* 最新現價 */}
-                            <td className="px-3 py-3 text-right font-mono font-bold text-sm text-zinc-100 whitespace-nowrap">
-                              {item.current_price}
+                            {/* 最新現價（格式化至 2 位小數） */}
+                            <td className="px-3.5 py-3 text-right font-mono font-bold text-sm text-zinc-100 whitespace-nowrap">
+                              {fmtPrice(item.current_price)}
                             </td>
 
                             {/* 填息進度條 */}
-                            <td className="px-3.5 py-3 min-w-[150px]">
+                            <td className="px-3.5 py-3 min-w-[160px]">
                               <div className="space-y-1">
                                 <div className="flex justify-between items-center text-[11px] font-mono">
                                   <span className="text-[var(--text-secondary)]">進度</span>
@@ -530,7 +557,7 @@ export default function ExDividendPage() {
                                       isFilled ? 'text-emerald-400' : isFilling ? 'text-blue-400' : 'text-rose-400'
                                     }`}
                                   >
-                                    {item.progress_pct}%
+                                    {fmtPrice(item.progress_pct)}%
                                   </span>
                                 </div>
                                 <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden">
@@ -548,25 +575,13 @@ export default function ExDividendPage() {
                               </div>
                             </td>
 
-                            {/* 填息天數實證 */}
-                            <td className="px-3.5 py-3 whitespace-nowrap text-[11px] text-[var(--text-secondary)]">
-                              {item.avg_fill_days != null ? (
-                                <span>
-                                  歷史平均 <strong className="text-zinc-200">{item.avg_fill_days} 天</strong>
-                                  {item.fill_score != null ? `（${item.fill_score}分）` : ''}
-                                </span>
-                              ) : (
-                                <span className="text-zinc-400">歷史樣本不足</span>
-                              )}
-                            </td>
-
-                            {/* 操作 */}
-                            <td className="px-3 py-3 text-right whitespace-nowrap">
+                            {/* 操作：點擊直達回測 */}
+                            <td className="px-3.5 py-3 text-right whitespace-nowrap">
                               <Link
-                                href={`/odd-lot?symbol=${item.symbol}`}
-                                className="text-xs text-[var(--accent)] hover:underline"
+                                href={`/backtest?symbol=${item.symbol}`}
+                                className="text-xs text-[var(--accent)] hover:underline font-medium"
                               >
-                                零股 →
+                                跑回測 →
                               </Link>
                             </td>
                           </tr>
@@ -582,14 +597,17 @@ export default function ExDividendPage() {
                     const isFilled = item.status === 'filled'
                     const isFilling = item.status === 'filling'
                     const barWidth = Math.min(100, Math.max(0, item.progress_pct))
+                    const kind = resolveKind(undefined, item.symbol, item.name)
+                    const label = assetKindLabel(kind)
 
                     return (
                       <div key={item.symbol} className="rounded-xl bg-[var(--bg-card)] border border-white/5 p-4 min-w-0 space-y-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
                             <Link
-                              href={`/odd-lot?symbol=${item.symbol}`}
-                              className="font-bold text-base text-[var(--text-primary)] hover:text-[var(--accent)] transition"
+                              href={`/backtest?symbol=${item.symbol}`}
+                              className="font-bold text-base font-mono text-[var(--text-primary)] hover:text-[var(--accent)] transition"
+                              title="點擊直接進行量化回測"
                             >
                               {item.symbol}
                             </Link>
@@ -597,8 +615,18 @@ export default function ExDividendPage() {
                               <span className="text-xs text-[var(--text-secondary)] truncate">{item.name}</span>
                             )}
                             <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-[var(--text-secondary)]">
-                              {item.asset_label}
+                              {label}
                             </span>
+                            <a
+                              href={`https://tw.stock.yahoo.com/quote/${item.symbol}.TW`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 hover:text-white px-1.5 py-0.5 rounded bg-white/5 border border-white/10 transition"
+                              title={`在 Yahoo 奇摩股市查看 ${item.symbol}`}
+                            >
+                              <span>Yahoo</span>
+                              <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                            </a>
                           </div>
 
                           <span
@@ -614,21 +642,21 @@ export default function ExDividendPage() {
                           </span>
                         </div>
 
-                        {/* 價格與股利 3 欄 */}
+                        {/* 價格與股利 3 欄（小數點格式化至 2 位） */}
                         <div className="grid grid-cols-3 gap-2 text-center text-xs py-2 bg-black/20 rounded-lg">
                           <div>
                             <div className="text-[10px] text-[var(--text-secondary)]">除息日 / 股利</div>
                             <div className="font-semibold text-zinc-200 mt-0.5">{item.ex_date}</div>
-                            <div className="text-[11px] text-emerald-400 font-mono mt-0.5">NT$ {item.cash_dividend}</div>
+                            <div className="text-[11px] text-emerald-400 font-mono mt-0.5">NT$ {fmtPrice(item.cash_dividend)}</div>
                           </div>
                           <div>
                             <div className="text-[10px] text-[var(--text-secondary)]">前收 / 參考價</div>
-                            <div className="font-mono text-zinc-300 mt-0.5">{item.prev_close}</div>
-                            <div className="text-[11px] text-zinc-400 font-mono mt-0.5">參考 {item.reference_price}</div>
+                            <div className="font-mono text-zinc-300 mt-0.5">{fmtPrice(item.prev_close)}</div>
+                            <div className="text-[11px] text-zinc-400 font-mono mt-0.5">參考 {fmtPrice(item.reference_price)}</div>
                           </div>
                           <div>
                             <div className="text-[10px] text-[var(--text-secondary)]">最新現價</div>
-                            <div className="font-mono font-bold text-base text-zinc-100 mt-0.5">{item.current_price}</div>
+                            <div className="font-mono font-bold text-base text-zinc-100 mt-0.5">{fmtPrice(item.current_price)}</div>
                             <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">除息第 {item.days_since_ex} 交易日</div>
                           </div>
                         </div>
@@ -642,7 +670,7 @@ export default function ExDividendPage() {
                                 isFilled ? 'text-emerald-400' : isFilling ? 'text-blue-400' : 'text-rose-400'
                               }`}
                             >
-                              {item.progress_pct}%
+                              {fmtPrice(item.progress_pct)}%
                             </span>
                           </div>
 
@@ -660,23 +688,14 @@ export default function ExDividendPage() {
                           </div>
                         </div>
 
-                        {/* 歷史天數對照錨點 */}
+                        {/* 直達回測超連結 */}
                         <div className="flex items-center justify-between text-[11px] text-[var(--text-secondary)] pt-1 border-t border-white/5">
-                          <div>
-                            {item.avg_fill_days != null ? (
-                              <span>
-                                歷史平均 <strong className="text-zinc-200">{item.avg_fill_days} 天</strong> 填息
-                                {item.fill_score != null ? `（填息力 ${item.fill_score} 分）` : ''}
-                              </span>
-                            ) : (
-                              <span>歷史填息紀錄樣本不足</span>
-                            )}
-                          </div>
+                          <span className="text-zinc-400">點擊代號直達自動回測</span>
                           <Link
-                            href={`/odd-lot?symbol=${item.symbol}`}
-                            className="text-[var(--accent)] hover:underline"
+                            href={`/backtest?symbol=${item.symbol}`}
+                            className="text-[var(--accent)] hover:underline font-medium"
                           >
-                            零股行情 →
+                            直接跑回測 →
                           </Link>
                         </div>
                       </div>
@@ -702,14 +721,13 @@ export default function ExDividendPage() {
                     <thead>
                       <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] bg-white/[0.02] border-b border-white/5 whitespace-nowrap')}>
                         <th className="px-3.5 py-2.5 font-medium">倒數</th>
-                        <th className="px-3 py-2.5 font-medium">標的</th>
-                        <th className="px-3 py-2.5 font-medium">除息日</th>
-                        <th className="px-3 py-2.5 font-medium">最後買進日</th>
-                        <th className="px-3 py-2.5 font-medium text-right">現金股利</th>
-                        <th className="px-3 py-2.5 font-medium text-right">預估殖利率</th>
-                        <th className="px-3 py-2.5 font-medium text-right">填息力評分</th>
-                        <th className="px-3.5 py-2.5 font-medium">歷史平均填息</th>
-                        <th className="px-3 py-2.5 font-medium text-right">操作</th>
+                        <th className="px-3.5 py-2.5 font-medium">標的</th>
+                        <th className="px-3.5 py-2.5 font-medium">除息日</th>
+                        <th className="px-3.5 py-2.5 font-medium">最後買進日</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">現金股利</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">預估殖利率</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">填息力評分</th>
+                        <th className="px-3.5 py-2.5 font-medium text-right">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -717,6 +735,8 @@ export default function ExDividendPage() {
                         const cd = countdownBadge(item.days_to_ex)
                         const st = item.stats
                         const open = expanded.has(item.symbol)
+                        const kind = resolveKind(item.quote_type, item.symbol, item.name)
+                        const label = assetKindLabel(kind)
 
                         return (
                           <>
@@ -733,11 +753,12 @@ export default function ExDividendPage() {
                               </td>
 
                               {/* 標的 */}
-                              <td className="px-3 py-3 whitespace-nowrap">
-                                <div className="flex items-center gap-1.5">
+                              <td className="px-3.5 py-3 whitespace-nowrap">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <Link
-                                    href={`/odd-lot?symbol=${item.symbol}`}
+                                    href={`/backtest?symbol=${item.symbol}`}
                                     className="font-bold text-sm font-mono text-[var(--accent)] hover:underline"
+                                    title="點擊直接進行量化回測"
                                   >
                                     {item.symbol}
                                   </Link>
@@ -747,33 +768,43 @@ export default function ExDividendPage() {
                                     </span>
                                   )}
                                   <span className="text-[10px] px-1 py-px rounded border border-white/10 text-[var(--text-secondary)]">
-                                    {item.asset_label}
+                                    {label}
                                   </span>
+                                  <a
+                                    href={`https://tw.stock.yahoo.com/quote/${item.symbol}.TW`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 hover:text-white px-1.5 py-px rounded bg-white/5 border border-white/10 transition"
+                                    title={`在 Yahoo 奇摩股市查看 ${item.symbol}`}
+                                  >
+                                    <span>Yahoo</span>
+                                    <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                                  </a>
                                 </div>
                               </td>
 
                               {/* 除息日 */}
-                              <td className="px-3 py-3 font-mono font-medium text-zinc-200 whitespace-nowrap">
+                              <td className="px-3.5 py-3 font-mono font-medium text-zinc-200 whitespace-nowrap">
                                 {item.ex_date}
                               </td>
 
                               {/* 最後買進日 */}
-                              <td className="px-3 py-3 font-mono text-zinc-300 whitespace-nowrap">
+                              <td className="px-3.5 py-3 font-mono text-zinc-300 whitespace-nowrap">
                                 {item.ex_last_buy_date || '—'}
                               </td>
 
                               {/* 現金股利 */}
-                              <td className="px-3 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
-                                NT$ {item.cash_dividend}
+                              <td className="px-3.5 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                                NT$ {fmtPrice(item.cash_dividend)}
                               </td>
 
                               {/* 預估殖利率 */}
-                              <td className="px-3 py-3 text-right font-mono font-medium text-zinc-100 whitespace-nowrap">
-                                {item.yield_pct != null ? `${item.yield_pct}%` : '—'}
+                              <td className="px-3.5 py-3 text-right font-mono font-medium text-zinc-100 whitespace-nowrap">
+                                {item.yield_pct != null ? `${fmtPrice(item.yield_pct)}%` : '—'}
                               </td>
 
                               {/* 填息力評分 */}
-                              <td className="px-3 py-3 text-right font-mono whitespace-nowrap">
+                              <td className="px-3.5 py-3 text-right font-mono whitespace-nowrap">
                                 {st && st.fillScore != null ? (
                                   <span className="font-bold text-amber-400">{st.fillScore} 分</span>
                                 ) : (
@@ -781,34 +812,31 @@ export default function ExDividendPage() {
                                 )}
                               </td>
 
-                              {/* 歷史平均填息 */}
-                              <td className="px-3.5 py-3 whitespace-nowrap text-[11px]">
-                                {st && st.avgFillDays != null ? (
-                                  <span className="text-zinc-200 font-mono">
-                                    平均 <strong>{st.avgFillDays}</strong> 天（{st.eventCount} 次除息）
-                                  </span>
-                                ) : (
-                                  <span className="text-[var(--text-secondary)]">無足夠歷史</span>
-                                )}
-                              </td>
-
                               {/* 操作 */}
-                              <td className="px-3 py-3 text-right whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => toggle(item.symbol)}
-                                  className="text-xs text-[var(--accent)] hover:underline inline-flex items-center gap-0.5"
-                                >
-                                  <span>{open ? '收起' : '明細'}</span>
-                                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
-                                </button>
+                              <td className="px-3.5 py-3 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-2">
+                                  <Link
+                                    href={`/backtest?symbol=${item.symbol}`}
+                                    className="text-xs text-[var(--accent)] hover:underline font-medium"
+                                  >
+                                    跑回測
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggle(item.symbol)}
+                                    className="text-xs text-zinc-400 hover:text-white inline-flex items-center gap-0.5"
+                                  >
+                                    <span>{open ? '收起' : '明細'}</span>
+                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
 
                             {/* 展開之歷史填息明細行 */}
                             {open && (
                               <tr key={`${item.symbol}-detail`} className="bg-black/30">
-                                <td colSpan={9} className="px-4 py-3 border-b border-white/5 space-y-2">
+                                <td colSpan={8} className="px-4 py-3 border-b border-white/5 space-y-2">
                                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                                     <div className="p-2 rounded bg-white/5">
                                       <div className="text-[10px] text-[var(--text-secondary)]">次日填息機率 (D1)</div>
@@ -831,11 +859,22 @@ export default function ExDividendPage() {
                                   </div>
                                   <div className="flex items-center justify-between text-[11px] text-[var(--text-secondary)] pt-1">
                                     <span>
-                                      回溯期間：{st?.yearsCovered?.join('、') ?? '無紀錄'} 年（共 {st?.eventCount ?? 0} 次除息紀錄）
+                                      回溯期間：{st?.yearsCovered?.join('、') ?? '無紀錄'} 年（共 {st?.eventCount ?? 0} 次除息紀錄，平均 {st?.avgFillDays ?? '—'} 天填息）
                                     </span>
-                                    <Link href={`/odd-lot?symbol=${item.symbol}`} className="text-[var(--accent)] hover:underline">
-                                      查看 {item.symbol} 零股盤後報價 →
-                                    </Link>
+                                    <div className="flex items-center gap-3">
+                                      <a
+                                        href={`https://tw.stock.yahoo.com/quote/${item.symbol}.TW`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-zinc-400 hover:text-white inline-flex items-center gap-1"
+                                      >
+                                        <span>Yahoo 奇摩股市走勢</span>
+                                        <ExternalLink className="w-3 h-3" />
+                                      </a>
+                                      <Link href={`/backtest?symbol=${item.symbol}`} className="text-[var(--accent)] hover:underline font-semibold">
+                                        立即自動執行量化回測 →
+                                      </Link>
+                                    </div>
                                   </div>
                                 </td>
                               </tr>
@@ -853,17 +892,31 @@ export default function ExDividendPage() {
                     const cd = countdownBadge(item.days_to_ex)
                     const open = expanded.has(item.symbol)
                     const st = item.stats
+                    const kind = resolveKind(item.quote_type, item.symbol, item.name)
+                    const label = assetKindLabel(kind)
+
                     return (
                       <div key={item.symbol} className="rounded-xl bg-[var(--bg-card)] border border-white/5 p-4 min-w-0">
                         <button onClick={() => toggle(item.symbol)} className="w-full text-left min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="font-bold text-[var(--text-primary)]">{item.symbol}</span>
+                            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                              <span className="font-bold font-mono text-[var(--text-primary)]">{item.symbol}</span>
                               {item.name && (
                                 <span className="text-xs text-[var(--text-secondary)] truncate">{item.name}</span>
                               )}
                               <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-[var(--text-secondary)]">
-                                {item.asset_label}
+                                {label}
+                              </span>
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  window.open(`https://tw.stock.yahoo.com/quote/${item.symbol}.TW`, '_blank')
+                                }}
+                                className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 hover:text-white px-1.5 py-0.5 rounded bg-white/5 border border-white/10 transition"
+                                title={`在 Yahoo 奇摩股市查看 ${item.symbol}`}
+                              >
+                                <span>Yahoo</span>
+                                <ExternalLink className="w-2.5 h-2.5 opacity-70" />
                               </span>
                             </div>
                             <span className="flex items-center gap-1 shrink-0">
@@ -886,10 +939,10 @@ export default function ExDividendPage() {
                             <div className="min-w-0">
                               <div className="text-[10px] text-[var(--text-secondary)]">現金股利</div>
                               <div className="text-xs font-semibold text-emerald-400 font-mono">
-                                NT$ {item.cash_dividend}
+                                NT$ {fmtPrice(item.cash_dividend)}
                               </div>
                               <div className="text-[10px] text-[var(--text-secondary)]">
-                                {item.yield_pct != null ? `殖利率 ${item.yield_pct}%` : '殖利率 —'}
+                                {item.yield_pct != null ? `殖利率 ${fmtPrice(item.yield_pct)}%` : '殖利率 —'}
                               </div>
                             </div>
                             <div className="min-w-0">
@@ -948,12 +1001,12 @@ export default function ExDividendPage() {
                               </div>
                             )}
 
-                            <div className="flex justify-between items-center pt-1 text-[11px]">
+                            <div className="flex justify-between items-center pt-1 text-[11px] flex-wrap gap-2">
                               <Link
-                                href={`/odd-lot?symbol=${item.symbol}`}
-                                className="text-[var(--accent)] hover:underline"
+                                href={`/backtest?symbol=${item.symbol}`}
+                                className="text-[var(--accent)] hover:underline font-semibold"
                               >
-                                查看 {item.symbol} 零股行情 →
+                                直接自動量化回測 {item.symbol} →
                               </Link>
                               <span className="text-[10px] text-[var(--text-secondary)]">
                                 統計僅供參考，過去表現不代表未來獲利保證
@@ -973,7 +1026,7 @@ export default function ExDividendPage() {
           <div className="rounded-xl bg-black/20 border border-white/5 p-3 text-[11px] text-[var(--text-secondary)] leading-relaxed space-y-1">
             <p className="font-medium text-zinc-300">⚠️ 除權息統計說明與合規聲明：</p>
             <p>
-              1. 填息進度計算公式：<code className="text-zinc-200">(最新現價 - 除息參考價) / 現金股利 × 100%</code>。現價收復除息前收盤價即判定已填息；跌破參考價則為貼息。
+              1. 填息進度計算公式：<code className="text-zinc-200">(最新現價 - 除息參考價) / 現金股利 × 100%</code>。現價收復除息前收盤價即判定已填息；跌破參考價則為貼息。所有價格數值以最多小數點 2 位格式化呈現。
             </p>
             <p>
               2. 本頁所有「填息天數」、「填息機率」均為客觀歷史統計事實，不含任何主觀投資買賣建議或獲利保證。實際除權息日、參考價與配息金額請以台灣證券交易所（TWSE）正式公告為準。

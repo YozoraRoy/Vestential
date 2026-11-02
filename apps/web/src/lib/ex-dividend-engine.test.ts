@@ -74,6 +74,28 @@ describe('classifyAssetKind｜ETF／個股分流', () => {
     expect(assetKindLabel('etf')).toBe('ETF配息')
     expect(assetKindLabel('stock')).toBe('個股除權息')
   })
+
+  it('Issue #125：透過代號與名稱精確辨識 ETF 與個股（世界健身-KY 為個股，主動第一金優股息為 ETF）', () => {
+    // 世界健身-KY (2762) -> 個股
+    expect(classifyAssetKind(null, '2762', '世界健身-KY')).toBe('stock')
+    expect(classifyAssetKind('', '2762', '世界健身-KY')).toBe('stock')
+    expect(classifyAssetKind('EQUITY', '2762', '世界健身-KY')).toBe('stock')
+
+    // 主動第一金優股息 (00994A 或名稱含主動/優股息) -> ETF
+    expect(classifyAssetKind(null, '00994A', '主動第一金優股息')).toBe('etf')
+    expect(classifyAssetKind('', '00994A', '主動第一金優股息')).toBe('etf')
+    expect(classifyAssetKind('UNKNOWN', '00994A', '主動第一金優股息')).toBe('etf')
+
+    // 一般 ETF：0050、0056、00878、00919、00940、00679B
+    expect(classifyAssetKind(null, '0050', '元大台灣50')).toBe('etf')
+    expect(classifyAssetKind(null, '0056', '元大高股息')).toBe('etf')
+    expect(classifyAssetKind(null, '00878', '國泰永續高股息')).toBe('etf')
+    expect(classifyAssetKind(null, '00679B', '元大美債20年')).toBe('etf')
+
+    // 一般個股：2330 台積電、2454 聯發科
+    expect(classifyAssetKind(null, '2330', '台積電')).toBe('stock')
+    expect(classifyAssetKind(null, '2454', '聯發科')).toBe('stock')
+  })
 })
 
 describe('computeExLastBuyDate｜除息最後買進日', () => {

@@ -203,7 +203,12 @@ export async function GET(req: NextRequest) {
       const upcoming = upcomingBySymbol.get(symbol)!
       const q = quoteMap.get(symbol.toUpperCase())
       const quoteType = q?.quoteType ?? ''
-      const assetKind = classifyAssetKind(quoteType)
+      let displayName = q?.name ?? null
+      try {
+        const zh = await getStockNameById(symbol)
+        if (zh) displayName = zh
+      } catch {}
+      const assetKind = classifyAssetKind(quoteType, symbol, displayName)
       const yahooSymbol = `${symbol}.TW`
       const start = `${todayYear - HISTORY_YEARS}-${today.slice(5)}`
       let bars: { date: string; close: number }[] = []
@@ -237,12 +242,6 @@ export async function GET(req: NextRequest) {
         }
         statsReason = s.insufficient ? 'insufficient' : 'ok'
       }
-
-      let displayName = q?.name ?? null
-      try {
-        const zh = await getStockNameById(symbol)
-        if (zh) displayName = zh
-      } catch {}
 
       return {
         symbol,
@@ -342,7 +341,7 @@ export async function GET(req: NextRequest) {
           } catch {}
 
           const q = quoteMap.get(ev.symbol)
-          const assetKind = classifyAssetKind(q?.quoteType ?? '')
+          const assetKind = classifyAssetKind(q?.quoteType ?? '', ev.symbol, displayName)
 
           const histEvents = (historyBySymbol.get(ev.symbol) ?? [])
             .filter((r) => r.ex_date < ev.ex_date)

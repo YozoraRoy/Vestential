@@ -47,15 +47,56 @@ export type ExDividendAssetKind = 'etf' | 'stock' | 'unknown'
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
- * quoteType → 資產鏈路：
- * - `ETF` → 配息鏈路（'etf'，UI 標籤「ETF配息」）；
- * - `EQUITY` → 除權息鏈路（'stock'，UI 標籤「個股除權息」）；
- * - 其餘／空 → 'unknown'。
+ * quoteType / symbol / name → 資產鏈路（Issue #125 強化版）：
+ * 結合 TWSE/TPEx 編碼規則、中文特徵與 Yahoo quoteType：
+ * 1. ETF 規則：
+ *    - symbol 以 '00' 開頭（例如 0050, 0056, 00878, 00919, 00940, 00632R, 00679B, 00994A 等）
+ *    - name 包含 ETF、高股息、高息、優股息、債券、正2、反1、主動、指數股票型、傘型、基金、臺灣50、台灣50
+ *    - quoteType 為 'ETF'
+ * 2. 個股（Stock）規則：
+ *    - name 包含 '-KY'（如 2762 世界健身-KY）、股份有限公司、普通股
+ *    - symbol 為非 00 開頭的 4 碼數字（1101~9999）或 4 碼數字+特別股英文字母（如 2881A）
+ *    - quoteType 為 'EQUITY'
+ * 3. 兼容舊介面：若僅帶 quoteType 且非 ETF/EQUITY，亦支援透過第 2、3 參數精準辨識。
  */
-export function classifyAssetKind(quoteType: string | null | undefined): ExDividendAssetKind {
-  const t = (quoteType ?? '').trim().toUpperCase()
-  if (t === 'ETF') return 'etf'
-  if (t === 'EQUITY') return 'stock'
+export function classifyAssetKind(
+  quoteType?: string | null,
+  symbol?: string | null,
+  name?: string | null,
+): ExDividendAssetKind {
+  const sym = (symbol ?? '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+  const n = (name ?? '').trim()
+  const q = (quoteType ?? '').trim().toUpperCase()
+
+  // 1. 優先規則：代號 00 開頭必為 ETF（TWSE/TPEx 官方規範）
+  if (/^00\d{2,4}[A-Z]?$/i.test(sym)) {
+    return 'etf'
+  }
+
+  // 2. 名稱強特徵：包含 ETF 或基金/優股息/高股息/債券等
+  const etfNamePatterns = /(ETF|高股息|高息|優股息|債券|正2|反1|主動|指數股票型|傘型|基金|臺灣50|台灣50)/i
+  if (etfNamePatterns.test(n)) {
+    return 'etf'
+  }
+
+  if (q === 'ETF') {
+    return 'etf'
+  }
+
+  // 3. 個股特徵：含 -KY 或股份有限公司
+  if (n.includes('-KY') || n.includes('KY') || n.includes('普通股') || n.includes('股份')) {
+    return 'stock'
+  }
+
+  if (q === 'EQUITY') {
+    return 'stock'
+  }
+
+  // 4. 一般台股 4 碼或 4 碼+特別股字母（非 00 開頭，如 2330, 2762, 2881A）
+  if (/^[1-9]\d{3}[A-Z]?$/i.test(sym)) {
+    return 'stock'
+  }
+
   return 'unknown'
 }
 
