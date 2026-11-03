@@ -16,6 +16,7 @@ import {
   type YieldHistoryEntry,
 } from '@/lib/portfolio-yield'
 import { PortfolioYieldModal } from '@/components/portfolio-yield-modal'
+import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { parseJsonSafe, parseSseJson } from '@/lib/safe-parse'
@@ -1263,6 +1264,7 @@ export default function PortfolioPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
+      <WorkspaceBackLink className="mb-4" />
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
           <TrendingUp className="w-8 h-8 text-[var(--accent-green)]" />

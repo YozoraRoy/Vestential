@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 import { Search as SearchIcon, TrendingDown, Target, Repeat, Clock, AlertTriangle, RefreshCw, ChevronDown, ChevronUp, ArrowUpDown, ArrowUp, ArrowDown, HelpCircle, Activity, ListOrdered, X, Zap, SlidersHorizontal, CheckCircle2, Info, Sparkles } from 'lucide-react'
 import { searchStocks, StockCandidateList, type StockCandidate } from '@/components/stock-search'
+import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildBacktestInsight } from '@/lib/backtest-interpret'
 import { useI18n } from '@/i18n/LanguageProvider'
 import type { Dict } from '@/i18n/dictionaries'
@@ -540,6 +541,7 @@ export default function BacktestPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-10">
+      <WorkspaceBackLink className="mb-3" />
       <div className="flex items-center gap-3 mb-2">
         <Target className="w-7 h-7 text-[var(--accent)]" />
         <h1 className="text-2xl font-bold">{ui.pageTitle}</h1>

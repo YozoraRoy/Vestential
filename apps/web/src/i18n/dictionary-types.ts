@@ -38,6 +38,9 @@ export interface Dict {
     agentArena: string
     journal: string
     exDividend: string
+    // #126：股票工作台（hub）入口。舊的 5 個入口鍵保留（比照 #44 nav.journal 前例），
+    // 只從 header 的 navItems 陣列移除引用。
+    workspace: string
   }
   switcher: {
     label: string
@@ -72,6 +75,38 @@ export interface Dict {
     coreFeaturesTitle: string
     ctaUse: string
     disclaimerShort: string
+    // #126：首頁核心功能卡 6→4，新增「市場節奏」合併卡。
+    marketRhythmTitle: string
+    marketRhythmDesc: string
+    marketRhythmCta: string
+    // #126：大盤水位卡文案從頁面 inline 三元式收進字典（原本獨立卡已併入「市場節奏」）。
+    marketLevelTitle: string
+    marketLevelDesc: string
+  }
+  workspace: {
+    metaTitle: string
+    metaDesc: string
+    title: string
+    subtitle: string
+    groupSelectTitle: string
+    groupPortfolioTitle: string
+    groupResearchTitle: string
+    cycleEntryTitle: string
+    cycleEntryDesc: string
+    marketLevelTitle: string
+    marketLevelDesc: string
+    backtestTitle: string
+    backtestDesc: string
+    portfolioTitle: string
+    portfolioDesc: string
+    analyzeTitle: string
+    analyzeDesc: string
+    exDividendTitle: string
+    exDividendDesc: string
+    /** 卡片／chip 的 aria-label 樣板，`{name}` 會被替換成工具名稱。 */
+    goToLabel: string
+    disclaimer: string
+    backToWorkspace: string
   }
   marketFocus: {
     metaTitle: string

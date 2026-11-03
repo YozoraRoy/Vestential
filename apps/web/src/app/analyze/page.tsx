@@ -9,6 +9,7 @@ import { AnalysisCard } from '@/components/analysis-card'
 import { ProgressPanel } from '@/components/progress-panel'
 import { AnalysisOptions } from '@/components/analysis-options'
 import { AgentReportSection, REPORT_FIELD_TO_AGENT } from '@/components/agent-report-section'
+import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Dict } from '@/i18n/dictionaries'
@@ -498,15 +499,18 @@ function AnalyzeContent() {
 
   if (authChecking) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-24 text-center">
-        <div className="inline-flex flex-col items-center justify-center p-8 rounded-2xl bg-[var(--bg-card)] border border-white/5 shadow-xl">
-          <RefreshCw className="w-8 h-8 text-[var(--accent)] animate-spin mb-4" />
-          <p className="text-base font-medium text-[var(--text-primary)] mb-1">
-            {dict.common?.loading || '載入中...'}
-          </p>
-          <p className="text-xs text-[var(--text-secondary)]">
-            驗證會員登入狀態中...
-          </p>
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <WorkspaceBackLink className="mb-4" />
+        <div className="py-16 text-center">
+          <div className="inline-flex flex-col items-center justify-center p-8 rounded-2xl bg-[var(--bg-card)] border border-white/5 shadow-xl">
+            <RefreshCw className="w-8 h-8 text-[var(--accent)] animate-spin mb-4" />
+            <p className="text-base font-medium text-[var(--text-primary)] mb-1">
+              {dict.common?.loading || '載入中...'}
+            </p>
+            <p className="text-xs text-[var(--text-secondary)]">
+              驗證會員登入狀態中...
+            </p>
+          </div>
         </div>
       </div>
     )
@@ -514,6 +518,8 @@ function AnalyzeContent() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
+
+      <WorkspaceBackLink className="mb-4" />
 
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="bg-[var(--bg-card)] rounded-xl p-4 border border-white/5">

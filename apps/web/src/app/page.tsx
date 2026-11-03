@@ -1,8 +1,6 @@
 import {
   Search,
   PieChart,
-  Activity,
-  TrendingUp,
   Bot,
   Newspaper,
   Sparkles,
@@ -10,6 +8,7 @@ import {
   Gauge,
 } from 'lucide-react'
 import Link from 'next/link'
+import type { LucideIcon } from 'lucide-react'
 import { getDict, getLocale } from '@/i18n/server'
 import { localizePath } from '@/i18n/paths'
 import { buildAlternates } from '@/i18n/metadata'
@@ -97,7 +96,18 @@ export default async function Home() {
   const cardHover =
     ' hover:border-[var(--accent)]/60 hover:-translate-y-0.5 hover:shadow-[0_10px_34px_rgba(79,140,255,0.16)]'
 
-  const features = [
+  // #126：核心功能卡 6→4，`/market-level`、`/cycle-entry`、`/backtest` 併成一張「市場節奏」卡。
+  // 合併卡本體是 <div>（不可點），卡內 3 個 chip 各自連出去，DOM 不會出現巢狀 <a>。
+  const features: {
+    href: string | null
+    icon: LucideIcon
+    title: string
+    desc: string
+    cta?: string
+    accent: 'green' | 'accent' | 'violet'
+    developing: boolean
+    chips?: { href: string; label: string }[]
+  }[] = [
     {
       href: '/odd-lot',
       icon: PieChart,
@@ -107,40 +117,17 @@ export default async function Home() {
       developing: false,
     },
     {
-      href: '/backtest',
-      icon: Activity,
-      title: dict.home.backtestTitle,
-      desc: dict.home.backtestDesc,
-      cta: dict.home.backtestCta,
-      accent: 'green',
-      developing: false,
-    },
-    {
-      href: '/cycle-entry',
-      icon: TrendingUp,
-      title: dict.home.cycleEntryTitle,
-      desc: dict.home.cycleEntryDesc,
-      cta: dict.home.cycleEntryCta,
-      accent: 'green',
-      developing: false,
-    },
-    {
-      href: '/market-level',
+      href: null,
       icon: Gauge,
-      title:
-        locale === 'en'
-          ? 'Market Level Gauge'
-          : locale === 'ja'
-          ? '大盤水準メーター'
-          : '大盤水位儀表板',
-      desc:
-        locale === 'en'
-          ? '5-year rolling percentiles and 5-tier valuation signals (PER/PBR bands) for TAIEX.'
-          : locale === 'ja'
-          ? '加権指数の5年パーセンタイルとPER/PBR評価バンドによる5段階市場水準メーター。'
-          : '加權指數歷史分位與五段水位燈號（PER/PBR 估值河流帶），每日 10 秒掌握位階。',
+      title: dict.home.marketRhythmTitle,
+      desc: dict.home.marketRhythmDesc,
       accent: 'green',
       developing: false,
+      chips: [
+        { href: '/market-level', label: dict.workspace.marketLevelTitle },
+        { href: '/cycle-entry', label: dict.workspace.cycleEntryTitle },
+        { href: '/backtest', label: dict.workspace.backtestTitle },
+      ],
     },
     {
       href: '/analyze',
@@ -158,7 +145,7 @@ export default async function Home() {
       accent: 'violet',
       developing: false,
     },
-  ] as const
+  ]
 
   return (
     <div className="max-w-5xl mx-auto w-full px-4 py-8 md:py-10">
@@ -208,7 +195,7 @@ export default async function Home() {
       {/* ② Core features */}
       <section aria-labelledby="core-features" className="mb-14">
         <SectionHeading id="core-features" icon={Sparkles} title={dict.home.coreFeaturesTitle} />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 md:gap-5">
           {features.map((f) => {
             const Icon = f.icon
             const accentCls =
@@ -221,6 +208,7 @@ export default async function Home() {
               f.accent === 'violet'
                 ? ' hover:border-[var(--accent-violet)]/60 hover:-translate-y-0.5 hover:shadow-[0_10px_34px_rgba(167,139,250,0.16)]'
                 : cardHover
+            const merged = Boolean(f.chips?.length)
             const inner = (
               <>
                 <div className="flex items-start justify-between mb-3">
@@ -239,9 +227,9 @@ export default async function Home() {
                 <p className="text-sm text-[var(--text-secondary)] leading-relaxed flex-1">
                   {f.desc}
                 </p>
-                {!f.developing && (
+                {!f.developing && !merged && (
                   <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)]">
-                    {'cta' in f ? f.cta : dict.home.ctaUse}
+                    {f.cta ?? dict.home.ctaUse}
                     <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 )}
@@ -251,6 +239,30 @@ export default async function Home() {
               return (
                 <div key={f.title} className={`${cardBase} opacity-80 select-none`}>
                   {inner}
+                </div>
+              )
+            }
+            if (f.chips) {
+              // 合併卡：本體不可點（<div>），只有 3 個 chip 是連結。
+              return (
+                <div key={f.title} className={cardBase}>
+                  {inner}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {f.chips.map((chip) => (
+                      <Link
+                        key={chip.href}
+                        href={localizePath(locale, chip.href)}
+                        aria-label={dict.workspace.goToLabel.replace('{name}', chip.label)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/30 text-[var(--accent)] text-xs font-medium hover:bg-[var(--accent)]/20 transition focus-visible:outline-2 focus-visible:outline-[var(--accent)] focus-visible:outline-offset-2"
+                      >
+                        {chip.label}
+                        <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+                      </Link>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-[var(--text-secondary)] leading-relaxed">
+                    {dict.home.marketRhythmCta}
+                  </p>
                 </div>
               )
             }

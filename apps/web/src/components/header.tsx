@@ -12,17 +12,27 @@ import type { Locale } from '@/i18n/config'
 
 const navItems: { key: keyof Dict['nav']; href: string }[] = [
   { key: 'home', href: '/' },
+  // #126：導覽 9→5，5 個交易／研究工具收進 /workspace 工作台。
+  { key: 'workspace', href: '/workspace' },
   { key: 'oddLot', href: '/odd-lot' },
-  { key: 'backtest', href: '/backtest' },
-  { key: 'cycleEntry', href: '/cycle-entry' },
-  { key: 'portfolio', href: '/portfolio' },
-  { key: 'analyze', href: '/analyze' },
   { key: 'marketFocus', href: '/market-focus' },
   { key: 'agentArena', href: '/agent-arena' },
-  { key: 'exDividend', href: '/ex-dividend' },
   // #44：導覽移除 journal 入口（桌機＋漢堡共用 navItems，一處刪除即兩處生效）。
   // nav.journal i18n 鍵保留（rg 確認僅 header 取用；留鍵避免 Dict 破壞性變更，
   // /journal 頁改用 journal 節文案，直連網址仍可進入，頁面不下線不遷移）。
+  // #126：backtest／cycleEntry／portfolio／analyze／exDividend 比照前例只從陣列移除，
+  // nav.* 鍵與頁面路由全部保留，直連網址仍可進入、不加 301。
+]
+
+/** `/workspace` 這一項要吃下的子路徑（工作台 6 個工具頁 + 工作台本身）。 */
+const workspaceGroupPaths = [
+  '/workspace',
+  '/market-level',
+  '/backtest',
+  '/cycle-entry',
+  '/portfolio',
+  '/analyze',
+  '/ex-dividend',
 ]
 
 export interface HeaderUser {
@@ -49,8 +59,19 @@ export function Header({ initialUser }: { initialUser: HeaderUser | null }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const hamburgerRef = useRef<HTMLButtonElement>(null)
 
-  const isActiveLink = (href: string) =>
-    pathname === href || (href !== '/' && pathname.startsWith(href))
+  // 語系前綴（/en、/ja、/zh-TW）不參與 active 比對，否則 /en/workspace 永遠比不到 /workspace。
+  const barePathname = pathname?.replace(/^\/(en|ja|zh-TW)(?=\/|$)/, '') || '/'
+
+  const isActiveLink = (href: string) => {
+    if (href === '/') return barePathname === '/'
+    if (href === '/workspace') {
+      // 群組：工作台本身與 6 個工具頁都讓「股票工作台」亮起來。
+      return workspaceGroupPaths.some(
+        prefix => barePathname === prefix || barePathname.startsWith(`${prefix}/`)
+      )
+    }
+    return barePathname === href || barePathname.startsWith(`${href}/`)
+  }
 
   const closeDrawer = useCallback(() => {
     setDrawerOpen(false)
