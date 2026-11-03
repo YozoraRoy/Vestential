@@ -35,9 +35,25 @@ export interface FillCompletedItem {
   daysToFill: number
 }
 
-/** TWT48U 預告抓取失敗／快取過期降級時告警（30 分鐘去重）。 */
-export async function alertExDividendFetchFailed(reason: string): Promise<void> {
+/**
+ * 檢查當前台灣時間是否在告警時間窗內（08:30 ~ 23:59）。
+ * 凌晨至清晨非交易時段（00:00 ~ 08:29）暫緩告警，避免排程同步時間差造成半夜誤報打擾。
+ */
+export function isExDividendAlertWindow(now: Date = new Date()): boolean {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Taipei',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const timeStr = formatter.format(now) // "HH:mm"
+  return timeStr >= '08:30'
+}
+
+/** TWT48U 預告抓取失敗／快取過期降級時告警（30 分鐘去重，且僅在 08:30 後發送）。 */
+export async function alertExDividendFetchFailed(reason: string, now: Date = new Date()): Promise<void> {
   try {
+    if (!isExDividendAlertWindow(now)) return
     if (!shouldSend('ex-dividend:fetch-failed')) return
     await sendMarketFocusAlert('除權息預告抓取失敗', `TWT48U 除權息預告降級顯示（${reason}）；頁面已標註資料時間，請檢查同步排程。`)
   } catch (e) {
