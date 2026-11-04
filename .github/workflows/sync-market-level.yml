@@ -2,7 +2,9 @@ name: Sync Market Level (TWSE TAIEX & BWIBBU)
 
 on:
   schedule:
-    # 每週一至五 台灣時間 15:30 (UTC 07:30)，TWSE 盤後指數與 BWIBBU_d 公布後抓取
+    # 每天台灣上班時間（週一至週五）下午 13:30 (UTC 05:30)，剛好在台股收盤後第一時間啟動同步
+    - cron: '30 5 * * 1-5'
+    # 每天台灣上班時間（週一至週五）下午 15:30 (UTC 07:30)，TWSE 盤後完整個股估值 (BWIBBU_d) 結算後二次校準
     - cron: '30 7 * * 1-5'
   workflow_dispatch:
 
