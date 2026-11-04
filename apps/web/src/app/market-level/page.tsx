@@ -114,10 +114,19 @@ const STATUS_CONFIG: Record<
   },
 }
 
-const DEFAULT_NOTES = `1. 115 萬生存活水：絕對不可動用（不可在下跌時作為攤平資金）。
-2. 買進標的順序：
-   • 優先透過內部換倉（星宇轉 0056）鎖定 8%~9% 殖利率防禦拼圖。
-   • 0050 等待回測季線支撐（約 101~102 元）再啟動階梯式掛單。`
+const DEFAULT_BOTTOM_BUYING_GUIDELINES = `1. 生存活水原則（緊急預備防線）：
+   • 務必保留 6～12 個月生活必要開支之緊急預備金，絕對不可在下殺段動用作為抄底或攤平資金。
+   • 僅以 1～2 年以上不影響生活的充裕閒置資金進行階梯式分批配置。
+
+2. 階梯式分批佈局策略（拒絕單筆一次凹單）：
+   • 第一批（30% 資金）：指標滿足 ≥ 3 項（中度超跌區，季線負乖離達 -5%～-7%）時啟動試單。
+   • 第二批（40% 資金）：恐慌極值區（季線負乖離 ≤ -8% 且融資維持率斷頭 ≤ 130%）加碼核心部位。
+   • 第三批（30% 資金）：右側轉折確認（破曉長紅吞噬站上 5MA、台幣止貶回升）後回補完畢。
+
+3. 標的配置優先順序（防禦與反彈兼具）：
+   • 第 1 順位【大盤市值型 ETF（如 0050 / 006208）】：具備最強均值回歸動能，歷史勝率最高、無個別公司倒閉風險。
+   • 第 2 順位【高股息防禦型 ETF（如 0056 / 00878 / 00919）】：大跌後現金殖利率墊高，提供下檔支撐與被動現金流。
+   • 警戒避開【高融資中小型投機股】：浮額斷頭踩踏未結束前，切勿過早猜底承接。`
 
 export default function MarketLevelPage() {
   const [data, setData] = useState<{
@@ -130,15 +139,20 @@ export default function MarketLevelPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'pe' | 'pb'>('pe')
 
-  // 個人資金紀律自訂備忘錄
-  const [personalNotes, setPersonalNotes] = useState(DEFAULT_NOTES)
+  // 大盤落底抄底資金紀律與操作建議（支援自訂備忘錄）
+  const [personalNotes, setPersonalNotes] = useState(DEFAULT_BOTTOM_BUYING_GUIDELINES)
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [savedNotesAlert, setSavedNotesAlert] = useState(false)
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem('vestential_capital_notes')
-      if (saved) setPersonalNotes(saved)
+      // 自動升級：若本機儲存為舊版特定個人備忘，自動採用通用建議指南
+      if (saved && !saved.includes('115 萬') && !saved.includes('星宇')) {
+        setPersonalNotes(saved)
+      } else {
+        setPersonalNotes(DEFAULT_BOTTOM_BUYING_GUIDELINES)
+      }
     } catch (_) {}
   }, [])
 
@@ -799,35 +813,49 @@ export default function MarketLevelPage() {
                 </div>
               </div>
 
-              {/* 個人資金紀律提醒備忘錄 */}
+              {/* 通用資金紀律指南與備忘錄 */}
               <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-xl md:col-span-2 space-y-2.5 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
                     <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                       <Bookmark className="w-4 h-4 text-amber-400" />
-                      個人資金紀律與買進順序備忘錄
+                      大盤落底抄底資金紀律與操作建議
                     </span>
                     <div className="flex items-center gap-2">
                       {savedNotesAlert && (
                         <span className="text-[11px] text-emerald-400 font-semibold animate-pulse">
-                          ✓ 已儲存於本機
+                          ✓ 已儲存備忘
                         </span>
                       )}
                       {isEditingNotes ? (
-                        <button
-                          type="button"
-                          onClick={saveNotes}
-                          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition"
-                        >
-                          <Save className="w-3 h-3" /> 儲存備忘
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPersonalNotes(DEFAULT_BOTTOM_BUYING_GUIDELINES)
+                              localStorage.removeItem('vestential_capital_notes')
+                              setIsEditingNotes(false)
+                            }}
+                            className="text-[11px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                          >
+                            恢復通用建議
+                          </button>
+                          <button
+                            type="button"
+                            onClick={saveNotes}
+                            className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition"
+                          >
+                            <Save className="w-3 h-3" /> 儲存自訂
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"
                           onClick={() => setIsEditingNotes(true)}
                           className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition"
+                          title="自訂個人專屬資金紀律筆記"
                         >
-                          <Edit3 className="w-3 h-3" /> 編輯紀律
+                          <Edit3 className="w-3 h-3" /> 自訂備忘
                         </button>
                       )}
                     </div>
@@ -837,9 +865,9 @@ export default function MarketLevelPage() {
                     <textarea
                       value={personalNotes}
                       onChange={(e) => setPersonalNotes(e.target.value)}
-                      rows={5}
+                      rows={7}
                       className="w-full mt-2 p-2.5 text-xs font-mono bg-slate-900 border border-indigo-500/40 rounded-lg text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400 leading-relaxed"
-                      placeholder="請輸入您的個人資金紀律提醒..."
+                      placeholder="請輸入您的大盤落底抄底資金紀律提醒..."
                     />
                   ) : (
                     <div className="mt-2 text-xs text-slate-300 leading-relaxed whitespace-pre-line font-mono bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
@@ -851,7 +879,7 @@ export default function MarketLevelPage() {
                 <div className="text-[11px] text-slate-400 border-t border-slate-800/60 pt-2 flex items-center gap-1">
                   <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span>
-                    核心心法提醒：融資未斷頭前勿躁進，生存活水資金絕對不可在下殺段當作攤平籌碼。
+                    核心心法提醒：融資斷頭潮徹底釋放前勿躁進，生存活水備用金絕對不可在下殺段當作攤平籌碼。
                   </span>
                 </div>
               </div>
