@@ -44,7 +44,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: '資料不足，無法執行回測' }, { status: 422 })
     }
 
+    // 依據持有天數與回測年數，動態計算合理的最低採樣筆數（minTrades）
+    // 避免長線週期（如 252 日持倉/15年）因理論上限僅 ~15 筆而導致低波動標的（如 0050）全部閾值被過濾為 0。
+    const maxTheoreticalTrades = Math.max(1, Math.floor((years * TRADING_DAYS_PER_YEAR) / holdingDays))
+    const minTrades = Math.min(10, Math.max(2, Math.floor(maxTheoreticalTrades * 0.25)))
+
     const result = runGridSearch(history, {
+      minTrades,
       params: {
         holdingDays,
         targetProfit: targetPct / 100,

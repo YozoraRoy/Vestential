@@ -280,6 +280,7 @@ export default function BacktestPage() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [searching, setSearching] = useState(false)
   const [liveBias, setLiveBias] = useState<LiveBias | null>(null)
+  const [refreshingLive, setRefreshingLive] = useState(false)
   const [biasSource, setBiasSource] = useState<'close' | 'live'>('close')
   const [showExplain, setShowExplain] = useState(false)
   const [showTop, setShowTop] = useState(false)
@@ -399,6 +400,19 @@ export default function BacktestPage() {
     }
   }
 
+  const refreshLiveBias = async () => {
+    const sym = symbol.trim()
+    if (!sym || refreshingLive) return
+    setRefreshingLive(true)
+    try {
+      const lb = await fetch(`/api/backtest/live-bias?symbol=${encodeURIComponent(sym)}&t=${Date.now()}`)
+      if (lb.ok) setLiveBias(await lb.json())
+    } catch (_) {
+    } finally {
+      setRefreshingLive(false)
+    }
+  }
+
   const run = async (e?: React.FormEvent) => {
     e?.preventDefault()
     const sym = symbol.trim()
@@ -498,17 +512,23 @@ export default function BacktestPage() {
   // 目前乖離率：預設以前一期收盤價為基準；可切換為即時盤中價（需 livePriceBias 存在）。
   const currentBias =
     biasSource === 'live' ? (liveBias?.livePriceBias ?? liveBias?.latestBias ?? null) : (liveBias?.latestBias ?? null)
-  const bestThreshold = result?.bestThreshold ?? null
+  const bestThreshold =
+    result?.bestThreshold != null && result.bestThreshold < 0 && (result.totalTrades ?? 0) > 0
+      ? result.bestThreshold
+      : null
   const targetClosePrice = bestThreshold != null && liveBias?.ma60 ? liveBias.ma60 * (1 + bestThreshold / 100) : null
   const distanceToTargetPct =
     currentBias != null && bestThreshold != null ? (currentBias - bestThreshold / 100) * 100 : null
   // 目前乖離已觸發的最佳閾值（乖離 ≤ 閾值即會觸發進場）
   const currentTriggerThreshold: number | null = (() => {
-    if (currentBias == null || !result?.bestThreshold) return null
-    if (currentBias <= result.bestThreshold / 100) return result.bestThreshold
-    // 否則找最近一個已達成的較淺閾值
-    const ts = (result.allThresholds ?? []).map((t) => t.threshold).sort((a, b) => b - a)
-    for (const t of ts) if (currentBias <= t) return t
+    if (currentBias == null || bestThreshold == null) return null
+    if (currentBias <= bestThreshold / 100) return bestThreshold
+    // 否則找最近一個已達成的較淺閾值（該閾值必須有實際交易次數）
+    const ts = (result?.allThresholds ?? [])
+      .filter((t) => t.totalTrades > 0)
+      .map((t) => t.threshold)
+      .sort((a, b) => b - a)
+    for (const t of ts) if (currentBias <= t / 100) return t
     return null
   })()
 
@@ -967,32 +987,44 @@ export default function BacktestPage() {
                   <Activity className="w-3.5 h-3.5 text-[var(--accent)]" />
                   {ui.liveBiasTitle.replace('{date}', formatDate(liveBias.asOf))}
                 </div>
-                <div
-                  className="flex items-center gap-1 rounded-lg bg-[var(--bg-secondary)] p-0.5"
-                  role="group"
-                  aria-label={ui.biasSourceLabel}
-                >
+                <div className="flex items-center gap-2">
+                  <div
+                    className="flex items-center gap-1 rounded-lg bg-[var(--bg-secondary)] p-0.5"
+                    role="group"
+                    aria-label={ui.biasSourceLabel}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setBiasSource('close')}
+                      className={`px-2.5 py-1 text-xs rounded-md transition ${
+                        biasSource === 'close'
+                          ? 'bg-[var(--accent)] text-white'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {ui.biasSourceClose}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBiasSource('live')}
+                      className={`px-2.5 py-1 text-xs rounded-md transition ${
+                        biasSource === 'live'
+                          ? 'bg-[var(--accent)] text-white'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {ui.biasSourceLive}
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setBiasSource('close')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition ${
-                      biasSource === 'close'
-                        ? 'bg-[var(--accent)] text-white'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
+                    onClick={() => refreshLiveBias()}
+                    disabled={refreshingLive}
+                    className="p-1 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 transition disabled:opacity-50"
+                    title={locale === 'en' ? 'Refresh live price' : locale === 'ja' ? 'リアルタイム価格を更新' : '重新抓取即時行情'}
+                    aria-label={locale === 'en' ? 'Refresh live price' : locale === 'ja' ? 'リアルタイム価格を更新' : '重新抓取即時行情'}
                   >
-                    {ui.biasSourceClose}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBiasSource('live')}
-                    className={`px-2.5 py-1 text-xs rounded-md transition ${
-                      biasSource === 'live'
-                        ? 'bg-[var(--accent)] text-white'
-                        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
-                  >
-                    {ui.biasSourceLive}
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshingLive ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -1017,9 +1049,16 @@ export default function BacktestPage() {
                   >
                     {fmtPct(currentBias)}
                   </div>
-                  <div className="text-xs text-[var(--text-secondary)] mt-1">
-                    {ui.liveBiasMA60}：{liveBias.ma60.toFixed(2)} · {ui.liveBiasPrevClose} {liveBias.latestClose.toFixed(2)}
-                    {liveBias.livePrice != null ? ` · ${ui.liveBiasCurrentPriceLabel.replace('{price}', liveBias.livePrice.toFixed(2))}` : ''}
+                  <div className="text-xs text-[var(--text-secondary)] mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[var(--text-primary)]">
+                      {ui.liveBiasMA60}：<span className="font-semibold text-[var(--accent)]">{liveBias.ma60.toFixed(2)}</span>
+                    </span>
+                    <span>{ui.liveBiasPrevClose} {liveBias.latestClose.toFixed(2)}</span>
+                    {liveBias.livePrice != null && (
+                      <span className="font-medium text-[var(--accent-green)]">
+                        · {ui.liveBiasCurrentPriceLabel.replace('{price}', liveBias.livePrice.toFixed(2))}
+                      </span>
+                    )}
                   </div>
                 </div>
 
