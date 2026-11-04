@@ -9,6 +9,7 @@ import {
   parseMarketValuationFromBwibbu,
   ensureMarketLevelSeeds,
 } from '@/lib/market-level'
+import { getBottomRadarDashboardData } from '@/lib/bottom-radar'
 import {
   upsertMarketLevel,
   getMarketLevels,
@@ -31,10 +32,17 @@ const COMPLIANCE_DISCLAIMER =
  */
 export async function GET() {
   try {
-    const data = await getMarketLevelDashboardData()
+    const [data, bottomRadar] = await Promise.all([
+      getMarketLevelDashboardData(),
+      getBottomRadarDashboardData().catch((err) => {
+        console.warn('[MarketLevel] getBottomRadarDashboardData error:', err)
+        return null
+      }),
+    ])
     return NextResponse.json({
       success: true,
       ...data,
+      bottomRadar,
       disclaimer: COMPLIANCE_DISCLAIMER,
       timestamp: new Date().toISOString(),
     })
@@ -116,12 +124,16 @@ export async function POST(req: Request) {
       levelStatus: status,
     })
 
-    const updated = await getMarketLevelDashboardData()
+    const [updated, bottomRadar] = await Promise.all([
+      getMarketLevelDashboardData(),
+      getBottomRadarDashboardData(true).catch(() => null),
+    ])
     return NextResponse.json({
       success: true,
       action: 'synced',
       today,
       synced: updated.current,
+      bottomRadar,
       disclaimer: COMPLIANCE_DISCLAIMER,
     })
   } catch (e: unknown) {

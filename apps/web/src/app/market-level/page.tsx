@@ -7,17 +7,30 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
+  Bookmark,
   CheckCircle2,
+  CheckSquare,
   ChevronDown,
+  CircleAlert,
+  Coins,
+  DollarSign,
+  Edit3,
   Gauge,
   HelpCircle,
   Info,
   Layers,
   RefreshCw,
+  Save,
   ShieldAlert,
+  ShieldCheck,
+  Sparkles,
+  Square,
+  Target,
   TrendingDown,
   TrendingUp,
+  Zap,
 } from 'lucide-react'
+import type { BottomRadarDashboardData } from '@/lib/bottom-radar'
 
 interface MarketLevelBand {
   mean: number
@@ -101,11 +114,42 @@ const STATUS_CONFIG: Record<
   },
 }
 
+const DEFAULT_NOTES = `1. 115 萬生存活水：絕對不可動用（不可在下跌時作為攤平資金）。
+2. 買進標的順序：
+   • 優先透過內部換倉（星宇轉 0056）鎖定 8%~9% 殖利率防禦拼圖。
+   • 0050 等待回測季線支撐（約 101~102 元）再啟動階梯式掛單。`
+
 export default function MarketLevelPage() {
-  const [data, setData] = useState<{ current: MarketLevelAnalysis; history: MarketLevelRow[]; disclaimer: string } | null>(null)
+  const [data, setData] = useState<{
+    current: MarketLevelAnalysis
+    history: MarketLevelRow[]
+    bottomRadar?: BottomRadarDashboardData | null
+    disclaimer: string
+  } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'pe' | 'pb'>('pe')
+
+  // 個人資金紀律自訂備忘錄
+  const [personalNotes, setPersonalNotes] = useState(DEFAULT_NOTES)
+  const [isEditingNotes, setIsEditingNotes] = useState(false)
+  const [savedNotesAlert, setSavedNotesAlert] = useState(false)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('vestential_capital_notes')
+      if (saved) setPersonalNotes(saved)
+    } catch (_) {}
+  }, [])
+
+  const saveNotes = () => {
+    try {
+      localStorage.setItem('vestential_capital_notes', personalNotes)
+      setIsEditingNotes(false)
+      setSavedNotesAlert(true)
+      setTimeout(() => setSavedNotesAlert(false), 2500)
+    } catch (_) {}
+  }
 
   async function loadData() {
     setLoading(true)
@@ -301,6 +345,519 @@ export default function MarketLevelPage() {
             <div className="text-[11px] text-slate-400 mt-1">全市場現金股利水準</div>
           </div>
         </div>
+
+        {/* Issue #127 核心模組：大盤落底訊號雷達 ＆ 抄底 SOP 檢核 */}
+        {data.bottomRadar && (
+          <div className="bg-slate-900/95 border border-indigo-500/30 p-6 rounded-2xl space-y-6 shadow-xl relative overflow-hidden backdrop-blur-md">
+            {/* 標題列 */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Target className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-xl font-bold text-white tracking-tight">大盤落底訊號雷達 ＆ 抄底 SOP</h3>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-semibold border border-indigo-500/30">
+                    四大指標共振
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  核心不在於猜測指數跌到幾點，而在於觀察「籌碼去槓桿、季線負乖離、量價換手、外資期權」四大客觀訊號是否共振衰竭
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] text-slate-400">抄底判定機制</span>
+                <div className="text-xs font-bold text-indigo-300">滿足 ≥ 3 項視為安全買點</div>
+              </div>
+            </div>
+
+            {/* SOP 5 條件檢視清單 */}
+            <div
+              className={`p-5 rounded-xl border transition-all ${
+                data.bottomRadar.checklist.isSafeToBuy
+                  ? 'bg-emerald-950/30 border-emerald-500/40 shadow-emerald-900/20 shadow-lg'
+                  : 'bg-amber-950/20 border-amber-500/30'
+              }`}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-2.5">
+                  {data.bottomRadar.checklist.isSafeToBuy ? (
+                    <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
+                  ) : (
+                    <CircleAlert className="w-6 h-6 text-amber-400 shrink-0" />
+                  )}
+                  <div>
+                    <div className="text-lg font-black text-white">
+                      {data.bottomRadar.checklist.verdictLabel}
+                    </div>
+                    <div className="text-xs text-slate-300 mt-0.5">
+                      {data.bottomRadar.checklist.verdictDescription}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right self-start md:self-auto bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+                  <span className="text-xs text-slate-400">目前達成條件：</span>
+                  <span
+                    className={`text-lg font-black ml-1.5 ${
+                      data.bottomRadar.checklist.isSafeToBuy ? 'text-emerald-400' : 'text-amber-400'
+                    }`}
+                  >
+                    {data.bottomRadar.checklist.metCount} / 5
+                  </span>
+                </div>
+              </div>
+
+              {/* 5 條件逐項核對 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                {/* 條件 1 */}
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition ${
+                    data.bottomRadar.checklist.marginMet
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-100 font-medium'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  {data.bottomRadar.checklist.marginMet ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-slate-200">籌碼去槓桿：</span>
+                    融資維持率 ≤ 135% 或 單日融資大減 ≥ 50 億
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      當前融資增減：
+                      <span
+                        className={`font-mono font-bold ml-1 ${
+                          (data.bottomRadar.margin.marginChange ?? 0) <= -50 ? 'text-emerald-400' : 'text-slate-300'
+                        }`}
+                      >
+                        {data.bottomRadar.margin.marginChange != null
+                          ? `${data.bottomRadar.margin.marginChange > 0 ? '+' : ''}${data.bottomRadar.margin.marginChange} 億元`
+                          : '—'}
+                      </span>
+                      {data.bottomRadar.margin.marginMaintenanceRatio != null && (
+                        <span> · 維持率約 {data.bottomRadar.margin.marginMaintenanceRatio}%</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 條件 2 */}
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition ${
+                    data.bottomRadar.checklist.biasMet
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-100 font-medium'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  {data.bottomRadar.checklist.biasMet ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-slate-200">季線負乖離：</span>
+                    0050 或加權指數之 60MA 季線負乖離 ≤ -5%
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      加權負乖離：
+                      <span className="font-mono font-bold text-slate-300 ml-1">
+                        {data.bottomRadar.bias.taiexBias != null ? `${data.bottomRadar.bias.taiexBias}%` : '—'}
+                      </span>
+                      {' · '}
+                      0050 負乖離：
+                      <span
+                        className={`font-mono font-bold ml-1 ${
+                          (data.bottomRadar.bias.stock0050Bias ?? 0) <= -5 ? 'text-emerald-400' : 'text-slate-300'
+                        }`}
+                      >
+                        {data.bottomRadar.bias.stock0050Bias != null
+                          ? `${data.bottomRadar.bias.stock0050Bias}%`
+                          : '—'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 條件 3 */}
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition ${
+                    data.bottomRadar.checklist.patternMet
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-100 font-medium'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  {data.bottomRadar.checklist.patternMet ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-slate-200">量價型態：</span>
+                    爆量長下影線（打樁）、量縮窒息底或破曉吞噬
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      當前型態：
+                      <span
+                        className={`font-semibold ml-1 ${
+                          data.bottomRadar.pattern.patternTriggered ? 'text-emerald-400' : 'text-slate-400'
+                        }`}
+                      >
+                        {data.bottomRadar.pattern.description}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 條件 4 */}
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border transition ${
+                    data.bottomRadar.checklist.futuresMet
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-100 font-medium'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  {data.bottomRadar.checklist.futuresMet ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-slate-200">期權避險：</span>
+                    外資台指期淨空單顯著回補（單日 ≥ 5000 口或水位 &lt; 2.5 萬口）
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      外資淨空單：
+                      <span className="font-mono font-bold text-slate-300 ml-1">
+                        {data.bottomRadar.hedging.txForeignNetOI != null
+                          ? `${data.bottomRadar.hedging.txForeignNetOI.toLocaleString()} 口`
+                          : '—'}
+                      </span>
+                      {data.bottomRadar.hedging.txForeignNetChange != null && (
+                        <span>
+                          （單日 {data.bottomRadar.hedging.txForeignNetChange >= 0 ? '+' : ''}
+                          {data.bottomRadar.hedging.txForeignNetChange.toLocaleString()} 口）
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 條件 5 */}
+                <div
+                  className={`flex items-start gap-2.5 p-2.5 rounded-lg border md:col-span-2 transition ${
+                    data.bottomRadar.checklist.fxMet
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-100 font-medium'
+                      : 'bg-slate-900/50 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  {data.bottomRadar.checklist.fxMet ? (
+                    <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <Square className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <span className="font-semibold text-slate-200">匯率動向：</span>
+                    新台幣匯率停止貶值（USD/TWD 由貶轉升，外資資金停止提款）
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      最新匯率：
+                      <span className="font-mono font-bold text-slate-300 ml-1">
+                        {data.bottomRadar.hedging.usdTwdRate ?? '—'}
+                      </span>
+                      <span
+                        className={`font-semibold ml-2 ${
+                          data.bottomRadar.hedging.isFxStabilized ? 'text-emerald-400' : 'text-slate-400'
+                        }`}
+                      >
+                        {data.bottomRadar.hedging.isFxStabilized ? '● 台幣止貶回升' : '● 台幣仍處貶值整理'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 四大客觀指標監控卡片 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* 1. 籌碼去槓桿 */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Coins className="w-4 h-4 text-amber-400" />
+                    一、籌碼去槓桿與融資維持率
+                  </span>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
+                    {data.bottomRadar.margin.statusLabel}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">大盤融資餘額</div>
+                    <div className="text-sm font-bold text-white mt-0.5 font-mono">
+                      {data.bottomRadar.margin.marginBalance ? `${data.bottomRadar.margin.marginBalance} 億` : '—'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">單日融資增減</div>
+                    <div
+                      className={`text-sm font-bold mt-0.5 font-mono ${
+                        (data.bottomRadar.margin.marginChange ?? 0) <= -50 ? 'text-emerald-400' : 'text-slate-200'
+                      }`}
+                    >
+                      {data.bottomRadar.margin.marginChange != null
+                        ? `${data.bottomRadar.margin.marginChange > 0 ? '+' : ''}${data.bottomRadar.margin.marginChange} 億`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">大盤估計維持率</div>
+                    <div className="text-sm font-bold text-indigo-300 mt-0.5 font-mono">
+                      {data.bottomRadar.margin.marginMaintenanceRatio != null
+                        ? `${data.bottomRadar.margin.marginMaintenanceRatio}%`
+                        : '—'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                  {data.bottomRadar.margin.statusDescription}
+                </p>
+              </div>
+
+              {/* 2. 季線負乖離 */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <TrendingDown className="w-4 h-4 text-cyan-400" />
+                    二、60 日季線負乖離率 (BIAS60)
+                  </span>
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
+                    {data.bottomRadar.bias.isBiasTriggered ? '中度超跌／恐慌極值' : '常態技術回檔'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-center">
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">加權指數負乖離</div>
+                    <div
+                      className={`text-sm font-bold mt-0.5 font-mono ${
+                        (data.bottomRadar.bias.taiexBias ?? 0) <= -5 ? 'text-emerald-400' : 'text-slate-200'
+                      }`}
+                    >
+                      {data.bottomRadar.bias.taiexBias != null ? `${data.bottomRadar.bias.taiexBias}%` : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      季線：{data.bottomRadar.bias.taiexMa60?.toLocaleString() ?? '—'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">0050 季線負乖離</div>
+                    <div
+                      className={`text-sm font-bold mt-0.5 font-mono ${
+                        (data.bottomRadar.bias.stock0050Bias ?? 0) <= -5 ? 'text-emerald-400' : 'text-slate-200'
+                      }`}
+                    >
+                      {data.bottomRadar.bias.stock0050Bias != null ? `${data.bottomRadar.bias.stock0050Bias}%` : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      季線：{data.bottomRadar.bias.stock0050Ma60?.toFixed(2) ?? '—'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                  區間 1：0% ~ -3%（常態定期定額）· 區間 2：-5% ~ -7%（階梯試單 30%）· 區間 3：≤ -8%（恐慌甜蜜擊球區）
+                </p>
+              </div>
+
+              {/* 3. 量價與型態指標 */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Activity className="w-4 h-4 text-emerald-400" />
+                    三、量價換手與 K 線型態
+                  </span>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded font-medium ${
+                      data.bottomRadar.pattern.patternTriggered
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {data.bottomRadar.pattern.patternTriggered ? '已出現轉折型態' : '尚未出現型態'}
+                  </span>
+                </div>
+                <div className="space-y-1.5 pt-1 text-xs">
+                  <div className="flex items-center justify-between p-1.5 rounded bg-slate-900/80">
+                    <span className="text-slate-400">爆量長下影線（打樁線）：</span>
+                    <span
+                      className={`font-semibold ${
+                        data.bottomRadar.pattern.hammer ? 'text-emerald-400' : 'text-slate-500'
+                      }`}
+                    >
+                      {data.bottomRadar.pattern.hammer ? '✓ 滿足（融資斷頭被全數吸收）' : '未出現'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-1.5 rounded bg-slate-900/80">
+                    <span className="text-slate-400">量縮窒息底（跌無可跌）：</span>
+                    <span
+                      className={`font-semibold ${
+                        data.bottomRadar.pattern.volumeDrying ? 'text-emerald-400' : 'text-slate-500'
+                      }`}
+                    >
+                      {data.bottomRadar.pattern.volumeDrying ? '✓ 滿足（量縮至 60% 且 3 日不破低）' : '未出現'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-1.5 rounded bg-slate-900/80">
+                    <span className="text-slate-400">破曉長紅吞噬（右側確認）：</span>
+                    <span
+                      className={`font-semibold ${
+                        data.bottomRadar.pattern.dawnEngulfing ? 'text-emerald-400' : 'text-slate-500'
+                      }`}
+                    >
+                      {data.bottomRadar.pattern.dawnEngulfing ? '✓ 滿足（紅 K 吞噬前高並站上 5MA）' : '未出現'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. 資金與期權避險動向 */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-purple-400" />
+                    四、外資期權避險與新台幣匯率
+                  </span>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded font-medium ${
+                      data.bottomRadar.hedging.isHedgingTriggered
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {data.bottomRadar.hedging.isHedgingTriggered ? '期權空單回補' : '空單壓力仍重'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-center">
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">外資台指期淨空單</div>
+                    <div className="text-sm font-bold text-purple-300 mt-0.5 font-mono">
+                      {data.bottomRadar.hedging.txForeignNetOI != null
+                        ? `${data.bottomRadar.hedging.txForeignNetOI.toLocaleString()} 口`
+                        : '—'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      單日：{data.bottomRadar.hedging.txForeignNetChange != null ? `${data.bottomRadar.hedging.txForeignNetChange > 0 ? '+' : ''}${data.bottomRadar.hedging.txForeignNetChange.toLocaleString()}` : '—'}
+                    </div>
+                  </div>
+                  <div className="bg-slate-900 p-2 rounded-lg">
+                    <div className="text-[11px] text-slate-400">美元兌新台幣 (USD/TWD)</div>
+                    <div className="text-sm font-bold text-white mt-0.5 font-mono">
+                      {data.bottomRadar.hedging.usdTwdRate ?? '—'}
+                    </div>
+                    <div
+                      className={`text-[10px] font-semibold mt-0.5 ${
+                        data.bottomRadar.hedging.isFxStabilized ? 'text-emerald-400' : 'text-slate-400'
+                      }`}
+                    >
+                      {data.bottomRadar.hedging.isFxStabilized ? '止貶由貶轉升' : '仍處貶值趨勢'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                  外資期貨淨空單若大於 3.5 萬口摜壓沉重；當單日大幅回補 ≥ 5,000 口或台幣領先止貶，代表熱錢避險賣壓退潮。
+                </p>
+              </div>
+            </div>
+
+            {/* 0050 動態階梯買進試算 ＆ 個人資金紀律提醒 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+              {/* 0050 階梯目標價試算 */}
+              <div className="bg-gradient-to-br from-indigo-950/40 to-slate-900 border border-indigo-500/30 p-4 rounded-xl space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300">
+                  <Sparkles className="w-4 h-4 text-indigo-400" />
+                  0050 動態階梯掛單價試算
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between items-center p-2 rounded bg-slate-900/80 border border-slate-800">
+                    <span className="text-slate-400">當前 0050 季線 (MA60)：</span>
+                    <span className="font-mono font-bold text-white">
+                      {data.bottomRadar.bias.stock0050Ma60 ? `${data.bottomRadar.bias.stock0050Ma60.toFixed(2)} 元` : '—'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center p-2 rounded bg-slate-900/80 border border-cyan-500/30">
+                    <div>
+                      <div className="font-semibold text-cyan-300">區間 2 試單價 (-5%)</div>
+                      <div className="text-[10px] text-slate-400">中度超跌 · 第一筆投入 30% 資金</div>
+                    </div>
+                    <span className="font-mono text-base font-black text-cyan-400">
+                      {data.bottomRadar.bias.tier2TargetPrice ? `${data.bottomRadar.bias.tier2TargetPrice.toFixed(2)} 元` : '—'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center p-2 rounded bg-slate-900/80 border border-emerald-500/30">
+                    <div>
+                      <div className="font-semibold text-emerald-300">區間 3 甜美價 (-8%)</div>
+                      <div className="text-[10px] text-slate-400">恐慌極值 · 最佳風險報酬擊球區</div>
+                    </div>
+                    <span className="font-mono text-base font-black text-emerald-400">
+                      {data.bottomRadar.bias.tier3TargetPrice ? `${data.bottomRadar.bias.tier3TargetPrice.toFixed(2)} 元` : '—'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 個人資金紀律提醒備忘錄 */}
+              <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-xl md:col-span-2 space-y-2.5 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                    <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <Bookmark className="w-4 h-4 text-amber-400" />
+                      個人資金紀律與買進順序備忘錄
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {savedNotesAlert && (
+                        <span className="text-[11px] text-emerald-400 font-semibold animate-pulse">
+                          ✓ 已儲存於本機
+                        </span>
+                      )}
+                      {isEditingNotes ? (
+                        <button
+                          type="button"
+                          onClick={saveNotes}
+                          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition"
+                        >
+                          <Save className="w-3 h-3" /> 儲存備忘
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingNotes(true)}
+                          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium transition"
+                        >
+                          <Edit3 className="w-3 h-3" /> 編輯紀律
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isEditingNotes ? (
+                    <textarea
+                      value={personalNotes}
+                      onChange={(e) => setPersonalNotes(e.target.value)}
+                      rows={5}
+                      className="w-full mt-2 p-2.5 text-xs font-mono bg-slate-900 border border-indigo-500/40 rounded-lg text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400 leading-relaxed"
+                      placeholder="請輸入您的個人資金紀律提醒..."
+                    />
+                  ) : (
+                    <div className="mt-2 text-xs text-slate-300 leading-relaxed whitespace-pre-line font-mono bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                      {personalNotes}
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-[11px] text-slate-400 border-t border-slate-800/60 pt-2 flex items-center gap-1">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>
+                    核心心法提醒：融資未斷頭前勿躁進，生存活水資金絕對不可在下殺段當作攤平籌碼。
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 核心卡片 3：5 年常態河流圖帶狀估值 */}
         <div className="bg-slate-900/90 border border-slate-800 p-6 rounded-2xl space-y-4">
