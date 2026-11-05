@@ -67,6 +67,30 @@ const POPULAR_STOCKS = new Set([
 ])
 
 /**
+ * 判定標的是否為 ETF、債券 ETF、REITs、ETN 或各類基金等非普通股標的。
+ * 法令與金融實務上，ETF 僅有受益人會議，絕不會發放股東會紀念品，應統一自紀念品地圖與日曆中剔除。
+ */
+export function isEtfOrFund(stockId: string, stockName?: string | null): boolean {
+  const id = (stockId ?? '').trim().toUpperCase()
+  const name = (stockName ?? '').trim().toUpperCase()
+  // 台股 00 開頭為 ETF、01 開頭為 REITs / 受益證券、02 開頭為 ETN
+  if (/^0[0-2]/.test(id)) return true
+  if (
+    name.includes('ETF') ||
+    name.includes('債券') ||
+    name.includes('指數') ||
+    name.includes('反1') ||
+    name.includes('正2') ||
+    name.includes('證券投資信託基金') ||
+    name.includes('受益憑證') ||
+    name.includes('收益分配')
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
  * 依 claim_rule、mops_gift_text 與 gift_name 綜合判斷零股領取資格
  */
 export function classifyGiftEligibility(
@@ -83,6 +107,7 @@ export function classifyGiftEligibility(
     combined.includes('未編製') ||
     combined.includes('本公司未發放') ||
     giftName === '無' ||
+    giftName === '-' ||
     giftName === '不發放紀念品'
   ) {
     return { eligibility: 'NO_GIFT', label: '不發放紀念品', color: 'gray' }
@@ -212,8 +237,12 @@ export async function getGiftCalendarData(options: GetGiftCalendarOptions = {}):
              gift_status, claim_rule, claim_rule_source, mops_gift_text,
              validation_status, twse_meeting_date
       FROM shareholder_gifts
+      WHERE stock_id NOT LIKE '00%'
+        AND stock_id NOT LIKE '01%'
+        AND stock_id NOT LIKE '02%'
+        AND (stock_name IS NULL OR stock_name NOT LIKE '%ETF%')
       ORDER BY 
-        CASE WHEN gift_name IS NOT NULL AND gift_name != '待公告' AND gift_name != '無' THEN 0 ELSE 1 END,
+        CASE WHEN gift_name IS NOT NULL AND gift_name != '待公告' AND gift_name != '無' AND gift_name != '-' THEN 0 ELSE 1 END,
         last_buy_date ASC
       LIMIT 1200
     `)
@@ -231,7 +260,7 @@ export async function getGiftCalendarData(options: GetGiftCalendarOptions = {}):
     const stockId = String(r.stock_id ?? '').trim()
     const stockName = String(r.stock_name ?? '').trim()
     const giftName = String(r.gift_name ?? '').trim()
-    if (!stockId) continue
+    if (!stockId || isEtfOrFund(stockId, stockName)) continue
 
     const { eligibility: el, label: elLabel, color: elColor } = classifyGiftEligibility(
       r.claim_rule,

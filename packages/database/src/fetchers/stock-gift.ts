@@ -107,14 +107,24 @@ async function fetchListPage(url: string): Promise<GiftRow[]> {
   const seen = new Set<string>()
   for (const stock of stocks) {
     const stockId = String(stock?.stockId ?? '').trim()
+    const stockName = String(stock?.name ?? '').trim()
     if (!/^\d{4,6}$/.test(stockId)) continue
+    // ETF / 債券 ETF / REITs / ETN 絕不發放股東會紀念品，統一跳過不納入
+    if (
+      stockId.startsWith('00') ||
+      stockId.startsWith('01') ||
+      stockId.startsWith('02') ||
+      stockName.toUpperCase().includes('ETF')
+    ) {
+      continue
+    }
     const ctx = stock.meetingContext ?? {}
     const key = `${stockId}|${ctx.date || ''}`
     if (seen.has(key)) continue
     seen.add(key)
     rows.push({
       stock_id: stockId,
-      stock_name: String(stock?.name ?? '').trim(),
+      stock_name: stockName,
       meeting_date: toMonthDay(ctx.date || ''),
       last_buy_date: toMonthDay(ctx.lastBuyDate || ''),
       gift_name: normalizeGiftName(stockId, String(ctx.giftContent ?? '').trim()),

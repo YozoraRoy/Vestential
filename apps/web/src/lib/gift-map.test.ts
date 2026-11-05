@@ -3,9 +3,35 @@ import {
   classifyGiftEligibility,
   normalizeDateToYear,
   computeCountdown,
+  isEtfOrFund,
 } from './gift-map'
 
 describe('Issue #118 股東會紀念品攻略核心邏輯', () => {
+  it('isEtfOrFund：能正確將所有 ETF、債券 ETF、REITs、ETN 判定為非普通股', () => {
+    // 00 開頭 ETF (純數字與英文字母尾碼)
+    expect(isEtfOrFund('0050', '元大台灣50')).toBe(true)
+    expect(isEtfOrFund('0056', '元大高股息')).toBe(true)
+    expect(isEtfOrFund('00878', '國泰永續高股息')).toBe(true)
+    expect(isEtfOrFund('00940', '元大台灣價值高息')).toBe(true)
+    expect(isEtfOrFund('00400A', '主動國泰動能高息')).toBe(true)
+    expect(isEtfOrFund('00401A', '主動摩根台灣鑫收')).toBe(true)
+    expect(isEtfOrFund('00679B', '元大美債20年')).toBe(true)
+
+    // 01 開頭 REITs 受益證券、02 開頭 ETN
+    expect(isEtfOrFund('01007T', '兆豐國泰R2')).toBe(true)
+    expect(isEtfOrFund('020036', '元大金融配息N')).toBe(true)
+
+    // 名稱含 ETF 字樣
+    expect(isEtfOrFund('9999', '富邦特選高息ETF')).toBe(true)
+
+    // 一般上市普通股（絕不可被誤判為 ETF）
+    expect(isEtfOrFund('2330', '台積電')).toBe(false)
+    expect(isEtfOrFund('2002', '中鋼')).toBe(false)
+    expect(isEtfOrFund('1432', '大魯閣')).toBe(false)
+    expect(isEtfOrFund('2887', '台新金')).toBe(false)
+    expect(isEtfOrFund('2884', '玉山金')).toBe(false)
+    expect(isEtfOrFund('2412', '中華電')).toBe(false)
+  })
   it('classifyGiftEligibility：能正確識別不發放、電子投票、零股可領與待公告', () => {
     // 不發放
     expect(classifyGiftEligibility('本公司不發放紀念品', null, '無').eligibility).toBe('NO_GIFT')

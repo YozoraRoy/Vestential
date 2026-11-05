@@ -33,6 +33,15 @@ async function upsertClaim(
   meeting: MopsMeeting | undefined,
   result: ClaimResult,
 ): Promise<void> {
+  // ETF / 債券 ETF / REITs / ETN 不會發放股東會紀念品，直接略過不寫入
+  if (
+    stockId.startsWith('00') ||
+    stockId.startsWith('01') ||
+    stockId.startsWith('02') ||
+    stockName.toUpperCase().includes('ETF')
+  ) {
+    return
+  }
   const now = new Date().toISOString()
   const mopsDate = meeting ? rocToMonthDay(meeting.date) : ''
   const params = {
@@ -73,7 +82,12 @@ async function main() {
 
   const all = await dbQueryAll<StockRow>(
     `SELECT DISTINCT stock_id, stock_name FROM odd_lot_trades
-      WHERE date = (SELECT MAX(date) FROM odd_lot_trades) ORDER BY stock_id`,
+      WHERE date = (SELECT MAX(date) FROM odd_lot_trades)
+        AND stock_id NOT LIKE '00%'
+        AND stock_id NOT LIKE '01%'
+        AND stock_id NOT LIKE '02%'
+        AND (stock_name IS NULL OR stock_name NOT LIKE '%ETF%')
+      ORDER BY stock_id`,
   )
 
   let list = all
