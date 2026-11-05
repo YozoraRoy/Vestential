@@ -31,6 +31,9 @@ describe('industryLabel｜33 板塊三語對照', () => {
 
   it('中文名 → 依語系顯示；未知名稱原樣回傳、空值回空字串', () => {
     expect(industryLabel('半導體業', 'zh-TW')).toBe('半導體業')
+    expect(industryLabel('其他', 'zh-TW')).toBe('其他類')
+    expect(industryLabel('其他', 'en')).toBe('Others')
+    expect(industryLabel('其他', 'ja')).toBe('その他')
     expect(industryLabel('半導體業', 'en')).toBe('Semiconductors')
     expect(industryLabel('金融保險業', 'ja')).toBe('金融・保険')
     expect(industryLabel('未知板塊', 'en')).toBe('未知板塊')
@@ -39,6 +42,8 @@ describe('industryLabel｜33 板塊三語對照', () => {
 
   it('industryCodeOf：中文名 → 2 碼代碼', () => {
     expect(industryCodeOf('半導體業')).toBe('24')
+    expect(industryCodeOf('其他')).toBe('20')
+    expect(industryCodeOf('其他類')).toBe('20')
     expect(industryCodeOf('存託憑證')).toBe('91')
     expect(industryCodeOf('不存在')).toBeNull()
   })
@@ -132,6 +137,8 @@ describe('matchesIndustry｜板塊篩選', () => {
   it('比對 industry_name；空值標的對應未分類', () => {
     expect(matchesIndustry(item('半導體業'), '半導體業')).toBe(true)
     expect(matchesIndustry(item('半導體業'), '金融保險業')).toBe(false)
+    expect(matchesIndustry(item('其他'), '其他')).toBe(true)
+    expect(matchesIndustry(item('其他'), '其他類')).toBe(true)
     expect(matchesIndustry(item(null), INDUSTRY_UNCLASSIFIED)).toBe(true)
     expect(matchesIndustry(item(null), '半導體業')).toBe(false)
     expect(matchesIndustry(item(null, '24'), '24')).toBe(true)

@@ -402,7 +402,7 @@ export const zhTW: Dict = {
     historyClose: '關閉',
     industryFilterLabel: '板塊篩選：',
     industryAll: '全部',
-    industryOther: '其他板塊 ({n})',
+    industryOther: '更多板塊 ({n})',
     industryUnclassified: '未分類',
     colIndustry: '板塊',
     statusFilteredByIndustry: '板塊：{name}',

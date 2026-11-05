@@ -75,6 +75,8 @@ const INDUSTRY_BY_ZH: Record<string, IndustryMeta> = Object.fromEntries(
 export function industryLabel(nameZh: string | null | undefined, lang: IndustryLang): string {
   const raw = (nameZh ?? '').trim()
   if (!raw) return ''
+  // 官方代碼 20 為「其他」，在繁體中文顯示為「其他類」以避免與「更多板塊」展開按鈕混淆
+  if (raw === '其他' && lang === 'zh-TW') return '其他類'
   const meta = INDUSTRY_BY_ZH[raw]
   if (!meta) return raw
   if (lang === 'en') return meta.en
@@ -85,6 +87,7 @@ export function industryLabel(nameZh: string | null | undefined, lang: IndustryL
 /** 板塊名稱（中文）→ 2 碼代碼；查無回 null。 */
 export function industryCodeOf(nameZh: string | null | undefined): string | null {
   const raw = (nameZh ?? '').trim()
+  if (raw === '其他類') return '20'
   return INDUSTRY_BY_ZH[raw]?.code ?? null
 }
 
@@ -144,5 +147,6 @@ export function matchesIndustry(
   const target = (name ?? '').trim()
   if (!target || target === INDUSTRY_ALL) return true
   if (industryKeyOf(item) === target) return true
+  if (target === '其他類' && industryKeyOf(item) === '其他') return true
   return target === (item?.industry_code ?? '').trim()
 }

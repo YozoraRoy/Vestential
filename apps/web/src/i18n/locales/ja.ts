@@ -402,7 +402,7 @@ export const ja: Dict = {
     historyClose: '閉じる',
     industryFilterLabel: 'セクターで絞り込み：',
     industryAll: 'すべて',
-    industryOther: 'その他のセクター ({n})',
+    industryOther: 'もっと見る ({n})',
     industryUnclassified: '未分類',
     colIndustry: 'セクター',
     statusFilteredByIndustry: 'セクター：{name}',
