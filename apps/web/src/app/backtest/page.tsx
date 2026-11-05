@@ -724,6 +724,8 @@ export default function BacktestPage() {
             ).map(({ id, raw }) => {
               const { title, desc } = parsePresetText(raw)
               const isSelected = activePreset === id
+              const isNewStock = (result?.usage?.dataPoints ?? 0) > 0 && (result?.usage?.dataPoints ?? 0) < 750
+              const recommendShort = isNewStock && id === 'short'
               return (
                 <button
                   key={id}
@@ -736,8 +738,13 @@ export default function BacktestPage() {
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1 mb-0.5">
-                    <span className={`text-sm font-semibold ${isSelected ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
+                    <span className={`text-sm font-semibold flex items-center gap-1.5 ${isSelected ? 'text-[var(--accent)]' : 'text-[var(--text-primary)]'}`}>
                       {title}
+                      {recommendShort && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-normal">
+                          {locale === 'en' ? 'Recommended' : '新股推薦'}
+                        </span>
+                      )}
                     </span>
                     {isSelected && (
                       <span className="w-2 h-2 rounded-full bg-[var(--accent)] ring-2 ring-[var(--accent)]/20" />
@@ -865,6 +872,58 @@ export default function BacktestPage() {
               <span>{ui.cycleEntryDiffBanner}</span>
             </div>
           </div>
+
+          {/* 新上市標的或週期無樣本提示 */}
+          {result.totalTrades === 0 && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-sm">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-amber-300">
+                    {result.usage.dataPoints < 750
+                      ? (locale === 'en' ? 'Newly Listed Stock / Sample Warning' : '新上市標的 / 週期樣本不足提示')
+                      : (locale === 'en' ? 'No Matching Triggers Notice' : '目前參數下無符合之交易樣本')}
+                  </div>
+                  <div className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
+                    {result.usage.dataPoints < 750 ? (
+                      <>
+                        {locale === 'en'
+                          ? `This stock has only ${result.usage.dataPoints} trading days (~${(result.usage.dataPoints / 250).toFixed(1)} years) of history. Holding ${holdingDays} days cannot accumulate enough completed trade cycles under non-overlapping rules.`
+                          : `此標的上市累積僅 ${result.usage.dataPoints} 個交易日（約 ${(result.usage.dataPoints / 250).toFixed(1)} 年）。在「持有 ${holdingDays} 日」之長線規則下，因非重疊持倉機制，歷史上無法累積足夠的完整已決樣本。`}
+                        <span className="block mt-1 text-[var(--text-primary)] font-medium">
+                          {locale === 'en'
+                            ? '👉 Recommend switching to "Short-term Swing (40 days)" strategy for actionable entry signals.'
+                            : '👉 建議切換為「短線波段（40日）」策略，即可獲取最佳進場乖離率與回測訊號！'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {locale === 'en'
+                          ? `No trades triggered under ${years}-year / ${holdingDays}-day holding conditions.`
+                          : `在近 ${years} 年、持有 ${holdingDays} 日、目標 +${targetPct}% 之條件下，歷史未觸發足夠樣本。`}
+                        <span className="block mt-1 text-[var(--text-primary)] font-medium">
+                          {locale === 'en'
+                            ? '👉 Try switching to "Short-term Swing (40 days)" or adjusting target profit.'
+                            : '👉 建議切換為「短線波段（40日）」或適度調整目標獲利率重試。'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  applyPreset('short')
+                  void runWithPreset(symbol, stockName, 'short')
+                }}
+                className="shrink-0 px-3.5 py-2 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                {locale === 'en' ? 'Switch to Short Swing (40d)' : '一鍵切換短線波段（40日）'}
+              </button>
+            </div>
+          )}
 
           {result.belowTarget && (
             <div className="flex items-center gap-2 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm">

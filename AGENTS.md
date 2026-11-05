@@ -139,3 +139,18 @@ status/spec       含 typecheck/lint/build   PASS/FAIL matrix        Closes #N �
 ```powershell
 node -e "const{execSync}=require('child_process');const t=execSync('gh api repos/YozoraRoy/vestential/issues/N/comments --paginate',{encoding:'utf8',maxBuffer:1e8});const q=(t.match(/\?/g)||[]).length,c=(t.match(/[\u4e00-\u9fff]/g)||[]).length;console.log('?='+q,'CJK='+c,q>=20&&c<q/4?'=> 疑似亂碼，重貼':'=> OK')"
 ```
+
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues (using `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical triage roles mapped to GitHub labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout (`GLOSSARY.md` at root and `docs/adr/`). See `docs/agents/domain.md`.

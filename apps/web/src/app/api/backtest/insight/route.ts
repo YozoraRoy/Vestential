@@ -86,7 +86,8 @@ export async function GET(req: Request) {
 
     let bestThreshold: number | null = null
     try {
-      const maxTheoreticalTrades = Math.max(1, Math.floor((years * 250) / holdingDays))
+      const effectiveDays = Math.min(years * 250, Math.max(1, history.length - 60))
+      const maxTheoreticalTrades = Math.max(1, Math.floor(effectiveDays / holdingDays))
       const minTrades = Math.min(10, Math.max(2, Math.floor(maxTheoreticalTrades * 0.25)))
 
       const g = runGridSearch(history, {
