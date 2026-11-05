@@ -4,6 +4,7 @@ import {
   isTaiwanMarketTradingDay,
   getLastMarketTradingDay,
   formatDateIso,
+  formatLastBuyDateWithYear,
 } from './taiwan-calendar'
 
 // 以本地時區建構日期（避免 `new Date('YYYY-MM-DD')` 的 UTC 解析在不同時區 getDay 偏移）。
@@ -73,5 +74,32 @@ describe('getLastMarketTradingDay｜Issue #66 日曆修正後', () => {
   })
   it('2026-10-23（颱風休市週五）往回取為 2026-10-22', () => {
     expect(formatDateIso(getLastMarketTradingDay(localDate(2026, 10, 23)))).toBe('2026-10-22')
+  })
+})
+
+describe('formatLastBuyDateWithYear｜最後買進日與電投會後領取日錯位識別', () => {
+  it('正常最後買進日（早於股東會開會日）不被標記為錯位', () => {
+    // 聯詠 3034：最後買進日 03/26，股東會 05/29
+    const res = formatLastBuyDateWithYear('03/26', '05/29')
+    expect(res).not.toBeNull()
+    expect(res?.isPickupDateMisplaced).toBe(false)
+    expect(res?.formattedDate).toContain('03/26')
+  })
+
+  it('會後電投領取截止日（晚於股東會開會日）精確識別為錯位', () => {
+    // 台新新光金 2887：誤植最後買進日 08/14，股東會 06/12
+    const res2887 = formatLastBuyDateWithYear('08/14', '06/12')
+    expect(res2887).not.toBeNull()
+    expect(res2887?.isPickupDateMisplaced).toBe(true)
+
+    // 宏碁 2353：誤植最後買進日 08/20，股東會 05/29
+    const res2353 = formatLastBuyDateWithYear('08/20', '05/29')
+    expect(res2353).not.toBeNull()
+    expect(res2353?.isPickupDateMisplaced).toBe(true)
+
+    // 中保科 9917：誤植最後買進日 07/10，股東會 05/29
+    const res9917 = formatLastBuyDateWithYear('07/10', '05/29')
+    expect(res9917).not.toBeNull()
+    expect(res9917?.isPickupDateMisplaced).toBe(true)
   })
 })

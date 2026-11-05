@@ -314,6 +314,15 @@ export interface Dict {
     validationDateMismatch: string
     validationGiftConflict: string
     validationUnverified: string
+    restrictAppOnly: string
+    restrictEgiftOnline: string
+    restrictEvoteStockAgent: string
+    misplacedPickupDateBadge: string
+    misplacedPickupDateTip: string
+    riskNoticeTitle: string
+    riskNoticeYearRisk: string
+    riskNoticeAgentCost: string
+    riskNoticeDateDistinction: string
     officialDate: string
     officialDateTip: string
     categoryAll: string

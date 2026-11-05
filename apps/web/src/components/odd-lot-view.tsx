@@ -22,6 +22,7 @@ import {
   Layers,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   isTaiwanMarketTradingDay,
@@ -32,6 +33,7 @@ import {
 import { useI18n } from '@/i18n/LanguageProvider'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import { getOddLotRestriction, type RestrictionStatus } from '@/lib/odd-lot-restriction'
 import {
   INDUSTRY_ALL,
   INDUSTRY_BOND_ETF,
@@ -259,100 +261,7 @@ export function formatCpRatio(ratio: number): { label: string; badgeClass: strin
   return { label: `${ratio.toFixed(2)}x`, badgeClass: 'bg-white/5 text-white/60 border-white/10' }
 }
 
-export type RestrictionStatus = 'ALLOW_AGENT' | 'REQUIRE_EVOTE_OR_ATTEND' | 'NO_ODD_LOT_GIFT' | 'UNKNOWN'
-
-function getOfficialRuleMap(ui: {
-  restrictOneShare: string; restrictFullLot: string;
-  restrictNoGift: string; restrictMeetingOnly: string;
-}): Record<string, { status: RestrictionStatus; label: string; badgeClass: string }> {
-  return {
-    ONE_SHARE: {
-      status: 'ALLOW_AGENT',
-      label: ui.restrictOneShare,
-      badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-    },
-    FULL_LOT: {
-      status: 'NO_ODD_LOT_GIFT',
-      label: ui.restrictFullLot,
-      badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
-    },
-    NO_GIFT: {
-      status: 'NO_ODD_LOT_GIFT',
-      label: ui.restrictNoGift,
-      badgeClass: 'bg-white/5 text-white/40 border-white/15',
-    },
-    MEETING_ONLY: {
-      status: 'REQUIRE_EVOTE_OR_ATTEND',
-      label: ui.restrictMeetingOnly,
-      badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    },
-  }
-}
-
-export function getOddLotRestriction(
-  giftName?: string | null,
-  distributionMethod?: string | null,
-  claimRule?: string | null,
-  claimRuleSource?: string | null,
-  ui?: {
-    restrictOneShare?: string; restrictFullLot?: string; restrictNoGift?: string;
-    restrictMeetingOnly?: string; restrictEvoteOrAttend?: string;
-    restrictOddLotNoGift?: string; restrictPending?: string;
-    restrictAgentClaimable?: string; sourceOfficial?: string; sourceEstimated?: string;
-  }
-): {
-  status: RestrictionStatus
-  label: string
-  badgeClass: string
-  source: string
-  officialText?: string | null
-} {
-  const ruleMap = getOfficialRuleMap({
-    restrictOneShare: ui?.restrictOneShare ?? '✅ 1股可領',
-    restrictFullLot: ui?.restrictFullLot ?? '❌ 需滿千股',
-    restrictNoGift: ui?.restrictNoGift ?? '➖ 無紀念品',
-    restrictMeetingOnly: ui?.restrictMeetingOnly ?? '⚠️ 需出席/電投',
-  })
-
-  if (claimRule && claimRuleSource === 'MOPS' && claimRule !== 'UNKNOWN' && ruleMap[claimRule]) {
-    const cfg = ruleMap[claimRule]
-    return { ...cfg, source: 'MOPS' }
-  }
-
-  const text = `${giftName || ''} ${distributionMethod || ''}`.toLowerCase()
-
-  if (text.includes('親領') || text.includes('電子投票') || text.includes('電投') || text.includes('出席')) {
-    return {
-      status: 'REQUIRE_EVOTE_OR_ATTEND',
-      label: ui?.restrictEvoteOrAttend ?? '⚠️ 需電投/親領',
-      badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-      source: '推估',
-    }
-  }
-  if (text.includes('不發') || text.includes('滿一張')) {
-    return {
-      status: 'NO_ODD_LOT_GIFT',
-      label: ui?.restrictOddLotNoGift ?? '❌ 零股不發放',
-      badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
-      source: '推估',
-    }
-  }
-  if (!giftName || giftName === '-' || giftName === '待公告' || classifyGift(giftName) === 'NO_GIFT') {
-    return {
-      status: 'UNKNOWN',
-      label: ui?.restrictPending ?? '⏳ 待公告',
-      badgeClass: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
-      source: '推估',
-    }
-  }
-
-  return {
-    status: 'ALLOW_AGENT',
-    label: ui?.restrictAgentClaimable ?? '✅ 零股可代領',
-    badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-    source: '推估',
-  }
-}
+export { type RestrictionStatus, getOddLotRestriction } from '@/lib/odd-lot-restriction'
 
 export function getValidationBadge(
   status?: string | null,
@@ -638,6 +547,34 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       }
     }
 
+    // 資料錯位檢驗：若最後買進日晚於股東會開會日（實為會後電投領取截止日），真正的最後買進日早於開會日前約 62 天
+    if (meetingDate) {
+      const meetingFull = meetingDate.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/)
+      const meetingMd = meetingDate.match(/^(\d{1,2})[\/-](\d{1,2})$/)
+      let mYear = year
+      let mMonth = 0
+      let mDay = 0
+      if (meetingFull) {
+        mYear = parseInt(meetingFull[1], 10)
+        mMonth = parseInt(meetingFull[2], 10)
+        mDay = parseInt(meetingFull[3], 10)
+      } else if (meetingMd) {
+        mMonth = parseInt(meetingMd[1], 10)
+        mDay = parseInt(meetingMd[2], 10)
+      }
+      if (mMonth > 0) {
+        const meetWeight = mMonth * 100 + mDay
+        const buyWeight = month * 100 + day
+        if (buyWeight > meetWeight) {
+          const meetDateObj = new Date(mYear, mMonth - 1, mDay)
+          const today = new Date(currentYear, now.getMonth(), now.getDate())
+          if (meetDateObj < today) {
+            return true // 開會日早已過去，真正的最後買進日必然早已截止！
+          }
+        }
+      }
+    }
+
     let buyDate = new Date(year, month - 1, day)
 
     if (!isTaiwanMarketTradingDay(buyDate)) {
@@ -661,8 +598,8 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       }
 
       if (onlyAllowAgent) {
-        const rest = getOddLotRestriction(item.gift_name, item.distribution_method, item.claim_rule, item.claim_rule_source)
-        if (rest.status !== 'ALLOW_AGENT') return false
+        const rest = getOddLotRestriction(item.gift_name, item.distribution_method, item.claim_rule, item.claim_rule_source, ui, item.stock_id)
+        if (rest.status !== 'ALLOW_AGENT' && rest.status !== 'EVOTE_STOCK_AGENT' && rest.status !== 'EGIFT_ONLINE') return false
       }
 
       if (onlyHighCp) {
@@ -735,8 +672,8 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
           )
         case 'restriction':
           return (
-            getOddLotRestriction(a.gift_name, a.distribution_method, a.claim_rule, a.claim_rule_source).status.localeCompare(
-              getOddLotRestriction(b.gift_name, b.distribution_method, b.claim_rule, b.claim_rule_source).status
+            getOddLotRestriction(a.gift_name, a.distribution_method, a.claim_rule, a.claim_rule_source, ui, a.stock_id).status.localeCompare(
+              getOddLotRestriction(b.gift_name, b.distribution_method, b.claim_rule, b.claim_rule_source, ui, b.stock_id).status
             ) * modifier
           )
         default:
@@ -853,6 +790,19 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 零股投資重要風險與代領成本提醒卡片 */}
+      <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-4 md:p-5 space-y-2.5">
+        <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+          <span>{ui.riskNoticeTitle}</span>
+        </div>
+        <ul className="text-xs text-amber-200/90 space-y-1.5 pl-6 list-disc leading-relaxed">
+          <li>{ui.riskNoticeYearRisk}</li>
+          <li>{ui.riskNoticeAgentCost}</li>
+          <li>{ui.riskNoticeDateDistinction}</li>
+        </ul>
       </div>
 
       <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-4 md:p-6 space-y-4">
@@ -1299,15 +1249,17 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                             item.claim_rule,
                             item.claim_rule_source,
                             ui,
+                            item.stock_id,
                           )
-                          const tip =
-                            source === 'MOPS'
-                              ? `${ui.sourceMopsTip}${officialText ? `\n${officialText}` : ''}`
+                          const tip = officialText
+                            ? `${officialText}\n(${source})`
+                            : source === 'MOPS'
+                              ? `${ui.sourceMopsTip}`
                               : ui.sourceEstimateTip
                           return (
                             <span
                               title={tip}
-                              className={`px-2.5 py-0.5 rounded-full border font-medium text-xs ${badgeClass}`}
+                              className={`px-2.5 py-0.5 rounded-full border font-medium text-xs ${badgeClass} cursor-help`}
                             >
                               {label}
                               <span className="ml-1 opacity-70 text-[10px]">
@@ -1324,22 +1276,40 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                           const dateInfo = formatLastBuyDateWithYear(item.last_buy_date, eff.date)
                           if (!dateInfo) return <span className="text-white/40">-</span>
                           return (
-                            <div className="flex items-center gap-1.5 font-medium">
-                              <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                              <span className={dateInfo.isCrossYear ? 'text-amber-300 font-bold' : 'text-emerald-400'}>
-                                {dateInfo.formattedDate}
-                              </span>
-                              {dateInfo.isCrossYear && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                  {ui.crossYear}
-                                </span>
-                              )}
-                              {eff.source === 'twse' && item.meeting_date && item.meeting_date !== item.twse_meeting_date && (
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5 font-medium">
+                                <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                                 <span
-                                  title={ui.officialDateTip}
-                                  className="text-[10px] px-1.5 py-0.2 rounded bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30"
+                                  className={
+                                    dateInfo.isPickupDateMisplaced
+                                      ? 'text-amber-400 line-through font-mono'
+                                      : dateInfo.isCrossYear
+                                        ? 'text-amber-300 font-bold font-mono'
+                                        : 'text-emerald-400 font-mono'
+                                  }
                                 >
-                                  {ui.officialDate}
+                                  {dateInfo.formattedDate}
+                                </span>
+                                {dateInfo.isCrossYear && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    {ui.crossYear}
+                                  </span>
+                                )}
+                                {eff.source === 'twse' && item.meeting_date && item.meeting_date !== item.twse_meeting_date && (
+                                  <span
+                                    title={ui.officialDateTip}
+                                    className="text-[10px] px-1.5 py-0.2 rounded bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30"
+                                  >
+                                    {ui.officialDate}
+                                  </span>
+                                )}
+                              </div>
+                              {dateInfo.isPickupDateMisplaced && (
+                                <span
+                                  title={ui.misplacedPickupDateTip}
+                                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 cursor-help"
+                                >
+                                  ⚠️ {ui.misplacedPickupDateBadge}
                                 </span>
                               )}
                             </div>

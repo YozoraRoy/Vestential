@@ -137,6 +137,7 @@ export function formatLastBuyDateWithYear(lastBuyDate?: string | null, meetingDa
   month: number
   day: number
   isCrossYear: boolean
+  isPickupDateMisplaced?: boolean
 } | null {
   if (!lastBuyDate || lastBuyDate === '—' || lastBuyDate === 'null') return null
 
@@ -197,6 +198,28 @@ export function formatLastBuyDateWithYear(lastBuyDate?: string | null, meetingDa
     }
   }
 
+  let isPickupDateMisplaced = false
+  if (meetingDate) {
+    const meetingFull = meetingDate.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/)
+    const meetingMd = meetingDate.match(/^(\d{1,2})[\/-](\d{1,2})$/)
+    let mMonth = 0
+    let mDay = 0
+    if (meetingFull) {
+      mMonth = parseInt(meetingFull[2], 10)
+      mDay = parseInt(meetingFull[3], 10)
+    } else if (meetingMd) {
+      mMonth = parseInt(meetingMd[1], 10)
+      mDay = parseInt(meetingMd[2], 10)
+    }
+    if (mMonth > 0) {
+      const meetWeight = mMonth * 100 + mDay
+      const buyWeight = month * 100 + day
+      if (buyWeight > meetWeight) {
+        isPickupDateMisplaced = true
+      }
+    }
+  }
+
   const d = new Date(year, month - 1, day)
   const isCrossYear = year > currentYear
   const monthStr = String(month).padStart(2, '0')
@@ -211,5 +234,6 @@ export function formatLastBuyDateWithYear(lastBuyDate?: string | null, meetingDa
     month,
     day,
     isCrossYear,
+    isPickupDateMisplaced,
   }
 }
