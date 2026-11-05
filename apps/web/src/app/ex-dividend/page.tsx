@@ -796,13 +796,19 @@ export default function ExDividendPage() {
                               </td>
 
                               {/* 現金股利 */}
-                              <td className="px-3.5 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
-                                NT$ {fmtPrice(item.cash_dividend)}
+                              <td className="px-3.5 py-3 text-right font-mono font-bold whitespace-nowrap">
+                                {item.cash_dividend > 0 ? (
+                                  <span className="text-emerald-400">NT$ {fmtPrice(item.cash_dividend)}</span>
+                                ) : (
+                                  <span className="text-amber-400/90 text-xs font-normal px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20">
+                                    待公告
+                                  </span>
+                                )}
                               </td>
 
                               {/* 預估殖利率 */}
                               <td className="px-3.5 py-3 text-right font-mono font-medium text-zinc-100 whitespace-nowrap">
-                                {item.yield_pct != null ? `${fmtPrice(item.yield_pct)}%` : '—'}
+                                {item.yield_pct != null && item.yield_pct > 0 ? `${fmtPrice(item.yield_pct)}%` : '—'}
                               </td>
 
                               {/* 填息力評分 */}
@@ -940,11 +946,15 @@ export default function ExDividendPage() {
                             </div>
                             <div className="min-w-0">
                               <div className="text-[10px] text-[var(--text-secondary)]">現金股利</div>
-                              <div className="text-xs font-semibold text-emerald-400 font-mono">
-                                NT$ {fmtPrice(item.cash_dividend)}
+                              <div className="text-xs font-semibold font-mono">
+                                {item.cash_dividend > 0 ? (
+                                  <span className="text-emerald-400">NT$ {fmtPrice(item.cash_dividend)}</span>
+                                ) : (
+                                  <span className="text-amber-400/90 font-normal">待公告</span>
+                                )}
                               </div>
                               <div className="text-[10px] text-[var(--text-secondary)]">
-                                {item.yield_pct != null ? `殖利率 ${fmtPrice(item.yield_pct)}%` : '殖利率 —'}
+                                {item.yield_pct != null && item.yield_pct > 0 ? `殖利率 ${fmtPrice(item.yield_pct)}%` : '殖利率 —'}
                               </div>
                             </div>
                             <div className="min-w-0">

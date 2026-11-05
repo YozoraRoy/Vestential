@@ -118,8 +118,11 @@ export function parseTwt48uCsv(text: string): Twt48uParseResult {
     }
     const symbol = cleanTwseCode(fields[idxCode] ?? '')
     const exDate = parseRocDateToIso(fields[idxDate] ?? '')
-    const cash = parseCashDividend(fields[idxCash] ?? '')
-    if (!symbol || !exDate || cash == null) {
+    const parsedCash = parseCashDividend(fields[idxCash] ?? '')
+    // 若尚未公告確切金額（如 ETF 第一階段「待公告實際收益分配金額」），先以 0 入庫保留除息預告與最後買進日倒數；
+    // 待第二階段公告確切數值後，由後續排程/同步自動更新覆蓋。
+    const cash = parsedCash ?? 0
+    if (!symbol || !exDate) {
       skipped++
       continue
     }

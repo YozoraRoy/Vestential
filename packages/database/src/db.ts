@@ -3222,7 +3222,7 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
             .input('prevClose', sql.Float, r.prev_close ?? null)
             .query(`
               IF EXISTS (SELECT 1 FROM twse_dividends WHERE symbol = @symbol AND ex_date = @exDate)
-                UPDATE twse_dividends SET cash_dividend = @cash, prev_close = COALESCE(@prevClose, prev_close) WHERE symbol = @symbol AND ex_date = @exDate
+                UPDATE twse_dividends SET cash_dividend = CASE WHEN @cash > 0 THEN @cash ELSE cash_dividend END, prev_close = COALESCE(@prevClose, prev_close) WHERE symbol = @symbol AND ex_date = @exDate
               ELSE
                 INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close) VALUES (@symbol, @exDate, @cash, @prevClose)
             `)
@@ -3241,7 +3241,7 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
           INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close)
           VALUES (?, ?, ?, ?)
           ON CONFLICT(symbol, ex_date) DO UPDATE SET
-            cash_dividend = excluded.cash_dividend,
+            cash_dividend = CASE WHEN excluded.cash_dividend > 0 THEN excluded.cash_dividend ELSE twse_dividends.cash_dividend END,
             prev_close = COALESCE(excluded.prev_close, twse_dividends.prev_close)
         `)
         const tx = db.transaction((list: TwseDividendInput[]) => {
@@ -3262,7 +3262,7 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
       const prev = twseDividendMemoryStore[idx]!
       twseDividendMemoryStore[idx] = {
         ...prev,
-        cash_dividend: r.cash_dividend,
+        cash_dividend: r.cash_dividend > 0 ? r.cash_dividend : prev.cash_dividend,
         prev_close: r.prev_close ?? prev.prev_close ?? null,
       }
     } else twseDividendMemoryStore.push({ id: twseDividendMemoryStore.length + 1, ...r })

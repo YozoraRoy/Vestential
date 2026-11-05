@@ -242,14 +242,18 @@ describe('TWT48U 解析（回歸：缺口回填依賴它）', () => {
     expect(cleanTwseCode(' 2330 ')).toBe('2330')
   })
 
-  it('待公告列略過計 skipped', () => {
+  it('待公告列保留進 rows（cash_dividend=0）供除息日曆預告', () => {
     const csv = [
       '"除權除息日期","股票代號","名稱","除權息","現金股利"',
       '"115年10月08日","2330","台積電","息","5"',
       '"115年10月08日","00940","元大台灣價值高息","息","待公告實際收益分配金額"',
+      '"非法日期","9999","假股票","息","1"',
     ].join('\n')
     const { rows, skipped } = parseTwt48uCsv(csv)
-    expect(rows).toEqual([{ symbol: '2330', ex_date: '2026-10-08', cash_dividend: 5 }])
+    expect(rows).toEqual([
+      { symbol: '2330', ex_date: '2026-10-08', cash_dividend: 5 },
+      { symbol: '00940', ex_date: '2026-10-08', cash_dividend: 0 },
+    ])
     expect(skipped).toBe(1)
   })
 })

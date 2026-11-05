@@ -48,7 +48,7 @@ const CACHE_TTL_MS = 30 * 60 * 1000 // 30 分鐘快取（Issue #123）
 
 const WINDOW_DAYS = 30
 const HISTORY_YEARS = 5
-const MAX_SYMBOLS = 60
+const MAX_SYMBOLS = 100
 const HISTORY_CONCURRENCY = 6
 
 function addDaysStr(iso: string, n: number): string {
@@ -171,7 +171,13 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const symbols = [...upcomingBySymbol.keys()].sort()
+    // 依除息日由近到遠排序（最近要除息的排前面），同日者依代號排序
+    const symbols = [...upcomingBySymbol.keys()].sort((a, b) => {
+      const da = upcomingBySymbol.get(a)?.ex_date ?? ''
+      const db = upcomingBySymbol.get(b)?.ex_date ?? ''
+      if (da !== db) return da.localeCompare(db)
+      return a.localeCompare(b)
+    })
     const truncated = symbols.length > MAX_SYMBOLS
     const picked = symbols.slice(0, MAX_SYMBOLS)
 
@@ -251,7 +257,7 @@ export async function GET(req: NextRequest) {
         days_to_ex: daysUntilEx(today, upcoming.ex_date),
         cash_dividend: upcoming.cash_dividend,
         yield_pct:
-          latestClose != null && latestClose > 0
+          latestClose != null && latestClose > 0 && upcoming.cash_dividend > 0
             ? Math.round((upcoming.cash_dividend / latestClose) * 10000) / 100
             : null,
         quote_type: quoteType,
