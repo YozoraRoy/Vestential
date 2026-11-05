@@ -210,6 +210,73 @@ export function computeCountdown(
   return { daysLeft: diffDays, tag: 'UPCOMING', label: `剩餘 ${diffDays} 天` }
 }
 
+/**
+ * 評估股東會紀念品列之完整度與權威度評分，供同股票去重使用。
+ */
+export function scoreGiftRow(r: any): number {
+  let score = 0
+  const giftName = String(r.gift_name ?? '').trim()
+  const meetingDate = String(r.meeting_date ?? '').trim()
+  const lastBuyDate = String(r.last_buy_date ?? '').trim()
+  const claimRuleSource = String(r.claim_rule_source ?? '').trim()
+  const mopsText = String(r.mops_gift_text ?? '').trim()
+
+  // 1. MOPS 官方公告權威性（最高權重）
+  if (claimRuleSource === 'MOPS' || mopsText.length > 0) {
+    score += 100
+  }
+
+  // 2. 紀念品品名具體程度
+  if (
+    giftName &&
+    giftName !== '待公告' &&
+    giftName !== '無' &&
+    giftName !== '-' &&
+    giftName !== '不發放紀念品' &&
+    giftName !== '等待'
+  ) {
+    score += 50
+    if (giftName.length >= 4) score += 10
+  }
+
+  // 3. 開會日期確定性
+  if (meetingDate && meetingDate !== '等待' && meetingDate !== '待公告' && meetingDate.includes('/')) {
+    score += 20
+    // 落在股東常會旺季（5~6月）
+    if (/^0?[56]\//.test(meetingDate)) score += 5
+  }
+
+  // 4. 最後買進日期確定性
+  if (lastBuyDate && lastBuyDate !== '等待' && lastBuyDate !== '待公告' && lastBuyDate.includes('/')) {
+    score += 10
+  }
+
+  // 5. 領取方式 / 領取地點等補充資訊
+  if (r.distribution_method || r.distribution_location) {
+    score += 5
+  }
+
+  return score
+}
+
+/**
+ * 比較兩筆同股票候選列，挑選更優／更完整／更具權威之一筆。
+ */
+export function pickBetterGiftRow(a: any, b: any): any {
+  const scoreA = scoreGiftRow(a)
+  const scoreB = scoreGiftRow(b)
+  if (scoreB > scoreA) return b
+  if (scoreA > scoreB) return a
+
+  // 若分數相同，取 meeting_date 有效日期者
+  const aValidDate = String(a.meeting_date ?? '').includes('/')
+  const bValidDate = String(b.meeting_date ?? '').includes('/')
+  if (bValidDate && !aValidDate) return b
+  if (aValidDate && !bValidDate) return a
+
+  return b
+}
+
 export interface GetGiftCalendarOptions {
   view?: 'active' | 'review'
   q?: string
@@ -250,17 +317,33 @@ export async function getGiftCalendarData(options: GetGiftCalendarOptions = {}):
     console.warn('[GiftMap] Failed to query shareholder_gifts:', e)
   }
 
+  // ─── 按 stock_id 去重，同股票僅保留一筆最權威與完整之紀錄（解決大魯閣等跨來源重複）───
+  const bestRowByStock = new Map<string, any>()
+  for (const r of rawRows) {
+    const stockId = String(r.stock_id ?? '').trim()
+    const stockName = String(r.stock_name ?? '').trim()
+    if (!stockId || isEtfOrFund(stockId, stockName)) continue
+
+    const existing = bestRowByStock.get(stockId)
+    if (!existing) {
+      bestRowByStock.set(stockId, r)
+    } else if (pickBetterGiftRow(existing, r) === r) {
+      bestRowByStock.set(stockId, r)
+    }
+  }
+
+  const rows = Array.from(bestRowByStock.values())
+
   const items: GiftCalendarItem[] = []
   let todayCount = 0
   let t3Count = 0
   let t7Count = 0
   let oneShareCount = 0
 
-  for (const r of rawRows) {
+  for (const r of rows) {
     const stockId = String(r.stock_id ?? '').trim()
     const stockName = String(r.stock_name ?? '').trim()
     const giftName = String(r.gift_name ?? '').trim()
-    if (!stockId || isEtfOrFund(stockId, stockName)) continue
 
     const { eligibility: el, label: elLabel, color: elColor } = classifyGiftEligibility(
       r.claim_rule,

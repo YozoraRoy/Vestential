@@ -4,6 +4,8 @@ import {
   normalizeDateToYear,
   computeCountdown,
   isEtfOrFund,
+  scoreGiftRow,
+  pickBetterGiftRow,
 } from './gift-map'
 
 describe('Issue #118 股東會紀念品攻略核心邏輯', () => {
@@ -98,5 +100,52 @@ describe('Issue #118 股東會紀念品攻略核心邏輯', () => {
     const resTbd = computeCountdown(null, today)
     expect(resTbd.tag).toBe('TBD')
     expect(resTbd.daysLeft).toBeNull()
+  })
+
+  it('scoreGiftRow & pickBetterGiftRow：同股票能精確選優去重（例如大魯閣 MOPS 公告優先於未公告預估）', () => {
+    // 1432 大魯閣早期預估列 vs MOPS 官方公告列
+    const rowA = {
+      stock_id: '1432',
+      stock_name: '大魯閣',
+      meeting_date: '05/20',
+      last_buy_date: '01/31',
+      gift_name: '800元消費抵用券、8張每月玩樂買1送1券',
+      claim_rule_source: null,
+      mops_gift_text: null,
+      distribution_method: '領取日期',
+    }
+    const rowB = {
+      stock_id: '1432',
+      stock_name: '大魯閣',
+      meeting_date: '05/28',
+      last_buy_date: '03/25',
+      gift_name: '800元消費抵用券、8張每月玩樂買1送1券',
+      claim_rule_source: 'MOPS',
+      mops_gift_text: '＊本次股東常會紀念品為：『800元消費抵用券』...',
+      distribution_method: '',
+    }
+
+    expect(scoreGiftRow(rowB)).toBeGreaterThan(scoreGiftRow(rowA))
+    expect(pickBetterGiftRow(rowA, rowB)).toBe(rowB)
+    expect(pickBetterGiftRow(rowB, rowA)).toBe(rowB)
+
+    // 有具體品名列 vs 待公告「等待」列（例如 1101 台泥）
+    const rowConcrete = {
+      stock_id: '1101',
+      stock_name: '台泥',
+      meeting_date: '05/22',
+      last_buy_date: '03/19',
+      gift_name: '折疊環保提包',
+    }
+    const rowPending = {
+      stock_id: '1101',
+      stock_name: '台泥',
+      meeting_date: '等待',
+      last_buy_date: '',
+      gift_name: '待公告',
+    }
+
+    expect(scoreGiftRow(rowConcrete)).toBeGreaterThan(scoreGiftRow(rowPending))
+    expect(pickBetterGiftRow(rowConcrete, rowPending)).toBe(rowConcrete)
   })
 })
