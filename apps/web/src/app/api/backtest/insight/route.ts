@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { registry } from '@stock/market-data'
 import { runGridSearch, MA_PERIOD } from '@stock/backtest'
 import { resolveYahooSymbol } from '@/lib/portfolio'
+import { isCoreEtf } from '@stock/cycle-entry'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +20,7 @@ export interface InsightResult {
   /** 目前乖離是否已達到最佳進場閾值（乖離 ≤ 閾值）。 */
   inEntryZone: boolean
   distanceToTargetPct: number | null
+  isEtf?: boolean
 }
 
 const cache = new Map<string, { at: number; data: InsightResult }>()
@@ -31,6 +33,11 @@ function parseNum(v: string | null, fallback: number, min: number, max: number):
   return Math.min(max, Math.max(min, n))
 }
 
+function checkIsEtf(symbol: string): boolean {
+  const clean = symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+  return isCoreEtf(symbol) || clean.startsWith('00')
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const symbol = searchParams.get('symbol')?.trim()
@@ -38,9 +45,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Missing symbol' }, { status: 400 })
   }
 
+  const isEtf = checkIsEtf(symbol)
+  const defaultTarget = isEtf ? 10 : 25
+
   // 比照實際回測：使用表單參數與相同年份窗口，確保預覽閾值與 /api/backtest 一致。
   const holdingDays = parseNum(searchParams.get('holdingDays'), 252, 1, 252)
-  const targetPct = parseNum(searchParams.get('target'), 25, 1, 100)
+  const targetPct = parseNum(searchParams.get('target'), defaultTarget, 1, 100)
   const stopPct = parseNum(searchParams.get('stop'), 12, 1, 100)
   const years = parseNum(searchParams.get('years'), 15, 1, 15)
 
@@ -79,6 +89,7 @@ export async function GET(req: Request) {
         targetPrice: null,
         inEntryZone: false,
         distanceToTargetPct: null,
+        isEtf,
       }
       cache.set(cacheKey, { at: Date.now(), data })
       return NextResponse.json(data)
@@ -88,7 +99,9 @@ export async function GET(req: Request) {
     try {
       const effectiveDays = Math.min(years * 250, Math.max(1, history.length - 60))
       const maxTheoreticalTrades = Math.max(1, Math.floor(effectiveDays / holdingDays))
-      const minTrades = Math.min(10, Math.max(2, Math.floor(maxTheoreticalTrades * 0.25)))
+      const isNewAsset = history.length < 250
+      const minTradesLowerBound = isNewAsset ? 1 : 2
+      const minTrades = Math.min(10, Math.max(minTradesLowerBound, Math.floor(maxTheoreticalTrades * 0.25)))
 
       const g = runGridSearch(history, {
         minTrades,
@@ -138,6 +151,7 @@ export async function GET(req: Request) {
       targetPrice,
       inEntryZone,
       distanceToTargetPct,
+      isEtf,
     }
     cache.set(cacheKey, { at: Date.now(), data })
     return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } })

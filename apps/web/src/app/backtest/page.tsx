@@ -16,6 +16,7 @@ import { Search as SearchIcon, TrendingDown, Target, Repeat, Clock, AlertTriangl
 import { searchStocks, StockCandidateList, type StockCandidate } from '@/components/stock-search'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildBacktestInsight } from '@/lib/backtest-interpret'
+import { isCoreEtf } from '@stock/cycle-entry'
 import { useI18n } from '@/i18n/LanguageProvider'
 import type { Dict } from '@/i18n/dictionaries'
 import { headTrClass, tableClass } from '@/lib/table-typography'
@@ -47,6 +48,16 @@ type SortKey = 'threshold' | 'totalTrades' | 'winRate'
 
 type Suggestion = StockCandidate
 
+interface AssetMeta {
+  isEtf: boolean
+  isNewAsset: boolean
+  tradingDaysCount: number
+  firstDate: number | null
+  firstClose: number | null
+  latestClose: number | null
+  changeFromFirstPct: number | null
+}
+
 interface BacktestResponse {
   bestThreshold: number
   totalTrades: number
@@ -59,6 +70,7 @@ interface BacktestResponse {
   allThresholds: ThresholdRow[]
   series: SeriesPoint[]
   usage: { startDate: number; endDate: number; dataPoints: number; entryThresholdPct: number }
+  assetMeta?: AssetMeta
 }
 
 interface LiveBias {
@@ -78,6 +90,8 @@ interface TopVolumeItem {
   volume: number
   value?: number
   price?: number
+  category?: 'etf' | 'stocks'
+  tier?: string
 }
 
 type TopVolumeRange = 'day' | 'week' | 'month' | 'quarter'
@@ -284,6 +298,7 @@ export default function BacktestPage() {
   const [biasSource, setBiasSource] = useState<'close' | 'live'>('close')
   const [showExplain, setShowExplain] = useState(false)
   const [showTop, setShowTop] = useState(false)
+  const [topCategory, setTopCategory] = useState<'etf' | 'stocks'>('etf')
   const [topRange, setTopRange] = useState<TopVolumeRange>('day')
   const [topList, setTopList] = useState<TopVolumeItem[]>([])
   const [topLoading, setTopLoading] = useState(false)
@@ -375,10 +390,18 @@ export default function BacktestPage() {
     }
     trackEvent('backtest_run', sym)
     try {
+      const isTargetDefault = targetPct === '25' || targetPct === '10'
+      const cleanSym = sym.replace(/\.(TW|TWO)$/i, '').trim()
+      const isSymEtf = isCoreEtf(sym) || cleanSym.startsWith('00')
+      let effectiveTarget = overrideParams?.targetPct ?? targetPct ?? '25'
+      if (!overrideParams?.targetPct && isTargetDefault) {
+        effectiveTarget = isSymEtf ? '10' : '25'
+        setTargetPct(effectiveTarget)
+      }
       const qs = new URLSearchParams({
         symbol: sym,
         holdingDays: overrideParams?.holdingDays ?? holdingDays ?? '252',
-        target: overrideParams?.targetPct ?? targetPct ?? '25',
+        target: effectiveTarget,
         stop: overrideParams?.stopPct ?? stopPct ?? '12',
         years: overrideParams?.years ?? years ?? '15',
       })
@@ -436,13 +459,14 @@ export default function BacktestPage() {
   }
 
   // 抓取「成交量 Top 20」清單（依所選範圍），並非同步逐檔計算進場閾值與目前乖離。
-  const loadTop = async (range: TopVolumeRange) => {
+  const loadTop = async (range: TopVolumeRange, category: 'etf' | 'stocks' = topCategory) => {
     setTopRange(range)
+    setTopCategory(category)
     setTopLoading(true)
     setTopError(null)
     setTopInsights({})
     try {
-      const res = await fetch(`/api/backtest/top-volume?range=${range}`)
+      const res = await fetch(`/api/backtest/top-volume?range=${range}&category=${category}`)
       const data = await res.json()
       if (!res.ok) {
         setTopError(data.error ?? ui.errorTopVolume)
@@ -491,7 +515,8 @@ export default function BacktestPage() {
     setTopList([])
     setTopError(null)
     setTopInsights({})
-    void loadTop('day')
+    setTopCategory('etf')
+    void loadTop('day', 'etf')
   }
 
   // 點選排行榜中的股票 → 填入代號、關閉 modal、自動開始回測。
@@ -794,6 +819,9 @@ export default function BacktestPage() {
               <span className="flex items-center gap-1 text-xs font-medium text-[var(--text-secondary)] mb-1.5">
                 {ui.labelTargetPct}
                 <HelpCell text={ui.targetPctHelp} />
+                {(isCoreEtf(symbol) || symbol.trim().startsWith('00')) && (
+                  <span className="text-[10px] text-sky-400 font-normal ml-auto">ETF +10%</span>
+                )}
               </span>
               <div className="relative">
                 <input
@@ -872,6 +900,81 @@ export default function BacktestPage() {
               <span>{ui.cycleEntryDiffBanner}</span>
             </div>
           </div>
+
+          {/* 🌱 新掛牌 ETF 觀察卡（Issue #129） */}
+          {result.assetMeta?.isEtf && (result.assetMeta?.isNewAsset || result.totalTrades === 0) && (
+            <div className="rounded-2xl bg-gradient-to-br from-sky-500/10 via-sky-500/5 to-transparent border border-sky-500/30 p-5 md:p-6 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-sky-300 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-sky-400" />
+                    {ui.newEtfBadge ?? '🌱 新掛牌 ETF 觀察卡'}
+                  </span>
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold">
+                    {symbol.toUpperCase()} {stockName}
+                  </span>
+                </div>
+                <div className="text-xs text-[var(--text-secondary)]">
+                  {ui.newEtfDays ?? '已掛牌交易日數'}：
+                  <span className="font-semibold text-[var(--text-primary)] font-mono ml-1">
+                    {result.assetMeta.tradingDaysCount} 日
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                {ui.newEtfDesc ??
+                  '此 ETF 上市未滿 1 年或歷史季線觸發次數較少，尚在累積歷史樣本，待資料完整後將自動開啟完整歷史勝率回測。目前先提供上市至今即時位階與價格表現觀察：'}
+              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-sky-500/20">
+                <div className="p-3 rounded-xl bg-black/20 border border-white/5">
+                  <div className="text-[11px] text-[var(--text-secondary)]">{ui.newEtfFirstPrice ?? '首日收盤價'}</div>
+                  <div className="text-base font-bold text-[var(--text-primary)] font-mono mt-1">
+                    {result.assetMeta.firstClose != null ? ('NT$ ' + result.assetMeta.firstClose.toFixed(2)) : '—'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-black/20 border border-white/5">
+                  <div className="text-[11px] text-[var(--text-secondary)]">{ui.newEtfLatestPrice ?? '最新收盤價'}</div>
+                  <div className="text-base font-bold text-[var(--text-primary)] font-mono mt-1">
+                    {result.assetMeta.latestClose != null ? ('NT$ ' + result.assetMeta.latestClose.toFixed(2)) : '—'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-black/20 border border-white/5">
+                  <div className="text-[11px] text-[var(--text-secondary)]">{ui.newEtfSinceIpo ?? '上市首日至今漲跌'}</div>
+                  <div
+                    className={
+                      'text-base font-bold font-mono mt-1 ' +
+                      ((result.assetMeta.changeFromFirstPct ?? 0) >= 0 ? 'text-[var(--accent-red)]' : 'text-[var(--accent-green)]')
+                    }
+                  >
+                    {result.assetMeta.changeFromFirstPct != null
+                      ? ((result.assetMeta.changeFromFirstPct >= 0 ? '+' : '') + result.assetMeta.changeFromFirstPct.toFixed(2) + '%')
+                      : '—'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-black/20 border border-white/5">
+                  <div className="text-[11px] text-[var(--text-secondary)]">目前季線 (60MA) 乖離率</div>
+                  <div
+                    className={
+                      'text-base font-bold font-mono mt-1 ' +
+                      (currentBias != null && currentBias < 0 ? 'text-[var(--accent-green)]' : 'text-[var(--text-primary)]')
+                    }
+                  >
+                    {currentBias != null ? fmtPct(currentBias) : '計算中 (需滿60日)'}
+                  </div>
+                </div>
+              </div>
+
+              {result.totalTrades > 0 ? (
+                <div className="text-xs text-sky-300/90 bg-sky-500/10 px-3 py-2 rounded-lg flex items-center justify-between">
+                  <span>
+                    🎯 已初步累積 {result.totalTrades} 次季線負乖離進場訊號（歷史勝率 {fmtPct(result.winRate)}，最佳閥值 {bestThreshold}%）
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          )}
 
           {/* 新上市標的或週期無樣本提示 */}
           {result.totalTrades === 0 && (
@@ -1388,8 +1491,38 @@ export default function BacktestPage() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-2 shrink-0">
-              <div className="flex gap-1.5">
+            <div className="px-5 pt-3 pb-2 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              {/* ETF / 個股 核心池雙分頁 */}
+              <div className="flex items-center gap-1.5 bg-black/20 p-1 rounded-xl border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => void loadTop(topRange, 'etf')}
+                  className={
+                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ' +
+                    (topCategory === 'etf'
+                      ? 'bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30 shadow-sm'
+                      : 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5')
+                  }
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{ui.topTabEtf ?? '🎯 熱門存股 ETF'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadTop(topRange, 'stocks')}
+                  className={
+                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ' +
+                    (topCategory === 'stocks'
+                      ? 'bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 shadow-sm'
+                      : 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5')
+                  }
+                >
+                  <span>{ui.topTabStocks ?? '🏢 Top 100 權值股'}</span>
+                </button>
+              </div>
+
+              {/* 時間區間切換 */}
+              <div className="flex items-center gap-1.5">
                 {(
                   [
                     ['day', ui.topRangeDay],
@@ -1400,19 +1533,17 @@ export default function BacktestPage() {
                 ).map(([r, label]) => (
                   <button
                     key={r}
-                    onClick={() => void loadTop(r)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                      topRange === r
+                    onClick={() => void loadTop(r, topCategory)}
+                    className={
+                      'px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer ' +
+                      (topRange === r
                         ? 'bg-[var(--accent)] text-white'
-                        : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                    }`}
+                        : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]')
+                    }
                   >
                     {label}
                   </button>
                 ))}
-              </div>
-              <div className="text-xs text-[var(--text-secondary)] hidden sm:block">
-                點擊任一標的即可自動帶入回測
               </div>
             </div>
 

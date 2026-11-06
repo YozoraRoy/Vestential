@@ -577,6 +577,15 @@ export interface Dict {
     volumeUnitBillion: string
     volumeUnitTenThousand: string
     topModalTitle: string
+    topTabEtf: string
+    topTabStocks: string
+    newEtfBadge: string
+    newEtfDesc: string
+    newEtfDays: string
+    newEtfSinceIpo: string
+    newEtfFirstPrice: string
+    newEtfLatestPrice: string
+    targetEtfHint: string
     topCloseAria: string
     topRangeDay: string
     topRangeWeek: string
