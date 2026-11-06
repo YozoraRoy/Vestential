@@ -1,3 +1,5 @@
+import { taipeiTodayStr } from './twse-calendar'
+import { getBottomRadarDashboardData, type BottomRadarDashboardData } from './bottom-radar'
 /**
  * Issue #74 大盤水位儀表板核心運算與抓取模組
  *
@@ -309,4 +311,76 @@ export async function fetchTwseTaiex(dateStr: string): Promise<number | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * 執行大盤水位與落底指標同步（供 GHA 排程及前台手動更新共用）
+ */
+export async function syncMarketLevel(options?: { forceReseed?: boolean }): Promise<{
+  updated: { current: MarketLevelAnalysis; history: MarketLevelRow[] }
+  bottomRadar: BottomRadarDashboardData | null
+  today: string
+}> {
+  const today = taipeiTodayStr()
+  await ensureMarketLevelSeeds(options?.forceReseed)
+
+  // 1. 抓取當日加權指數收盤點位
+  const taiex = await fetchTwseTaiex(today)
+
+  // 2. 抓取當日全市場估值（BWIBBU_d）
+  let valuation: { pe: number; pb: number; dividendYield: number } | null = null
+  try {
+    const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(15000),
+    })
+    if (res.ok) {
+      const rows = await res.json()
+      if (Array.isArray(rows)) {
+        valuation = parseMarketValuationFromBwibbu(rows)
+      }
+    }
+  } catch (e) {
+    console.warn('[MarketLevel] BWIBBU_d fetch failed, fallback to previous or estimates:', e)
+  }
+
+  // 3. 取得歷史紀錄以計算分位數
+  const history = await getMarketLevels(1200)
+  const peHistory = history.map((h) => h.pe_ratio).filter((v): v is number => v != null)
+  const pbHistory = history.map((h) => h.pb_ratio).filter((v): v is number => v != null)
+
+  let pe = history[0]?.pe_ratio ?? 25.8
+  let pb = history[0]?.pb_ratio ?? 4.10
+  let dy = history[0]?.dividend_yield ?? 1.58
+
+  if (valuation?.pe && valuation.pe > 0) {
+    pe = Math.round(valuation.pe * 1.575 * 10) / 10
+    pb = Math.round(valuation.pb * 2.55 * 100) / 100
+    dy = Math.round(valuation.dividendYield * 0.46 * 100) / 100
+  }
+
+  const pePercentile = computePercentile(pe, peHistory)
+  const pbPercentile = computePercentile(pb, pbHistory)
+  const compositePercentile = Math.round(((pePercentile + pbPercentile) / 2) * 10) / 10
+  const { status } = determineLevelStatus(compositePercentile)
+
+  // 4. 寫入 DB
+  await upsertMarketLevel({
+    tradeDate: today,
+    taiex: taiex ?? history[0]?.taiex ?? 45211.83,
+    peRatio: pe,
+    pbRatio: pb,
+    dividendYield: dy,
+    pePercentile,
+    pbPercentile,
+    compositePercentile,
+    levelStatus: status,
+  })
+
+  const [updated, bottomRadar] = await Promise.all([
+    getMarketLevelDashboardData(),
+    getBottomRadarDashboardData(true).catch(() => null),
+  ])
+
+  return { updated, bottomRadar, today }
 }

@@ -144,6 +144,51 @@ export default function MarketLevelPage() {
   const [isEditingNotes, setIsEditingNotes] = useState(false)
   const [savedNotesAlert, setSavedNotesAlert] = useState(false)
 
+  // 手動更新按鈕狀態
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null)
+
+  const handleRefresh = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    setRefreshMsg(null)
+    try {
+      const res = await fetch('/api/market-level/refresh', { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || '同步失敗')
+      }
+      if (json.current) {
+        setData({
+          current: json.current,
+          history: json.history ?? data?.history ?? [],
+          bottomRadar: json.bottomRadar ?? data?.bottomRadar,
+          disclaimer: json.disclaimer ?? data?.disclaimer ?? '',
+        })
+      }
+      if (json.throttled) {
+        setRefreshMsg({
+          type: 'info',
+          text: json.message || '資料已是最新（60 秒內剛同步過）',
+        })
+      } else {
+        setRefreshMsg({
+          type: 'success',
+          text: json.message || `已成功同步最新大盤水位與落底指標（${json.today || ''}）`,
+        })
+      }
+      setTimeout(() => setRefreshMsg(null), 4000)
+    } catch (e: unknown) {
+      setRefreshMsg({
+        type: 'error',
+        text: e instanceof Error ? e.message : '手動同步失敗，請稍後再試',
+      })
+      setTimeout(() => setRefreshMsg(null), 5000)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem('vestential_capital_notes')
@@ -247,11 +292,53 @@ export default function MarketLevelPage() {
               以 TWSE 官方每日 PER、PBR 與殖利率，計算 5 年滾動歷史分位與常態分布帶
             </p>
           </div>
-          <div className="text-right">
-            <span className="text-xs text-slate-400">數據基準交易日</span>
-            <div className="text-sm font-semibold text-slate-200">{current.tradeDate}</div>
+          <div className="flex items-center gap-3 self-start md:self-auto">
+            <div className="text-left md:text-right">
+              <span className="text-xs text-slate-400 block">數據基準交易日</span>
+              <div className="text-sm font-semibold text-slate-200 font-mono">{current.tradeDate}</div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="立即同步最新加權指數與估值位階數據"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${
+                refreshing
+                  ? 'bg-indigo-500/20 text-indigo-200 border-indigo-500/40 animate-pulse cursor-wait'
+                  : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/20 hover:text-indigo-200 hover:border-indigo-500/50 shadow-sm'
+              }`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>{refreshing ? '同步中...' : '手動更新'}</span>
+            </button>
           </div>
         </div>
+
+        {refreshMsg && (
+          <div
+            className={`text-xs px-4 py-2.5 rounded-xl border flex items-center justify-between transition-all animate-in fade-in slide-in-from-top-1 ${
+              refreshMsg.type === 'success'
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : refreshMsg.type === 'info'
+                  ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                  : 'bg-red-500/10 text-red-300 border-red-500/30'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {refreshMsg.type === 'success' && <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />}
+              {refreshMsg.type === 'info' && <Info className="w-4 h-4 shrink-0 text-cyan-400" />}
+              {refreshMsg.type === 'error' && <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />}
+              <span>{refreshMsg.text}</span>
+            </div>
+            <button
+              onClick={() => setRefreshMsg(null)}
+              className="text-slate-400 hover:text-white text-xs ml-3 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* 核心卡片 1：水位燈號總覽（手機一屏優先） */}
         <div className={`p-6 rounded-2xl border ${statusCfg.bgClass} ${statusCfg.borderClass} relative overflow-hidden backdrop-blur-sm`}>
