@@ -506,6 +506,56 @@ export interface Dict {
     searching: string
     empty: string
   }
+  dcaLab: {
+    metaTitle: string
+    metaDesc: string
+    tabSwing: string
+    tabDca: string
+    title: string
+    subtitle: string
+    todaySignalTitle: string
+    todaySignalDesc: string
+    currentBias: string
+    currentPrice: string
+    marketLevelTemp: string
+    radarSignal: string
+    radarActive: string
+    radarInactive: string
+    inputMonthly: string
+    inputInvestDay: string
+    inputThreshold: string
+    inputMultiplier: string
+    inputYears: string
+    btnCalculate: string
+    calculating: string
+    trackStdTitle: string
+    trackSmartTitle: string
+    metricTotalInvested: string
+    metricFinalValue: string
+    metricTotalReturn: string
+    metricRoi: string
+    metricAnnualized: string
+    metricAvgCost: string
+    metricShares: string
+    comparisonTitle: string
+    comparisonExtraValue: string
+    comparisonCostReduction: string
+    comparisonExtraRoi: string
+    comparisonTriggerCount: string
+    chartTitle: string
+    chartStdValue: string
+    chartStdCost: string
+    chartSmartValue: string
+    chartSmartCost: string
+    chartDipEvent: string
+    dipHistoryTitle: string
+    colDate: string
+    colClose: string
+    colBias: string
+    colAmount: string
+    colShares: string
+    quickPicksTitle: string
+  }
   backtest: {
     pageTitle: string
     pageDesc: string

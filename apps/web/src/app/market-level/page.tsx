@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   ArrowUpRight,
   BarChart3,
   Bookmark,
@@ -968,6 +969,19 @@ export default function MarketLevelPage() {
                   <span>
                     核心心法提醒：融資斷頭潮徹底釋放前勿躁進，生存活水備用金絕對不可在下殺段當作攤平籌碼。
                   </span>
+                </div>
+
+                <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-slate-800/80">
+                  <div className="text-xs text-slate-400">
+                    想知道大盤拉回時，定期定額搭配逢低加碼能幫你多累積多少資產？
+                  </div>
+                  <Link
+                    href="/dca-lab"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs font-semibold shrink-0 transition"
+                  >
+                    <span>🎯 ETF 智慧加碼雙軌試算</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
                 </div>
               </div>
             </div>

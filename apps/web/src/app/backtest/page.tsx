@@ -587,6 +587,18 @@ export default function BacktestPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-10">
       <WorkspaceBackLink className="mb-3" />
+      {/* 雙頁模式切換分頁 */}
+      <div className="flex items-center gap-3 mb-6 border-b border-white/10 pb-3">
+        <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-[var(--accent)] text-white shadow-sm">
+          {dict.dcaLab.tabSwing}
+        </div>
+        <Link
+          href="/dca-lab"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 transition"
+        >
+          {dict.dcaLab.tabDca}
+        </Link>
+      </div>
       <div className="flex items-center gap-3 mb-2">
         <Target className="w-7 h-7 text-[var(--accent)]" />
         <h1 className="text-2xl font-bold">{ui.pageTitle}</h1>

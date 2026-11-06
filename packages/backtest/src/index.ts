@@ -307,3 +307,6 @@ function buildSeries(ohlcv: OHLCV[]): SeriesPoint[] {
 export function isDataSufficient(ohlcv: OHLCV[]): boolean {
   return ohlcv.length >= MA_PERIOD + 1
 }
+
+export * from './dca'
+
