@@ -892,6 +892,13 @@ export interface Dict {
     updatedAt: string
     emptyTitle: string
     emptyDesc: string
+    tabEtf: string
+    tabStocks: string
+    tabAll: string
+    tierEtfBadge: string
+    tierTop50Badge: string
+    tierTop100Badge: string
+    tierOtherBadge: string
     viewModeList: string
     viewModeCard: string
     colRank: string

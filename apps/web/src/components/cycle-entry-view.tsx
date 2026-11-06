@@ -1,9 +1,9 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { LayoutGrid, LayoutList, LineChart, Sparkles, HelpCircle } from 'lucide-react'
+import { LayoutGrid, LayoutList, LineChart, Sparkles, HelpCircle, Layers, TrendingUp, Building2 } from 'lucide-react'
 import type { CycleEntrySignalRow } from '@stock/database'
-import { resolveStockName } from '@stock/cycle-entry'
+import { resolveStockName, getUniverseTier, type UniverseTier } from '@stock/cycle-entry'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 
@@ -74,9 +74,17 @@ export interface CycleEntryDict {
   ruleHit: string
   ruleMiss: string
   ruleThreshold: string
+  tabEtf?: string
+  tabStocks?: string
+  tabAll?: string
+  tierEtfBadge?: string
+  tierTop50Badge?: string
+  tierTop100Badge?: string
+  tierOtherBadge?: string
 }
 
 type ViewMode = 'list' | 'card'
+type TabCategory = 'etf' | 'stocks' | 'all'
 
 const STAGES: Record<string, keyof CycleEntryDict> = {
   'near-high': 'stageNearHigh',
@@ -148,6 +156,34 @@ function getWinRateStyle(rate: number | null | undefined): string {
   return 'text-[var(--text-secondary)]'
 }
 
+function renderTierBadge(tier: UniverseTier, dict: CycleEntryDict) {
+  switch (tier) {
+    case 'ETF':
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 font-medium">
+          <TrendingUp className="w-2.5 h-2.5" />
+          {dict.tierEtfBadge ?? '核心 ETF'}
+        </span>
+      )
+    case 'TOP_50':
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-medium">
+          <Building2 className="w-2.5 h-2.5" />
+          {dict.tierTop50Badge ?? 'Top 50 權值'}
+        </span>
+      )
+    case 'TOP_100':
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium">
+          <Building2 className="w-2.5 h-2.5" />
+          {dict.tierTop100Badge ?? 'Top 51-100 績優'}
+        </span>
+      )
+    default:
+      return null
+  }
+}
+
 interface Props {
   signals: CycleEntrySignalRow[]
   dict: CycleEntryDict
@@ -156,13 +192,39 @@ interface Props {
 }
 
 export function CycleEntryView({ signals, dict, onSelect }: Props) {
+  const [activeTab, setActiveTab] = useState<TabCategory>('etf')
   const [mode, setMode] = useState<ViewMode>('list')
-  // Issue #82：勝率獨立欄可排序，預設高→低；null 永遠沉底。
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const typo = useTableTypography()
 
+  // 統計各分頁數量
+  const counts = useMemo(() => {
+    let etf = 0
+    let stocks = 0
+    for (const s of signals) {
+      const tier = getUniverseTier(s.symbol)
+      if (tier === 'ETF') etf++
+      else if (tier === 'TOP_50' || tier === 'TOP_100') stocks++
+    }
+    return { etf, stocks, all: signals.length }
+  }, [signals])
+
+  // 依 Tab 過濾標的
+  const filteredSignals = useMemo(() => {
+    if (activeTab === 'etf') {
+      return signals.filter((s) => getUniverseTier(s.symbol) === 'ETF')
+    }
+    if (activeTab === 'stocks') {
+      return signals.filter((s) => {
+        const tier = getUniverseTier(s.symbol)
+        return tier === 'TOP_50' || tier === 'TOP_100'
+      })
+    }
+    return signals
+  }, [signals, activeTab])
+
   const sortedSignals = useMemo(() => {
-    const arr = [...signals]
+    const arr = [...filteredSignals]
     arr.sort((a, b) => {
       const av = a.btWinRate
       const bv = b.btWinRate
@@ -172,19 +234,61 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
       return sortDir === 'desc' ? bv - av : av - bv
     })
     return arr
-  }, [signals, sortDir])
+  }, [filteredSignals, sortDir])
 
   const btnClass = (active: boolean) =>
-    `inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+    `inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
       active
-        ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
+        ? 'bg-[var(--accent)]/15 text-[var(--accent)] font-semibold border border-[var(--accent)]/30'
         : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10'
+    }`
+
+  const tabClass = (active: boolean) =>
+    `inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+      active
+        ? 'bg-white/15 text-white font-semibold shadow-sm'
+        : 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5'
     }`
 
   return (
     <div>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-2 border border-white/10 rounded-lg p-1 w-fit">
+      {/* 頂部分類分頁（小資族優先：核心 ETF 為主、Top 100 權值股為輔） */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-white/5">
+        <div className="flex items-center gap-1.5 bg-black/20 p-1 rounded-xl border border-white/10">
+          <button
+            type="button"
+            onClick={() => setActiveTab('etf')}
+            className={tabClass(activeTab === 'etf')}
+          >
+            <span>{dict.tabEtf ?? '🎯 核心存股 ETF'}</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-sky-500/20 text-sky-300">
+              {counts.etf}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('stocks')}
+            className={tabClass(activeTab === 'stocks')}
+          >
+            <span>{dict.tabStocks ?? '🏢 Top 100 權值股'}</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300">
+              {counts.stocks}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('all')}
+            className={tabClass(activeTab === 'all')}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>{dict.tabAll ?? '全部標的'}</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-white/10 text-white/70">
+              {counts.all}
+            </span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2 border border-white/10 rounded-lg p-1">
           <button type="button" onClick={() => setMode('list')} className={btnClass(mode === 'list')}>
             <LayoutList className="w-3.5 h-3.5" />
             {dict.viewModeList}
@@ -193,6 +297,14 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
             <LayoutGrid className="w-3.5 h-3.5" />
             {dict.viewModeCard}
           </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+        <div className="text-xs text-[var(--text-secondary)]">
+          {activeTab === 'etf' && '專為小資族挑選之穩健高股息與市值型核心原型 ETF，均線支撐與超賣回檔訊號齊備。'}
+          {activeTab === 'stocks' && '市值前 100 大藍籌權值股（台灣 50 + 中型 100 前段），避開中小型投機陷阱。'}
+          {activeTab === 'all' && '全站核心標的池（ETF + Top 100 權值股）今日訊號到位總覽。'}
         </div>
 
         {dict.winRateLegend ? (
@@ -203,7 +315,15 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
         ) : null}
       </div>
 
-      {mode === 'list' ? (
+      {sortedSignals.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.01] p-8 text-center text-sm text-[var(--text-secondary)]">
+          {activeTab === 'etf'
+            ? '今日暫無核心原型 ETF 通過多規則進場門檻。'
+            : activeTab === 'stocks'
+            ? '今日暫無 Top 100 權值股通過多規則進場門檻。'
+            : '今日暫無標的通過門檻。'}
+        </div>
+      ) : mode === 'list' ? (
         <div className="overflow-x-auto rounded-xl border border-white/10">
           <table className={tableClass(typo, 'w-full min-w-full')}>
             <thead>
@@ -231,7 +351,6 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                       <span className="text-white/40 group-hover:text-white/80 transition">
                         <HelpCircle className="w-3.5 h-3.5" />
                       </span>
-                      {/* Issue #82：改下開，避開 overflow-x-auto 上方裁切 */}
                       <span className="pointer-events-none absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border border-white/10 bg-[var(--bg-secondary)] px-2.5 py-1.5 text-[10px] leading-relaxed text-[var(--text-primary)] opacity-0 shadow-2xl transition-opacity duration-150 group-hover:opacity-100">
                         {dict.colBacktestTooltip ?? '近 1 年多規則共振擬合回測，與回測實驗室的長區間乖離率算法不同'}
                       </span>
@@ -243,6 +362,7 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
             <tbody>
               {sortedSignals.map((s) => {
                 const rules = ruleList(s.matchedRules, dict)
+                const tier = getUniverseTier(s.symbol)
                 const detailTitle = `${shortSymbol(s.symbol)} ${resolveStockName(s.symbol, s.name)} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
                 return (
                   <tr key={s.symbol} className="border-b border-white/5 last:border-b-0 align-top hover:bg-white/[0.03]">
@@ -254,8 +374,9 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                         title={detailTitle}
                         className="group block cursor-pointer text-left"
                       >
-                        <div className="font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)] group-hover:underline flex items-center gap-1">
+                        <div className="font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)] group-hover:underline flex items-center gap-1.5 flex-wrap">
                           <span>{shortSymbol(s.symbol)}</span>
+                          {renderTierBadge(tier, dict)}
                           <LineChart className="w-3 h-3 text-[var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
                         <div className="text-xs text-[var(--text-secondary)] mt-0.5 group-hover:text-[var(--text-primary)] transition-colors">
@@ -298,23 +419,23 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                         <LineChart className="w-3.5 h-3.5 text-[var(--accent)] opacity-70 group-hover:opacity-100 transition-opacity" />
                       </button>
                     </td>
-                    <td className="px-3 py-3">
-                      <div className="text-xs text-[var(--text-secondary)] whitespace-nowrap">
-                        {dict.btSignals} {s.btTotalSignals ?? '—'}
-                      </div>
-                      <div className="text-xs text-[var(--text-secondary)] whitespace-nowrap tabular-nums">
-                        {dict.btAvgDays} {s.btAvgDays ?? '—'}
-                      </div>
-                      <div className="mt-1.5">
-                        <button
-                          type="button"
-                          onClick={() => onSelect?.(s)}
-                          className="inline-flex items-center gap-1 text-[11px] text-[var(--accent)] hover:underline whitespace-nowrap cursor-pointer"
-                        >
-                          <span>{dict.viewBacktestChart ?? '曲線圖與詳情'}</span>
-                          <span>→</span>
-                        </button>
-                      </div>
+                    <td className="px-3 py-3 text-xs text-[var(--text-secondary)]">
+                      <button
+                        type="button"
+                        onClick={() => onSelect?.(s)}
+                        title={detailTitle}
+                        className="hover:underline cursor-pointer group text-left block"
+                      >
+                        <div className="tabular-nums">
+                          {s.btTotalSignals != null ? `${s.btTotalSignals} ${dict.btSignals}` : '—'}
+                          {s.btAvgDays != null ? ` · ${s.btAvgDays.toFixed(1)} ${dict.btAvgDays}` : ''}
+                        </div>
+                        {s.llmNote ? (
+                          <p className="text-[11px] text-[var(--text-secondary)] line-clamp-1 mt-0.5 group-hover:text-[var(--text-primary)] transition-colors">
+                            {s.llmNote}
+                          </p>
+                        ) : null}
+                      </button>
                     </td>
                   </tr>
                 )
@@ -326,6 +447,7 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sortedSignals.map((s) => {
             const rules = ruleList(s.matchedRules, dict)
+            const tier = getUniverseTier(s.symbol)
             const detailTitle = `${shortSymbol(s.symbol)} ${resolveStockName(s.symbol, s.name)} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
             return (
               <li key={s.symbol} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
@@ -337,11 +459,12 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                       title={detailTitle}
                       className="group block cursor-pointer text-left"
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs text-[var(--text-secondary)]">#{s.signalRank ?? '—'}</span>
                         <span className="font-semibold text-[var(--text-primary)] group-hover:text-[var(--accent)] group-hover:underline">
                           {shortSymbol(s.symbol)}
                         </span>
+                        {renderTierBadge(tier, dict)}
                         {s.cycleStage ? (
                           <span className={STAGE_STYLE[s.cycleStage] ?? STAGE_STYLE.pullback}>{dict[STAGES[s.cycleStage] ?? 'pullback']}</span>
                         ) : null}

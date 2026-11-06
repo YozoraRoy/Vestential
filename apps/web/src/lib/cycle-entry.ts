@@ -34,10 +34,14 @@ export function twTodayIso(t = Date.now()): string {
   return new Date(t + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
-/** 依市值排序的 TOP N 大型股（僅保留 EQUITY 且有市值者）。 */
+/**
+ * 依市值排序的候選標的。
+ * 同時支援台股大型股（EQUITY）與核心原型 ETF（ETF / MUTUALFUND）。
+ * 若報價缺少 marketCap 則以 0 兜底。
+ */
 export function pickTopByMarketCap(quotes: BatchQuote[], topN: number): BatchQuote[] {
   return quotes
-    .filter((q) => q.marketCap && q.marketCap > 0 && (!q.quoteType || q.quoteType === 'EQUITY'))
+    .filter((q) => !q.quoteType || q.quoteType === 'EQUITY' || q.quoteType === 'ETF' || q.quoteType === 'MUTUALFUND')
     .sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0))
     .slice(0, topN)
 }

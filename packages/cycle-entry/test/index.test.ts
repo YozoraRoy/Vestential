@@ -23,7 +23,12 @@ import {
   ruleR5,
 } from '../src/rules.js'
 import type { OHLCV } from '../src/types.js'
-import { resolveStockName } from '../src/universe.js'
+import {
+  resolveStockName,
+  getUniverseTier,
+  isCoreEtf,
+  isTop100Stock,
+} from '../src/universe.js'
 
 function bar(price: number, volume = 1000): OHLCV {
   return {
@@ -288,10 +293,13 @@ describe('resolveStockName', () => {
     expect(resolveStockName('2207.TW', 'HOTAI MOTOR CO')).toBe('和泰車')
     expect(resolveStockName('3711.TW', 'ASE TECHNOLOGY HOLDING CO LTD')).toBe('日月光投控')
     expect(resolveStockName('6770.TW')).toBe('力積電')
+    expect(resolveStockName('0050.TW')).toBe('元大台灣50')
+    expect(resolveStockName('00878.TW')).toBe('國泰永續高股息')
   })
 
   it('支援純數字台股代號查詢', () => {
     expect(resolveStockName('2317')).toBe('鴻海')
+    expect(resolveStockName('0056')).toBe('元大高股息')
   })
 
   it('rawName 若原本包含中文則保留中文', () => {
@@ -301,5 +309,37 @@ describe('resolveStockName', () => {
   it('原本為英文且無對照時保留英文名稱', () => {
     expect(resolveStockName('NVDA', 'NVIDIA Corporation')).toBe('NVIDIA Corporation')
     expect(resolveStockName('AAPL')).toBe('AAPL')
+  })
+})
+
+describe('getUniverseTier & helper functions', () => {
+  it('正確識別核心原型 ETF（不含槓桿/反向）', () => {
+    expect(getUniverseTier('0050.TW')).toBe('ETF')
+    expect(getUniverseTier('0050')).toBe('ETF')
+    expect(getUniverseTier('00878.TW')).toBe('ETF')
+    expect(getUniverseTier('00919')).toBe('ETF')
+    expect(isCoreEtf('0050.TW')).toBe(true)
+    expect(isCoreEtf('00878')).toBe(true)
+
+    // 槓桿與反向 ETF 不在核心原型 ETF 池內
+    expect(getUniverseTier('00631L.TW')).toBe('OTHER')
+    expect(getUniverseTier('00632R.TW')).toBe('OTHER')
+    expect(isCoreEtf('00631L')).toBe(false)
+  })
+
+  it('正確識別 Top 50 核心權值與 Top 51-100 績優股', () => {
+    expect(getUniverseTier('2330.TW')).toBe('TOP_50')
+    expect(getUniverseTier('2317')).toBe('TOP_50')
+    expect(isTop100Stock('2330.TW')).toBe(true)
+
+    expect(getUniverseTier('2353.TW')).toBe('TOP_100') // 宏碁
+    expect(getUniverseTier('2801')).toBe('TOP_100') // 彰銀
+    expect(isTop100Stock('2353.TW')).toBe(true)
+
+    // 已下市代號或小型投機股
+    expect(getUniverseTier('2311.TW')).toBe('OTHER') // 已下市
+    expect(getUniverseTier('2823.TW')).toBe('OTHER') // 已下市
+    expect(getUniverseTier('2611.TW')).toBe('OTHER') // 非前百大投機股
+    expect(isTop100Stock('2611.TW')).toBe(false)
   })
 })
