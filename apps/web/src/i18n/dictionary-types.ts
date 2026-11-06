@@ -817,6 +817,16 @@ export interface Dict {
     coreAssetRatioHealthy: string
     coreAssetRatioModerate: string
     coreAssetRatioRisky: string
+    radarTitle: string
+    radarSubtitle: string
+    radarTopExposures: string
+    radarDirectHolding: string
+    radarFromEtf: string
+    radarOverlapTitle: string
+    radarOverlapDesc: string
+    radarCommonStocks: string
+    healthTaxWarning: string
+    healthTaxTip: string
     historyTitle: string
     historyEmpty: string
     historyAddFirst: string

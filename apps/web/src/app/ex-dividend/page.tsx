@@ -18,6 +18,7 @@ import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 import { classifyAssetKind, assetKindLabel } from '@/lib/ex-dividend-engine'
+import { computeHealthTaxSafety } from '@/lib/etf-dividend-composition'
 
 // Issue #67 & #93 & #123 & #125：除權息填息力預測＋填息進度追蹤
 // 文案紅線：僅歷史統計＋免責，禁「預測/保證」字眼；機率＝過去填息事件佔比。
