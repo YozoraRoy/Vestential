@@ -435,6 +435,12 @@ export interface Dict {
     rating: Record<string, string>
     ratingHelpTitle: string
     ratingHelp: Record<string, string>
+    tierEtfBadge: string
+    tierTop50Badge: string
+    tierTop100Badge: string
+    tierOtherBadge: string
+    riskNoticeTitle: string
+    riskNoticeDesc: string
   }
   progressPanel: {
     title: string
@@ -751,6 +757,16 @@ export interface Dict {
     summaryWithAi: string
     summaryTwPnl: string
     summaryTotalCost: string
+    badgeCoreEtf: string
+    badgeTop50: string
+    badgeTop100: string
+    badgeSmallMid: string
+    coreAssetRatioTitle: string
+    coreAssetRatioHelp: string
+    coreAssetRatioValue: string
+    coreAssetRatioHealthy: string
+    coreAssetRatioModerate: string
+    coreAssetRatioRisky: string
     historyTitle: string
     historyEmpty: string
     historyAddFirst: string

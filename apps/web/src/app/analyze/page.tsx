@@ -449,7 +449,7 @@ function AnalyzeContent() {
   const handleSelectHistoryRecord = (record: AnalysisRecord) => {
     try {
       const parsedReport = JSON.parse(record.full_report_json)
-      setAnalysis(parsedReport)
+      setAnalysis({ ...parsedReport, ticker: parsedReport.ticker || record.ticker })
       setSelectedRecordId(record.id)
       window.scrollTo({ top: 300, behavior: 'smooth' })
     } catch (e) {
@@ -630,7 +630,7 @@ function AnalyzeContent() {
                   </button>
                 </div>
               )}
-              <AnalysisCard analysis={analysis} />
+              <AnalysisCard analysis={analysis} ticker={symbolParam || analysis?.ticker} />
             </div>
           )}
 

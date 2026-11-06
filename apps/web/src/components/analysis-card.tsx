@@ -2,6 +2,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { TrendingUp, AlertTriangle, Newspaper, BarChart3, Target, Gauge, Languages, Settings2, HelpCircle } from 'lucide-react'
 import { AGENT_KEYS } from '@stock/core'
+import { getUniverseTier, type UniverseTier } from '@stock/cycle-entry'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
@@ -59,7 +60,9 @@ interface ModelPlan {
 }
 
 interface AnalysisCardProps {
+  ticker?: string
   analysis: {
+    ticker?: string
     signal: string
     decision: string
     language?: string
@@ -105,7 +108,7 @@ const SECTION_LABELS: Record<'market' | 'sentiment' | 'news' | 'fundamentals', '
   fundamentals: 'sectionFundamentals',
 }
 
-export function AnalysisCard({ analysis }: AnalysisCardProps) {
+export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
   const { dict } = useI18n()
   const ui = dict.analysisCard
   const typo = useTableTypography()
@@ -113,11 +116,46 @@ export function AnalysisCard({ analysis }: AnalysisCardProps) {
   const bg = RATING_BG[analysis.signal] ?? 'bg-[var(--bg-card)]'
   const reportLang = analysis.language === 'en' ? dict.ai.en : analysis.language === 'ja' ? dict.ai.ja : dict.ai.zhTW
   const enabledCount = analysis.enabledAgents?.length ?? 0
+  const currentTicker = ticker || analysis.ticker
+  const tier: UniverseTier | null = currentTicker ? getUniverseTier(currentTicker) : null
 
   return (
     <div className="mt-8 space-y-6">
-      {(analysis.language || analysis.enabledAgents) && (
+      {tier === 'OTHER' && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-200">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-semibold text-amber-300 text-sm mb-1">{ui.riskNoticeTitle}</h4>
+              <p className="text-xs leading-relaxed text-amber-200/90">{ui.riskNoticeDesc}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(analysis.language || analysis.enabledAgents || tier) && (
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-secondary)]">
+          {tier && (
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium border ${
+                tier === 'ETF'
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : tier === 'TOP_50'
+                  ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                  : tier === 'TOP_100'
+                  ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
+                  : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+              }`}
+            >
+              {tier === 'ETF'
+                ? ui.tierEtfBadge
+                : tier === 'TOP_50'
+                ? ui.tierTop50Badge
+                : tier === 'TOP_100'
+                ? ui.tierTop100Badge
+                : ui.tierOtherBadge}
+            </span>
+          )}
           {analysis.language && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/10">
               <Languages className="w-3 h-3" />

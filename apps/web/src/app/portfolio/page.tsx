@@ -22,6 +22,7 @@ import { useI18n } from '@/i18n/LanguageProvider'
 import { parseJsonSafe, parseSseJson } from '@/lib/safe-parse'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import { getUniverseTier } from '@stock/cycle-entry'
 
 function formatLLMError(raw: string, llmRateLimited: string): string {
   if (/rate.?limit|429|tokens per minute|TPM|exhausted/i.test(raw)) {
@@ -31,6 +32,33 @@ function formatLLMError(raw: string, llmRateLimited: string): string {
 }
 
 type Market = 'tw' | 'us'
+function getTierBadgeInfo(symbol: string, ui: { badgeCoreEtf: string; badgeTop50: string; badgeTop100: string; badgeSmallMid: string }) {
+  const tier = getUniverseTier(symbol)
+  switch (tier) {
+    case 'ETF':
+      return {
+        text: ui.badgeCoreEtf,
+        className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+      }
+    case 'TOP_50':
+      return {
+        text: ui.badgeTop50,
+        className: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      }
+    case 'TOP_100':
+      return {
+        text: ui.badgeTop100,
+        className: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30',
+      }
+    case 'OTHER':
+    default:
+      return {
+        text: ui.badgeSmallMid,
+        className: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+      }
+  }
+}
+
 
 function buildStrategies(ui: {
   strategyBuffett: string; strategyBuffettEn: string;
@@ -1243,6 +1271,35 @@ export default function PortfolioPage() {
     }
   }
 
+  const coreAssetStats = useMemo(() => {
+    let totalMarketValue = 0
+    let coreMarketValue = 0
+    let twCount = 0
+    let coreCount = 0
+
+    for (const r of history) {
+      const mv = Number(r.market_value) || 0
+      totalMarketValue += mv
+      if (r.market !== 'us') {
+        twCount += 1
+        const tier = getUniverseTier(r.symbol)
+        if (tier === 'ETF' || tier === 'TOP_50' || tier === 'TOP_100') {
+          coreMarketValue += mv
+          coreCount += 1
+        }
+      }
+    }
+
+    const ratioPct = totalMarketValue > 0 ? (coreMarketValue / totalMarketValue) * 100 : 0
+    return {
+      totalMarketValue,
+      coreMarketValue,
+      ratioPct,
+      coreCount,
+      twCount,
+    }
+  }, [history])
+
   const stats = useMemo(() => {
     const byMarket: Record<Market, { count: number; pnl: number }> = {
       tw: { count: 0, pnl: 0 },
@@ -1888,6 +1945,52 @@ export default function PortfolioPage() {
         </div>
       )}
 
+      {history.length > 0 && coreAssetStats.twCount > 0 && (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">{ui.coreAssetRatioTitle}</span>
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                  coreAssetStats.ratioPct >= 70
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : coreAssetStats.ratioPct >= 50
+                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                }`}
+              >
+                {coreAssetStats.ratioPct >= 70
+                  ? ui.coreAssetRatioHealthy
+                  : coreAssetStats.ratioPct >= 50
+                  ? ui.coreAssetRatioModerate
+                  : ui.coreAssetRatioRisky}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--text-secondary)]">
+              {ui.coreAssetRatioValue}：{formatMoney(coreAssetStats.coreMarketValue, 'tw')} / {formatMoney(coreAssetStats.totalMarketValue, 'tw')}
+              <span className="ml-2 font-mono font-bold text-[var(--text-primary)]">{coreAssetStats.ratioPct.toFixed(1)}%</span>
+            </div>
+          </div>
+
+          <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden mb-2">
+            <div
+              className={`h-full transition-all duration-500 ${
+                coreAssetStats.ratioPct >= 70
+                  ? 'bg-emerald-400'
+                  : coreAssetStats.ratioPct >= 50
+                  ? 'bg-blue-400'
+                  : 'bg-amber-400'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, coreAssetStats.ratioPct))}%` }}
+            />
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)]">
+            {ui.coreAssetRatioHelp}（{coreAssetStats.coreCount} / {coreAssetStats.twCount} 檔標的符合核心資產）
+          </p>
+        </div>
+      )}
+
       <div className="mt-10">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -2192,7 +2295,21 @@ export default function PortfolioPage() {
                           </td>
                         )}
                         {visibleColumns.name && <td className="px-3 py-2 whitespace-nowrap font-medium">{item.symbol_name || item.symbol}</td>}
-                        {visibleColumns.symbol && <td className="px-3 py-2 whitespace-nowrap text-xs text-[var(--text-secondary)]">{item.symbol}</td>}
+                        {visibleColumns.symbol && (
+                          <td className="px-3 py-2 whitespace-nowrap text-xs text-[var(--text-secondary)]">
+                            <span className="inline-flex items-center gap-1.5">
+                              <span>{item.symbol}</span>
+                              {item.market !== 'us' && (() => {
+                                const badge = getTierBadgeInfo(item.symbol, ui)
+                                return (
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${badge.className}`}>
+                                    {badge.text}
+                                  </span>
+                                )
+                              })()}
+                            </span>
+                          </td>
+                        )}
                         {visibleColumns.shares && <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">{item.shares}</td>}
                         {visibleColumns.cost && <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">{formatMoney(item.cost, item.market)}</td>}
                         {visibleColumns.price && <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">{formatMoney(item.current_price, item.market)}</td>}
@@ -2304,6 +2421,14 @@ export default function PortfolioPage() {
                       </span>
                       <span className="font-medium truncate">{item.symbol_name || item.symbol}</span>
                       <span className="text-xs text-[var(--text-secondary)] shrink-0">{item.symbol}</span>
+                      {item.market !== 'us' && (() => {
+                        const badge = getTierBadgeInfo(item.symbol, ui)
+                        return (
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 ${badge.className}`}>
+                            {badge.text}
+                          </span>
+                        )
+                      })()}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className={`text-sm font-bold ${item.total_return >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
