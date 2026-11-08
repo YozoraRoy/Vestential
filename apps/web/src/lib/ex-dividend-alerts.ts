@@ -4,8 +4,10 @@
  * - 三種信：預告抓取失敗／最後買進日倒數（T-1）／填息完成；
  *   一律走 `lib/email.ts sendMarketFocusAlert` 信件管線，
  *   diff 不含 Telegram／LINE 等新渠道程式碼；
- * - 程序內 30 分鐘同 key 去重（沿 `lib/server-alert.ts` 去重語義），
- *   讀時順帶觸發不洗版；寄信失敗只 log，不 throw、不擋主流程；
+ * - 讀時順帶觸發不洗版；寄信失敗只 log，不 throw、不擋主流程；
+ * - 去重：預告失敗沿用 30 分鐘同 key（沿 `lib/server-alert.ts` 語義）；
+ *   最後買進日／填息完成改為「類型＋台北日期」，每日最多一封
+ *   （2026-11-05 事故：原 30 分鐘去重＋無時間窗，導致 00:20 半夜寄信）；
  * - 呼叫端：`app/api/ex-dividend/route.ts` 讀時順帶（best-effort），
  *   不新增 cron（排程順帶更新語義沿既有同步鈕／16:00 排程）。
  */
@@ -50,6 +52,11 @@ export function isExDividendAlertWindow(now: Date = new Date()): boolean {
   return timeStr >= '08:30'
 }
 
+/** 台灣日期鍵（YYYY-MM-DD），用來把「每日一封」的去重做成跨程序重啟也穩定。 */
+export function taiwanDateKey(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(now)
+}
+
 /** TWT48U 預告抓取失敗／快取過期降級時告警（30 分鐘去重，且僅在 08:30 後發送）。 */
 export async function alertExDividendFetchFailed(reason: string, now: Date = new Date()): Promise<void> {
   try {
@@ -61,12 +68,19 @@ export async function alertExDividendFetchFailed(reason: string, now: Date = new
   }
 }
 
-/** 最後買進日倒數 T-1 提醒（有當日最後買進日標的才寄；30 分鐘去重）。 */
-export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[]): Promise<void> {
+/**
+ * 最後買進日倒數 T-1 提醒（有當日最後買進日標的才寄；08:30 後、每日一封）。
+ *
+ * 2026-11-05：先前只在「讀取 API」時觸發且無時間窗，實測 00:20 被爬蟲／訪客讀到
+ * 就寄出半夜信；現比照預告失敗告警套 `isExDividendAlertWindow`，並把去重鍵改成
+ * 「日期＋類型」，確保每天最多一封、且不會在盤前 08:30 前打擾。
+ */
+export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[], now: Date = new Date()): Promise<void> {
   try {
+    if (!isExDividendAlertWindow(now)) return
     const list = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date)
     if (list.length === 0) return
-    if (!shouldSend('ex-dividend:last-buy-countdown')) return
+    if (!shouldSend(`ex-dividend:last-buy-countdown:${taiwanDateKey(now)}`)) return
     const lines = list.slice(0, 20).map((i) => `- ${i.symbol}：除息日 ${i.ex_date}，最後買進日 ${i.ex_last_buy_date}（今日）`)
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
     await sendMarketFocusAlert('除權息最後買進日提醒', `以下標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`)
@@ -75,12 +89,13 @@ export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[]): 
   }
 }
 
-/** 填息完成通知（近期除息且收盤重返除息前收盤；30 分鐘去重）。 */
-export async function alertFillCompleted(items: FillCompletedItem[]): Promise<void> {
+/** 填息完成通知（近期除息且收盤重返除息前收盤；08:30 後、每日一封）。 */
+export async function alertFillCompleted(items: FillCompletedItem[], now: Date = new Date()): Promise<void> {
   try {
+    if (!isExDividendAlertWindow(now)) return
     const list = (items ?? []).filter((i) => i?.symbol && i?.ex_date)
     if (list.length === 0) return
-    if (!shouldSend('ex-dividend:fill-completed')) return
+    if (!shouldSend(`ex-dividend:fill-completed:${taiwanDateKey(now)}`)) return
     const lines = list.slice(0, 20).map((i) => `- ${i.symbol}：${i.ex_date} 除息，已於 ${i.daysToFill} 個交易日內填息`)
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
     await sendMarketFocusAlert('除權息填息完成', `以下標的已完成填息（收盤重返除息前收盤）：\n${lines.join('\n')}${more}`)
