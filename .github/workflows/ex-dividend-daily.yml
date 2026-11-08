@@ -1,0 +1,41 @@
+name: Ex-dividend prewarm & alert
+
+on:
+  schedule:
+    # 台灣 08:30（UTC 00:30）主動讀一次，確保「最後買進日提醒」在盤前寄出。
+    # 2026-11-05 事故：原本只靠站上有人讀 /api/ex-dividend 才觸發，
+    # 半夜被爬蟲讀到就寄信；現在 alert 端已加 08:30 時間窗＋每日去重，
+    # 這支排程只負責「時間到就敲一下」，重複敲不會重寄。
+    # GitHub cron 實測可能延遲 5～15 分鐘，屬平台行為。
+    - cron: '30 0 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Trigger ex-dividend route (cold start tolerant)
+        run: |
+          # 冷啟動＋Yahoo 歷史回補最慢見過 ~85s，故 max-time 180、最多重試 3 次。
+          CODE=$(curl -s -o /tmp/exdiv.json -w "%{http_code}" \
+            --max-time 180 \
+            --retry 3 --retry-delay 15 --retry-all-errors \
+            "https://vestential.com/api/ex-dividend" || echo "000")
+          echo "HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::ex-dividend prewarm failed (HTTP $CODE)"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/exdiv.json'))
+          items = d.get('items') or []
+          today = d.get('today')
+          hit = [i for i in items if i.get('ex_last_buy_date') == today]
+          print(f"today={today} items={len(items)} last_buy_today={len(hit)}")
+          for i in hit[:20]:
+              print(f"  {i.get('symbol')} ex_date={i.get('ex_date')}")
+          if d.get('degraded'):
+              print(f"::warning::degraded: {d.get('degraded_reason')}")
+          PY
