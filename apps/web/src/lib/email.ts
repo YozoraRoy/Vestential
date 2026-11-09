@@ -102,16 +102,7 @@ function formatTwDate(iso: string | null | undefined): string {
   }).format(d)
 }
 
-// ─── HTML 逃逸 ───────────────────────────────────────────────────
-function escapeHtml(s: string | null | undefined): string {
-  return (s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
+import { escapeHtml } from './html-escape'
 // ─── ① 每日市場焦點總覽信 ──────────────────────────────────────
 function buildBrandHeader(generatedAtIso?: string | null): string {
   const timeStr = formatTwDateTime(generatedAtIso ?? new Date().toISOString())
@@ -426,10 +417,52 @@ export async function sendMarketFocusSummary(
   return adminOk
 }
 
-// ─── ② 異常告警信 ───────────────────────────────────────────────
-export async function sendMarketFocusAlert(topic: string, message: string): Promise<boolean> {
+// ─── ② 異常告警信／服務通知 ──────────────────────────────────────
+export interface MarketFocusAlertOptions {
+  /** 'alert'（預設，琥珀色系統告警）或 'notice'（淺藍色服務通知）。 */
+  variant?: 'alert' | 'notice'
+  /** notice 專用：已轉義的 HTML 內容區塊（呼叫端以 escapeHtml 組好）。 */
+  htmlDetail?: string
+}
+
+export function buildMarketFocusAlertEmail(
+  topic: string,
+  message: string,
+  opts: MarketFocusAlertOptions = {},
+): { subject: string; text: string; html: string } {
   const ts = formatTwDateTime(new Date().toISOString())
   const env = process.env.NODE_ENV ?? 'development'
+
+  if (opts.variant === 'notice') {
+    const title = 'Vestential 服務通知'
+    const text = `${title}
+
+時間 : ${ts}
+主題 : ${topic}
+內容 : ${message}
+環境 : ${env}
+
+查看除權息頁面：${SITE_BASE}/ex-dividend`
+    const detail = opts.htmlDetail
+      ? `<div style="margin-top:6px;padding:12px 14px;background:#f0f9ff;border:1px solid #e0f2fe;border-radius:8px;line-height:1.9;">${opts.htmlDetail}</div>`
+      : escapeHtml(message)
+    const html = `
+    <div style="background:#eff6ff;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+      <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #bae6fd;border-radius:12px;overflow:hidden;">
+        <div style="background:#0369a1;color:#ffffff;padding:16px 24px;font-weight:800;font-size:16px;">${title}</div>
+        <div style="padding:20px 24px;font-size:14px;color:#374151;line-height:1.8;">
+          <div><b>時間</b>: ${escapeHtml(ts)}</div>
+          <div><b>主題</b>: ${escapeHtml(topic)}</div>
+          <div><b>內容</b>:</div>
+          ${detail}
+          <div style="margin-top:12px;"><b>環境</b>: ${escapeHtml(env)}</div>
+          <div style="margin-top:14px;font-size:13px;color:#6b7280;">查看除權息頁面：<a href="${escapeHtml(`${SITE_BASE}/ex-dividend`)}" style="color:#0369a1;">${escapeHtml(`${SITE_BASE}/ex-dividend`)}</a></div>
+        </div>
+      </div>
+    </div>`
+    return { subject: `${title} — ${topic}`, text, html }
+  }
+
   const text = `Vestential 系統告警通知
 
 時間 : ${ts}
@@ -452,7 +485,16 @@ export async function sendMarketFocusAlert(topic: string, message: string): Prom
         </div>
       </div>
     </div>`
-  return sendMailCore(`⚠️ Vestential 系統告警通知 — ${topic}`, text, html)
+  return { subject: `⚠️ Vestential 系統告警通知 — ${topic}`, text, html }
+}
+
+export async function sendMarketFocusAlert(
+  topic: string,
+  message: string,
+  opts: MarketFocusAlertOptions = {},
+): Promise<boolean> {
+  const { subject, text, html } = buildMarketFocusAlertEmail(topic, message, opts)
+  return sendMailCore(subject, text, html)
 }
 
 // ─── ②a 籌碼雷達異常榜 digest（Issue #71，email-only） ──────────

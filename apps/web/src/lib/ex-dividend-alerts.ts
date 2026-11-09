@@ -13,6 +13,7 @@
  */
 
 import { sendMarketFocusAlert } from './email'
+import { escapeHtml } from './html-escape'
 
 const DEDUP_MS = 30 * 60 * 1000
 const lastSentAt = new Map<string, number>()
@@ -27,14 +28,51 @@ function shouldSend(key: string): boolean {
 
 export interface ExLastBuyCountdownItem {
   symbol: string
+  name?: string | null
   ex_date: string
   ex_last_buy_date: string
 }
 
 export interface FillCompletedItem {
   symbol: string
+  name?: string | null
   ex_date: string
   daysToFill: number
+}
+
+/** 信件顯示用標籤：有中文名稱時顯示「代號 名稱」，否則只有代號。 */
+export function stockDisplayLabel(symbol: string, name?: string | null): string {
+  const trimmed = (name ?? '').trim()
+  return trimmed ? `${symbol} ${trimmed}` : symbol
+}
+
+function listHtml(rows: string[], total: number): string {
+  const more = total > 20 ? `<div style="color:#6b7280;margin-top:4px;">…等共 ${total} 檔</div>` : ''
+  return `${rows.join('')}${more}`
+}
+
+/** 服務通知 HTML：最後買進日提醒（股票代號＋名稱粗體）。 */
+export function buildExLastBuyCountdownHtml(items: ExLastBuyCountdownItem[]): string {
+  const list = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date)
+  const rows = list
+    .slice(0, 20)
+    .map(
+      (i) =>
+        `<div>• <b>${escapeHtml(stockDisplayLabel(i.symbol, i.name))}</b>：除息日 ${escapeHtml(i.ex_date)}，最後買進日 ${escapeHtml(i.ex_last_buy_date)}（今日）</div>`,
+    )
+  return `<div>以下標的今日為除息最後買進日（ex_last_buy_date）：</div>${listHtml(rows, list.length)}`
+}
+
+/** 服務通知 HTML：填息完成（股票代號＋名稱粗體）。 */
+export function buildFillCompletedHtml(items: FillCompletedItem[]): string {
+  const list = (items ?? []).filter((i) => i?.symbol && i?.ex_date)
+  const rows = list
+    .slice(0, 20)
+    .map(
+      (i) =>
+        `<div>• <b>${escapeHtml(stockDisplayLabel(i.symbol, i.name))}</b>：${escapeHtml(i.ex_date)} 除息，已於 ${i.daysToFill} 個交易日內填息</div>`,
+    )
+  return `<div>以下標的已完成填息（收盤重返除息前收盤）：</div>${listHtml(rows, list.length)}`
 }
 
 /**
@@ -81,9 +119,15 @@ export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[], n
     const list = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date)
     if (list.length === 0) return
     if (!shouldSend(`ex-dividend:last-buy-countdown:${taiwanDateKey(now)}`)) return
-    const lines = list.slice(0, 20).map((i) => `- ${i.symbol}：除息日 ${i.ex_date}，最後買進日 ${i.ex_last_buy_date}（今日）`)
+    const lines = list
+      .slice(0, 20)
+      .map((i) => `- ${stockDisplayLabel(i.symbol, i.name)}：除息日 ${i.ex_date}，最後買進日 ${i.ex_last_buy_date}（今日）`)
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
-    await sendMarketFocusAlert('除權息最後買進日提醒', `以下標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`)
+    await sendMarketFocusAlert(
+      '除權息最後買進日提醒',
+      `以下標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`,
+      { variant: 'notice', htmlDetail: buildExLastBuyCountdownHtml(list) },
+    )
   } catch (e) {
     console.error('[ExDividendAlert] countdown alert failed (non-blocking):', e)
   }
@@ -96,9 +140,15 @@ export async function alertFillCompleted(items: FillCompletedItem[], now: Date =
     const list = (items ?? []).filter((i) => i?.symbol && i?.ex_date)
     if (list.length === 0) return
     if (!shouldSend(`ex-dividend:fill-completed:${taiwanDateKey(now)}`)) return
-    const lines = list.slice(0, 20).map((i) => `- ${i.symbol}：${i.ex_date} 除息，已於 ${i.daysToFill} 個交易日內填息`)
+    const lines = list
+      .slice(0, 20)
+      .map((i) => `- ${stockDisplayLabel(i.symbol, i.name)}：${i.ex_date} 除息，已於 ${i.daysToFill} 個交易日內填息`)
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
-    await sendMarketFocusAlert('除權息填息完成', `以下標的已完成填息（收盤重返除息前收盤）：\n${lines.join('\n')}${more}`)
+    await sendMarketFocusAlert(
+      '除權息填息完成',
+      `以下標的已完成填息（收盤重返除息前收盤）：\n${lines.join('\n')}${more}`,
+      { variant: 'notice', htmlDetail: buildFillCompletedHtml(list) },
+    )
   } catch (e) {
     console.error('[ExDividendAlert] fill-completed alert failed (non-blocking):', e)
   }

@@ -275,14 +275,14 @@ export async function GET(req: NextRequest) {
     // - 填息完成：近 10 天除息事件已達標者。
     const countdown = items
       .filter((i) => i.ex_last_buy_date === today)
-      .map((i) => ({ symbol: i.symbol, ex_date: i.ex_date, ex_last_buy_date: i.ex_last_buy_date }))
+      .map((i) => ({ symbol: i.symbol, name: i.name, ex_date: i.ex_date, ex_last_buy_date: i.ex_last_buy_date }))
     if (countdown.length > 0) void alertExLastBuyCountdown(countdown)
     const tenDaysAgo = addDaysStr(today, -10)
-    const completed: { symbol: string; ex_date: string; daysToFill: number }[] = []
+    const completed: { symbol: string; name?: string | null; ex_date: string; daysToFill: number }[] = []
     for (const i of items) {
       for (const e of i.stats?.events ?? []) {
         if (e.exDate >= tenDaysAgo && e.exDate < today && e.filled && e.daysToFill != null) {
-          completed.push({ symbol: i.symbol, ex_date: e.exDate, daysToFill: e.daysToFill })
+          completed.push({ symbol: i.symbol, name: i.name, ex_date: e.exDate, daysToFill: e.daysToFill })
         }
       }
     }

@@ -6,7 +6,10 @@ vi.mock('./email', () => ({ sendMarketFocusAlert: sendMock }))
 import {
   alertExLastBuyCountdown,
   alertFillCompleted,
+  buildExLastBuyCountdownHtml,
+  buildFillCompletedHtml,
   isExDividendAlertWindow,
+  stockDisplayLabel,
   taiwanDateKey,
 } from './ex-dividend-alerts'
 
@@ -38,6 +41,40 @@ describe('isExDividendAlertWindow (告警時間窗控制)', () => {
   it('跨日邊界以台北時間判定（UTC 16:20 = 台北隔日 00:20）', () => {
     expect(taiwanDateKey(new Date('2026-11-04T16:20:00Z'))).toBe('2026-11-05')
     expect(isExDividendAlertWindow(new Date('2026-11-04T16:20:00Z'))).toBe(false)
+  })
+})
+
+describe('服務通知 HTML（代號＋名稱粗體）', () => {
+  it('最後買進日提醒：代號與名稱以 <b> 呈現', () => {
+    const html = buildExLastBuyCountdownHtml([
+      { symbol: '00940', name: '元大台灣價值高息', ex_date: '2026-11-10', ex_last_buy_date: '2026-11-09' },
+    ])
+    expect(html).toContain('<b>00940 元大台灣價值高息</b>')
+    expect(html).toContain('最後買進日 2026-11-09（今日）')
+  })
+
+  it('填息完成：代號與名稱以 <b> 呈現', () => {
+    const html = buildFillCompletedHtml([{ symbol: '2330', name: '台積電', ex_date: '2026-11-03', daysToFill: 2 }])
+    expect(html).toContain('<b>2330 台積電</b>')
+    expect(html).toContain('2 個交易日內填息')
+  })
+
+  it('沒有名稱時只顯示代號；名稱含 HTML 會轉義', () => {
+    expect(stockDisplayLabel('0056')).toBe('0056')
+    const html = buildFillCompletedHtml([
+      { symbol: '0056', name: '<script>alert(1)</script>', ex_date: '2026-11-03', daysToFill: 1 },
+    ])
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('超過 20 檔加註總數', () => {
+    const items = Array.from({ length: 21 }, (_, i) => ({
+      symbol: `000${i}`,
+      ex_date: '2026-11-10',
+      ex_last_buy_date: '2026-11-09',
+    }))
+    expect(buildExLastBuyCountdownHtml(items)).toContain('…等共 21 檔')
   })
 })
 
