@@ -19,7 +19,7 @@ export { MetaSpamSuspectedError }
 // IG/Threads 一律 two-step：建立 container → 輪詢/發布；FB 單步直發。
 // token 全部從 env 讀，不落 DB。
 
-const IG_API = 'https://graph.instagram.com/v21.0'
+const IG_API = 'https://graph.facebook.com/v21.0'
 const THREADS_API = 'https://graph.threads.net/v1.0'
 const FB_API = 'https://graph.facebook.com/v21.0'
 

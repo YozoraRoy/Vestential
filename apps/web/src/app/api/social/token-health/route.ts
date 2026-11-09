@@ -30,8 +30,9 @@ export async function GET(req: Request) {
     const checks: TokenCheck[] = []
 
     const igToken = process.env.IG_ACCESS_TOKEN
+    const igUserId = process.env.IG_USER_ID
     if (igToken) {
-      checks.push(await checkUser('instagram', 'https://graph.instagram.com/v21.0/me', igToken))
+      checks.push(await checkIg(igToken, igUserId))
     } else {
       checks.push({ platform: 'instagram', ok: false, configured: false, error: 'IG_ACCESS_TOKEN 未設定' })
     }
@@ -66,6 +67,27 @@ export async function GET(req: Request) {
   }
 }
 
+async function checkIg(token: string, igUserId?: string): Promise<TokenCheck> {
+  // 1. 若有設定 IG_USER_ID，優先以 Meta Graph API 檢驗專業帳號（適用 Page Access Token）
+  if (igUserId) {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(igUserId)}?fields=id,username&access_token=${encodeURIComponent(token)}`,
+        { headers: { 'Content-Type': 'application/json' } },
+      )
+      const json = await res.json()
+      if (res.ok && json?.id) {
+        return { platform: 'instagram', ok: true, configured: true, user: json.username ?? null }
+      }
+    } catch {
+      // 容錯嘗試 fallback
+    }
+  }
+
+  // 2. Fallback: Instagram Basic Display API (適用 IGAA 開頭個人 Token)
+  return checkUser('instagram', 'https://graph.instagram.com/v21.0/me', token)
+}
+
 async function checkUser(platform: 'instagram' | 'threads', url: string, token: string): Promise<TokenCheck> {
   try {
     const res = await fetch(`${url}?fields=id,username&access_token=${encodeURIComponent(token)}`, {
@@ -97,16 +119,29 @@ async function checkUser(platform: 'instagram' | 'threads', url: string, token: 
   }
 }
 
-/** FB：system user token 必須能經 /me/accounts 換出 FB_PAGE_ID 對應的 page access token。 */
+/** FB：同時支援 Page Access Token（/me 直接回傳粉專自身）與 System User Token（/me/accounts 換粉專）。 */
 async function checkFb(fbToken: string, fbPageId?: string): Promise<TokenCheck> {
   try {
+    // 1. 先檢驗是否為粉專自身 Page Access Token
+    const meRes = await fetch(
+      `https://graph.facebook.com/v21.0/me?fields=id,name&access_token=${encodeURIComponent(fbToken)}`,
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+    const meJson = await meRes.json()
+    if (meRes.ok && meJson?.id) {
+      if (!fbPageId || String(meJson.id) === String(fbPageId)) {
+        return { platform: 'facebook', ok: true, configured: true, user: meJson.name ?? null }
+      }
+    }
+
+    // 2. 若非 Page Access Token，嘗試以 System User Token 查詢 /me/accounts
     const res = await fetch(
-      `https://graph.facebook.com/me/accounts?fields=id,name&access_token=${encodeURIComponent(fbToken)}`,
+      `https://graph.facebook.com/v21.0/me/accounts?fields=id,name&access_token=${encodeURIComponent(fbToken)}`,
       { headers: { 'Content-Type': 'application/json' } },
     )
     const json = await res.json()
     if (!res.ok || !Array.isArray(json?.data)) {
-      return { platform: 'facebook', ok: false, configured: true, error: json?.error?.message || `HTTP ${res.status}` }
+      return { platform: 'facebook', ok: false, configured: true, error: meJson?.error?.message || json?.error?.message || `HTTP ${res.status}` }
     }
     if (fbPageId) {
       const page = json.data.find((p: any) => String(p?.id) === String(fbPageId))
@@ -115,7 +150,7 @@ async function checkFb(fbToken: string, fbPageId?: string): Promise<TokenCheck> 
           platform: 'facebook',
           ok: false,
           configured: true,
-          error: `FB_PAGE_ID ${fbPageId} 不在 system user 可存取清單中（可用: ${json.data.map((p: any) => p.name).join(', ')}）`,
+          error: `FB_PAGE_ID ${fbPageId} 不在可存取清單中（可用: ${json.data.map((p: any) => p.name).join(', ')}）`,
         }
       }
       return { platform: 'facebook', ok: true, configured: true, user: page.name ?? null }
