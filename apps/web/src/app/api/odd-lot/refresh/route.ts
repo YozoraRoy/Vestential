@@ -82,7 +82,7 @@ export async function POST(req: Request) {
 
     const giftCount = await fetchStockGift()
     lastRun.set(targetDate, Date.now())
-    revalidateTag('odd-lot')
+    revalidateTag('odd-lot', 'max')
 
     return NextResponse.json({
       success: true,

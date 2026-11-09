@@ -103,7 +103,7 @@ async function runJob(job: CycleEntryJob, watchdog: NodeJS.Timeout): Promise<voi
     job.count = result.signalCount
     job.summary = result.summary
     if (job.kind === 'dry') job.signals = result.signals
-    if (job.kind === 'refresh') revalidateTag('cycle-entry')
+    if (job.kind === 'refresh') revalidateTag('cycle-entry', 'max')
     job.status = 'done'
   } catch (e: any) {
     job.status = 'failed'

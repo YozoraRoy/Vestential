@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { APP_LOCALE_COOKIE, defaultLocale, isLocale, type Locale } from '@/i18n/config'
 
 /**
- * 多語系路由：支援 /en/... 與 /ja/... 前綴，zh-TW 為預設（無前綴）。
+ * 多語系路徑支援（Next.js 16：middleware 已更名為 proxy）。
+ *
  * 流程：
- *  1. 從路徑前綴（/en、/ja、/zh-TW）偵測語系
- *  2. 沒有的話退回 cookie，再退回瀏覽器 Accept-Language
- *  3. 設定 x-locale request header（讓 server 以此語系渲染）
- *  4. 將 /en/...、/ja/...、/zh-TW/... rewrite 成無前綴路徑
+ *   1. 從路徑前綴（/en、/ja、/zh-TW）偵測語系
+ *   2. 沒有路徑語系時讀 cookie，再退回瀏覽器 Accept-Language
+ *   3. 設定 x-locale request header（供 server 以此語系渲染）
+ *   4. 把 /en/...、/ja/...、/zh-TW/... rewrite 回無前綴路徑
  */
 const pathLocales = ['en', 'ja', 'zh-TW'] as const
 
@@ -20,11 +21,11 @@ function resolveFromAcceptLanguage(headers: Headers): Locale {
   return defaultLocale
 }
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
   const url = req.nextUrl.clone()
 
-  // 取出路徑前綴語系
+  // 取出路徑語系
   const segments = pathname.split('/').filter(Boolean)
   let locale: Locale | null = null
   if (segments.length > 0 && isLocale(segments[0])) {
@@ -40,13 +41,13 @@ export function middleware(req: NextRequest) {
 
   const resolved: Locale = locale ?? (cookie && isLocale(cookie) ? (cookie as Locale) : resolveFromAcceptLanguage(req.headers))
 
-  // 建構重寫後無前綴的路徑（剝除開頭連續的語系前綴，避免疊加如 /ja/ja/en/... 導致 404）
+  // 建立改寫後無前綴的路徑，避免多層語系前綴（/ja/ja/en/...）導致 404
   let nextPathname = pathname
   let prefixCount = 0
   while (prefixCount < segments.length && (pathLocales as readonly string[]).includes(segments[prefixCount])) prefixCount++
   if (prefixCount > 0) nextPathname = prefixCount === segments.length ? '/' : `/${segments.slice(prefixCount).join('/')}`
 
-  // 設定 x-locale header，讓後端以 resolved 語系渲染
+  // 設定 x-locale header，供後端以 resolved 語系渲染
   const requestHeaders = new Headers(req.headers)
   requestHeaders.set('x-locale', resolved)
   const response = NextResponse.rewrite(new URL(nextPathname || '/', url), {

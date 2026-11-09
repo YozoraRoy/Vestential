@@ -41,7 +41,7 @@ export async function POST(req: Request) {
       backfillByDate: async (date) => {
         await migrate()
         const inserted = await fetchTwseOddLots(date)
-        revalidateTag('odd-lot')
+        revalidateTag('odd-lot', 'max')
         return inserted
       },
       onLog: (message) => console.log(message),

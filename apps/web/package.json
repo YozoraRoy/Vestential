@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "pretypecheck": "npm run build --workspace=@stock/database",
     "typecheck": "node --max-old-space-size=6144 ../../node_modules/typescript/bin/tsc --noEmit",
     "test": "vitest run"
@@ -24,11 +24,11 @@
     "clsx": "^2.1.0",
     "jose": "^6.2.8",
     "lucide-react": "^0.468.0",
-    "next": "^15.2.0",
+    "next": "^16.4.5",
     "nodemailer": "^10.0.0",
     "opencc-js": "^1.4.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "recharts": "^3.10.1",
     "tailwindcss": "^4.0.0",
     "@stock/cycle-entry": "*"

@@ -169,7 +169,7 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
       job.count = items.length
     } else {
       const { enriched: items, summary, hasNewEdition, newCount } = await refreshMarketFocusDetailed(onPipelineStage)
-      revalidateTag('market-focus')
+      revalidateTag('market-focus', 'max')
       job.count = items.length
       const meta = await getMarketFocusMeta()
       job.editionKey = meta?.generated_at ?? null
@@ -186,7 +186,7 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
         const filled = filledSummaries + (await backfillMissingReasons())
         if (filled > 0) {
           console.log(`[MarketFocusJob] backfilled ${filled} missing summaries/reasons`)
-          revalidateTag('market-focus')
+          revalidateTag('market-focus', 'max')
         }
       }
 
