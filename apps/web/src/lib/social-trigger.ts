@@ -209,29 +209,33 @@ export async function triggerSocialPublish(
   }
 
   // 發布：去重與發布綁定。force 重發時清除去重紀錄並全部重跑；否則只處理未發布過的平台。
-  // Issue #79 DB gate：當日 UTC 日曆日內已有任一平台 published 即跳過
-  //（一天一次語義；非 00 時執行、跨日、failed／deferred 皆不受時刻影響）。
+  // Issue #79 / #19 DB gate：逐平台檢查當日 UTC 是否已有 published（解耦跨平台限制，允許失敗平台當日獨立補發）。
   const now = options.now ?? new Date()
+  let targetPlatforms = platforms
   if (!dryRun && !force) {
-    let alreadyPublishedToday = false
-    try {
-      alreadyPublishedToday = await hasAnySocialPublishedSince(getSocialDayStartUtcWall(now))
-    } catch (e: any) {
-      // 查不到已發紀錄時 fail-open 照發：第二層 alreadyPosted 逐平台 edition
-      // 去重仍在，同 edition 重跑照樣擋下，不會重發。
-      console.error('[Social] 今日已發查詢失敗（fail-open 照發）:', e?.message ?? e)
+    const unposted: SocialPostPlatform[] = []
+    const dayStartWall = getSocialDayStartUtcWall(now)
+    for (const p of platforms) {
+      try {
+        const posted = await hasAnySocialPublishedSince(dayStartWall, p)
+        if (!posted) unposted.push(p)
+      } catch (e: any) {
+        console.error(`[Social] 今日已發查詢失敗 (${p}，fail-open 照發):`, e?.message ?? e)
+        unposted.push(p)
+      }
     }
-    if (alreadyPublishedToday) {
+    if (unposted.length === 0) {
       console.log(
-        '[Social] skip: 今日 UTC 已有 published（社群降頻一天一次，不重發、不記 failed、不發告警）',
+        '[Social] skip: 所有指定平台今日 UTC 皆已有 published（社群降頻一天一次，同日第二跑跳過）',
       )
       return {
         triggered: false,
         skipped: true,
         editionKey,
-        message: 'skip: 今日 UTC 已有社群 published（一天一次，同日第二跑跳過）',
+        message: 'skip: 所有指定平台今日 UTC 皆已有社群 published（一天一次，同日第二跑跳過）',
       }
     }
+    targetPlatforms = unposted
   }
 
   // Issue #79：新 gate 通過＋非 force＋非 dryRun 先重打到期 deferred
@@ -246,9 +250,9 @@ export async function triggerSocialPublish(
   }
 
   const unresolved = force
-    ? platforms.map((p) => ({ platform: p, posted: false }))
+    ? targetPlatforms.map((p) => ({ platform: p, posted: false }))
     : (
-        await Promise.all(platforms.map(async (p) => ({ platform: p, posted: await alreadyPosted(p, editionKey!) })))
+        await Promise.all(targetPlatforms.map(async (p) => ({ platform: p, posted: await alreadyPosted(p, editionKey!) })))
       ).filter((x) => !x.posted)
 
   if (unresolved.length === 0) {

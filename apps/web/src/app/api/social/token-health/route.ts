@@ -57,6 +57,7 @@ export async function GET(req: Request) {
         '社群 Token 失效告警',
         broken.map((c) => `${c.platform}: ${c.error}`).join('\n'),
       )
+      return NextResponse.json({ success: false, brokenCount: broken.length, checks }, { status: 503 })
     }
 
     return NextResponse.json({ success: true, checks })
@@ -74,6 +75,22 @@ async function checkUser(platform: 'instagram' | 'threads', url: string, token: 
     if (!res.ok || !json?.id) {
       return { platform, ok: false, configured: true, error: json?.error?.message || `HTTP ${res.status}` }
     }
+
+    // Ticket #18：若 Threads 驗證有效，嘗試調用 refresh_access_token 自動延長 60 天效期
+    if (platform === 'threads') {
+      try {
+        const refreshRes = await fetch(
+          `https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=${encodeURIComponent(token)}`,
+        )
+        const refreshJson = await refreshRes.json()
+        if (refreshRes.ok && refreshJson?.access_token) {
+          console.log(`[Threads] Token 自動展延成功，有效期延長至: ${refreshJson.expires_in} 秒`)
+        }
+      } catch (err: any) {
+        console.warn('[Threads] Token 自動展延嘗試跳過:', err?.message ?? err)
+      }
+    }
+
     return { platform, ok: true, configured: true, user: json.username ?? null }
   } catch (e: any) {
     return { platform, ok: false, configured: true, error: e?.message || 'network error' }

@@ -19,6 +19,7 @@ export async function POST(req: Request) {
 
   const { searchParams } = new URL(req.url)
   const dryRun = searchParams.get('dryRun') === 'true'
+  const force = searchParams.get('force') === 'true'
   const platforms = (searchParams.get('platforms') ?? 'instagram,threads')
     .split(',')
     .map((p) => p.trim() as 'instagram' | 'threads' | 'facebook')
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
 
   try {
     await migrate()
-    const outcome = await triggerSocialPublish({ dryRun, platforms })
+    const outcome = await triggerSocialPublish({ dryRun, force, platforms })
     return NextResponse.json({ success: true, ...outcome })
   } catch (error: any) {
     console.error('[API/social/publish] Failed:', error)

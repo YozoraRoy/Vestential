@@ -6418,17 +6418,17 @@ export async function countSocialPublishedPosts(platform: string): Promise<numbe
  * 只認 status='published'；failed／deferred 不計入、不阻擋當日 gate。
  * published_at 為 NULL 的異常列退回以 created_at 判斷（COALESCE 兜底）。
  */
-export async function countSocialPublishedSince(since: string): Promise<number> {
+export async function countSocialPublishedSince(since: string, platform?: string): Promise<number> {
   const row = await dbQueryFirst<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM social_posts WHERE status = 'published' AND COALESCE(published_at, created_at) >= @since`,
-    { since },
+    `SELECT COUNT(*) AS n FROM social_posts WHERE status = 'published' AND (@platform IS NULL OR platform = @platform) AND COALESCE(published_at, created_at) >= @since`,
+    { since, platform: platform ?? null },
   )
   return row?.n ?? 0
 }
 
-/** Issue #79：自 `since`（含）起是否已有任一 published（當日 DB gate 用）。 */
-export async function hasAnySocialPublishedSince(since: string): Promise<boolean> {
-  return (await countSocialPublishedSince(since)) > 0
+/** Issue #79 / #19：自 `since`（含）起是否已有任一 published（若傳入 platform 則只查該平台）。 */
+export async function hasAnySocialPublishedSince(since: string, platform?: string): Promise<boolean> {
+  return (await countSocialPublishedSince(since, platform)) > 0
 }
 
 /** 讀取該平台該 edition 的發文紀錄（含 #31 首回覆欄位）；無紀錄回傳 undefined。 */
