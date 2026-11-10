@@ -1,0 +1,12 @@
+--- a/.github/workflows/sync-cycle-entry.yml
++++ b/.github/workflows/sync-cycle-entry.yml
+@@ -20,6 +20,8 @@ jobs:
+     steps:
+       - uses: actions/checkout@v4
+       - name: Run weekly large-cap entry signals scraper
++        timeout-minutes: 15
++        continue-on-error: false
+         env:
+           API_TOKEN: ${{ secrets.CYCLE_ENTRY_API_TOKEN }}
+-        run: python scripts/sync_cycle_entry.py
++        run: python scripts/sync_cycle_entry.py --retry 3 --backoff-factor 2.0 --delay 1.0
