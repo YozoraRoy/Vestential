@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { AtSign, Facebook, Instagram } from 'lucide-react'
+import { AtSign } from 'lucide-react'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Dict } from '@/i18n/dictionaries'
@@ -13,12 +13,10 @@ const footerLinks: { key: keyof Dict['footer']; href: string }[] = [
   { key: 'about', href: '/about' },
 ]
 
-// lucide 無 Threads 品牌 icon：Threads 用 AtSign（@ 概念），FB／IG 用品牌 icon；
-// 三者皆為 icon＋文字並陳（文字為主、icon 為輔），不自繪 logo。
+// lucide 無 Threads 品牌 icon：Threads 用 AtSign（@ 概念），icon＋文字並陳
+// （文字為主、icon 為輔），不自繪 logo。2026-11 起只留 Threads。
 const socialIcons: Record<SiteSocialKey, typeof AtSign> = {
   threads: AtSign,
-  instagram: Instagram,
-  facebook: Facebook,
 }
 
 export function Footer() {

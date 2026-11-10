@@ -16,9 +16,9 @@ export function isSummaryFallback(summary: string): boolean {
 const SITE_BASE = process.env.AUTH_BASE_URL ?? 'https://vestential.com'
 const SITE_LINK = `${SITE_BASE}/market-focus`
 
-// 社群推廣：設定這兩個 env 後，電子報 footer 會放 IG / Threads 追蹤連結。
+// 社群推廣：設定 THREADS_PROFILE_URL 後，電子報 footer 會放 Threads 追蹤連結。
+// （2026-11 起只留 Threads；Instagram 已停止發布與 token 偵測。）
 const SOCIAL_LINKS = {
-  instagram: process.env.INSTAGRAM_PROFILE_URL ?? '',
   threads: process.env.THREADS_PROFILE_URL ?? '',
 }
 
@@ -124,7 +124,6 @@ function buildBrandHeader(generatedAtIso?: string | null): string {
 
 function buildSocialPromoBlock(): string {
   const items = [
-    SOCIAL_LINKS.instagram ? `<a href="${escapeHtml(SOCIAL_LINKS.instagram)}" style="color:#64748b;text-decoration:underline;">Instagram</a>` : '',
     SOCIAL_LINKS.threads ? `<a href="${escapeHtml(SOCIAL_LINKS.threads)}" style="color:#64748b;text-decoration:underline;">Threads</a>` : '',
   ].filter(Boolean)
   if (items.length === 0) return ''

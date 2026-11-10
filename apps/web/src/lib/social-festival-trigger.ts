@@ -8,6 +8,7 @@ import { generateFestivalCaptions, type SocialCaptions } from '@/lib/social-fest
 import { renderSocialCard } from '@/lib/social-canvas'
 import { generateFestivalArtworkImage } from '@/lib/social-ai-image'
 import { publishSocialPost, alreadyPosted } from '@/lib/social-publish'
+import { ACTIVE_SOCIAL_PLATFORMS } from '@/lib/social-platforms'
 
 // ─── 節慶發布協調層（中秋 MVP）────────────────────────────────────
 // 複用 social-publish.ts alreadyPosted / publishSocialPost 去重＋發布。
@@ -15,7 +16,7 @@ import { publishSocialPost, alreadyPosted } from '@/lib/social-publish'
 
 const SITE_BASE = process.env.AUTH_BASE_URL ?? 'https://vestential.com'
 
-const FESTIVAL_PLATFORMS: SocialPostPlatform[] = ['instagram', 'threads', 'facebook']
+const FESTIVAL_PLATFORMS: SocialPostPlatform[] = [...ACTIVE_SOCIAL_PLATFORMS]
 
 export interface FestivalPublishOutcome {
   triggered: boolean
@@ -61,7 +62,7 @@ export async function triggerFestivalPublish(
   // ── 乾跑：只生成文案＋賀圖預覽，不讀去重、不寫 DB、不打 Meta API ──
   if (dryRun) {
     const [captions, art] = await Promise.all([
-      generateFestivalCaptions(festival.id, todayStr),
+      generateFestivalCaptions(festival.id, todayStr, FESTIVAL_PLATFORMS),
       generateFestivalArtworkImage(festival.id).catch(() => null),
     ])
     // FLUX 失敗兜底：backgroundImage=null → canvas 金綠漸層仍可產圖
@@ -90,7 +91,7 @@ export async function triggerFestivalPublish(
     return { triggered: false, skipped: true, festival: festival.id, editionKey, message: 'edition 已發布，skip' }
   }
 
-  const captions = await generateFestivalCaptions(festival.id, todayStr)
+  const captions = await generateFestivalCaptions(festival.id, todayStr, FESTIVAL_PLATFORMS)
 
   // 賀圖：FLUX 失敗回 null → canvas 金綠漸層兜底，仍可發出
   const art = await generateFestivalArtworkImage(festival.id).catch(() => null)

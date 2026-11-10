@@ -88,9 +88,9 @@ export const DEFAULT_AGENT_SETTINGS: Record<string, AgentSettingMeta> = {
   },
   'social.reply_tag_metaai': {
     category: 'social',
-    label: '首回覆問 Meta AI',
+    label: '首回覆（Threads）',
     defaultValue: 'editor',
-    help: 'on＝主文後自動發「@meta.ai＋問題」首回覆（Threads 自回覆＋IG 第二則留言）；editor＝降級版（去 tag 小編提問，不標註）；off＝關閉，不發首回覆。台灣目前未開放 @meta.ai，故預設 editor；待開放後再切 on（先乾跑驗證）。',
+    help: 'on＝主文後自動發「@meta.ai＋問題」的 Threads 自回覆（IG 第二則留言已停用）；editor＝降級版（去 tag 小編提問，不標註）；off＝關閉，不發首回覆。台灣目前未開放 @meta.ai，故預設 editor；待開放後再切 on（先乾跑驗證）。',
   },
   // 試算頁
   'portfolio.fee_discount': {

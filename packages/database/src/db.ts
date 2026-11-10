@@ -548,16 +548,20 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
 
       CREATE TABLE IF NOT EXISTS llm_usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT DEFAULT 'vestential',
         agent TEXT NOT NULL,
         model TEXT NOT NULL,
         usedFallback INTEGER DEFAULT 0,
         promptTokens INTEGER DEFAULT 0,
         completionTokens INTEGER DEFAULT 0,
         totalTokens INTEGER DEFAULT 0,
+        cost_twd REAL DEFAULT 0.0,
+        execution_ms INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now','localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_llm_usage_created ON llm_usage_logs(created_at);
       CREATE INDEX IF NOT EXISTS idx_llm_usage_agent ON llm_usage_logs(agent);
+      CREATE INDEX IF NOT EXISTS idx_llm_usage_project ON llm_usage_logs(project);
 
       CREATE TABLE IF NOT EXISTS analysis_jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1296,16 +1300,20 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
       BEGIN
         CREATE TABLE llm_usage_logs (
           id               INT IDENTITY(1,1) PRIMARY KEY,
+          project          NVARCHAR(50) DEFAULT 'vestential',
           agent            NVARCHAR(80) NOT NULL,
           model            NVARCHAR(100) NOT NULL,
           usedFallback     INT DEFAULT 0,
           promptTokens     INT DEFAULT 0,
           completionTokens INT DEFAULT 0,
           totalTokens      INT DEFAULT 0,
+          cost_twd         FLOAT DEFAULT 0.0,
+          execution_ms     INT DEFAULT 0,
           created_at       DATETIME2 DEFAULT GETDATE()
         );
         CREATE INDEX idx_llm_usage_created ON llm_usage_logs(created_at);
         CREATE INDEX idx_llm_usage_agent ON llm_usage_logs(agent);
+        CREATE INDEX idx_llm_usage_project ON llm_usage_logs(project);
       END
     `)
 
@@ -1376,6 +1384,12 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
     await _pool.request().query(`
       IF COL_LENGTH('twse_dividends', 'prev_close') IS NULL
         ALTER TABLE twse_dividends ADD prev_close FLOAT;
+      IF COL_LENGTH('llm_usage_logs', 'project') IS NULL
+        ALTER TABLE llm_usage_logs ADD project NVARCHAR(50) DEFAULT 'vestential';
+      IF COL_LENGTH('llm_usage_logs', 'cost_twd') IS NULL
+        ALTER TABLE llm_usage_logs ADD cost_twd FLOAT DEFAULT 0.0;
+      IF COL_LENGTH('llm_usage_logs', 'execution_ms') IS NULL
+        ALTER TABLE llm_usage_logs ADD execution_ms INT DEFAULT 0;
     `)
 
     // Issue #54：競技場股利入帳去重（UNIQUE 防重發冪等）。
@@ -6896,11 +6910,14 @@ export async function countMarketFocusSubscribers(): Promise<{ total: number; ac
 
 /** LLM 用量資料庫寫入輔助型別。 */
 export interface LlmUsageLogInput {
+  project?: string
   agent: string
   model: string
   usedFallback: boolean
   promptTokens: number
   completionTokens: number
+  costTwd?: number
+  executionMs?: number
 }
 
 /**
@@ -6909,18 +6926,24 @@ export interface LlmUsageLogInput {
  */
 export async function logLlmUsage(entry: LlmUsageLogInput): Promise<void> {
   try {
+    const project = (entry.project || 'vestential').slice(0, 50)
     const usedFallback = entry.usedFallback ? 1 : 0
     const totalTokens = (entry.promptTokens || 0) + (entry.completionTokens || 0)
+    const costTwd = Number(entry.costTwd || 0.0)
+    const executionMs = Number(entry.executionMs || 0)
     await dbExecute(
-      `INSERT INTO llm_usage_logs (agent, model, usedFallback, promptTokens, completionTokens, totalTokens)
-       VALUES (@agent, @model, @usedFallback, @promptTokens, @completionTokens, @totalTokens)`,
+      `INSERT INTO llm_usage_logs (project, agent, model, usedFallback, promptTokens, completionTokens, totalTokens, cost_twd, execution_ms)
+       VALUES (@project, @agent, @model, @usedFallback, @promptTokens, @completionTokens, @totalTokens, @costTwd, @executionMs)`,
       {
+        project,
         agent: (entry.agent || '').slice(0, 80),
         model: (entry.model || '').slice(0, 100),
         usedFallback,
         promptTokens: entry.promptTokens || 0,
         completionTokens: entry.completionTokens || 0,
         totalTokens,
+        costTwd,
+        executionMs,
       },
     )
   } catch (e) {

@@ -4,7 +4,7 @@ import type { SocialPostPlatform } from '@stock/database'
 import { generateSocialCaptions, generateMemeConcept, IG_DRIVE_COMMENT, type SocialCaptions } from '@/lib/social'
 import { renderSocialCard, type SocialCardStyle } from '@/lib/social-canvas'
 import { generateSocialBackgroundImage, generateSocialArtworkImage } from '@/lib/social-ai-image'
-import { publishSocialPost, alreadyPosted, postInstagramComment, republishDeferredPost } from '@/lib/social-publish'
+import { publishSocialPost, alreadyPosted, republishDeferredPost } from '@/lib/social-publish'
 import { publishThreadsReply } from '@/lib/threads-reply'
 import {
   generateFirstReplyQuestion,
@@ -16,6 +16,7 @@ import {
   type FirstReplyQuestion,
 } from '@/lib/social-first-reply'
 import { sendMarketFocusAlert } from '@/lib/email'
+import { ACTIVE_SOCIAL_PLATFORMS, isActiveSocialPlatform } from '@/lib/social-platforms'
 import { buildFirstReplyFailMessage, buildSocialPartialFailMessage, buildSocialDeferredMessage, buildSocialRedriveExhaustedMessage } from '@/lib/social-alert'
 
 // ─── 社群發布協調層 ───────────────────────────────────────────────
@@ -62,6 +63,10 @@ export interface SocialRedriveSummary {
  */
 export async function redriveDueDeferredPosts(now: Date = new Date()): Promise<SocialRedriveSummary> {
   const summary: SocialRedriveSummary = { checked: 0, published: [], terminal: [] }
+  // 2026-11 起只留 Threads：deferred 冷卻重打只服務 Instagram（spam suspected／
+  // 額度不足），IG 停用後整個 redrive 一併停用，避免舊 IG deferred 列被重打。
+  // 恢復 IG 時把 ACTIVE_SOCIAL_PLATFORMS 加回 'instagram' 即自動恢復。
+  if (!isActiveSocialPlatform('instagram')) return summary
   const due = await listDueDeferredSocialPosts(now.toISOString()).catch((e) => {
     console.error('[Social] redrive list failed:', e)
     return []
@@ -145,7 +150,9 @@ export async function triggerSocialPublish(
 ): Promise<SocialPublishOutcome> {
   const dryRun = options.dryRun ?? false
   const force = options.force ?? false
-  const platforms = options.platforms?.length ? options.platforms : (['instagram', 'threads', 'facebook'] as SocialPostPlatform[])
+  const platforms: SocialPostPlatform[] = options.platforms?.length
+    ? options.platforms
+    : [...ACTIVE_SOCIAL_PLATFORMS]
   const manual = !!((options.imageUrl || options.imageUrls) && options.captions)
 
   const meta = await getMarketFocusMeta()
@@ -164,7 +171,7 @@ export async function triggerSocialPublish(
   // 非 Groq OTPM 池，可與 LLM 序列重疊並行。
   if (dryRun) {
     const bgPromise = generateSocialBackgroundImage({ headline: items[0]?.title, summary: meta.summary, items }).catch(() => null)
-    const captions = await generateSocialCaptions(meta, items)
+    const captions = await generateSocialCaptions(meta, items, platforms)
     await sleep(getChainPaceMs())
     const meme = await generateMemeConcept(meta, items)
     const bgImage = await bgPromise
@@ -260,7 +267,7 @@ export async function triggerSocialPublish(
   }
 
   // 手動發布（乾跑後選定圖卡＋改文案）：直接用指定的圖與文字；自動發布則產出文案＋og 圖。
-  const contentByPlatform = manual ? options.captions! : await generateSocialCaptions(meta, items)
+  const contentByPlatform = manual ? options.captions! : await generateSocialCaptions(meta, items, platforms)
 
   // #31 首回覆題目：同 edition 全平台共用同一題（類別依 edition 輪換，與乾跑預覽一致）。
   // 成本即規格所列「多 1 次 LLM」：meme 概念提前生成一次，同時供提問＋圖卡共用。
@@ -392,20 +399,14 @@ async function postFirstReplyBestEffort(
   mainExternalId: string,
   q: FirstReplyQuestion,
 ): Promise<string | null> {
-  if (platform !== 'threads' && platform !== 'instagram') return null
+  // 2026-11 起只留 Threads：IG 第二則留言已停用（IG 發布實作仍在 social-publish.ts）。
+  if (platform !== 'threads') return null
   if (await hasFirstReplyPosted(platform, editionKey).catch(() => false)) {
     return 'skipped_duplicate'
   }
   try {
-    if (platform === 'threads') {
-      const { replyMediaId } = await publishThreadsReply(q.text, mainExternalId)
-      await recordFirstReplyPosted(platform, editionKey, { externalId: replyMediaId, text: q.text, category: q.category })
-      return 'posted'
-    }
-    const token = process.env.IG_ACCESS_TOKEN
-    if (!token) throw new Error('IG_ACCESS_TOKEN 未設定')
-    const commentId = await postInstagramComment(mainExternalId, q.text, token)
-    await recordFirstReplyPosted(platform, editionKey, { externalId: commentId, text: q.text, category: q.category })
+    const { replyMediaId } = await publishThreadsReply(q.text, mainExternalId)
+    await recordFirstReplyPosted(platform, editionKey, { externalId: replyMediaId, text: q.text, category: q.category })
     return 'posted'
   } catch (e: any) {
     const msg = (e?.message || String(e)).slice(0, 1000)

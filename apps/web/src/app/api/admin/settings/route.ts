@@ -19,6 +19,15 @@ const BUILTIN_PROMPTS: Record<string, string | undefined> = {
   'social.meme_prompt': DEFAULT_MEME_PROMPT,
 }
 
+// 2026-11 起社群只留 Threads：IG／FB 的文案 prompt 與字數設定暫時從後台隱藏
+// （程式與 DB 舊值保留；恢復 IG／FB 時把這裡的 key 移除即可）。
+const HIDDEN_SETTING_KEYS = new Set([
+  'social.ig_prompt',
+  'social.ig_max_chars',
+  'social.fb_prompt',
+  'social.fb_max_chars',
+])
+
 export async function GET(req: NextRequest) {
   await migrate()
   const user = await getCurrentUserFromReq(req)
@@ -29,22 +38,24 @@ export async function GET(req: NextRequest) {
   const category = url.searchParams.get('category') ?? undefined
   let rows = await listAgentSettings(category).catch(() => [] as any[])
   const present = new Set(rows.map((r) => r.key))
-  const merged = Object.entries(DEFAULT_AGENT_SETTINGS).map(([key, meta]) => {
-    const existing = present.has(key) ? rows.find((r) => r.key === key) : null
-    return {
-      key,
-      category: meta.category,
-      label: meta.label,
-      value: existing?.value ?? meta.defaultValue,
-      updatedAt: existing?.updated_at ?? null,
-      editable: meta.editable !== false,
-      help: meta.help ?? null,
-      builtinPrompt: BUILTIN_PROMPTS[key] ?? null,
-    }
-  })
+  const merged = Object.entries(DEFAULT_AGENT_SETTINGS)
+    .filter(([key]) => !HIDDEN_SETTING_KEYS.has(key))
+    .map(([key, meta]) => {
+      const existing = present.has(key) ? rows.find((r) => r.key === key) : null
+      return {
+        key,
+        category: meta.category,
+        label: meta.label,
+        value: existing?.value ?? meta.defaultValue,
+        updatedAt: existing?.updated_at ?? null,
+        editable: meta.editable !== false,
+        help: meta.help ?? null,
+        builtinPrompt: BUILTIN_PROMPTS[key] ?? null,
+      }
+    })
   // 加上 DB 中使用者自行新增、不在預設清單內的設定
   for (const row of rows) {
-    if (!DEFAULT_AGENT_SETTINGS[row.key]) {
+    if (!DEFAULT_AGENT_SETTINGS[row.key] && !HIDDEN_SETTING_KEYS.has(row.key)) {
       merged.push({
         key: row.key,
         category: row.category ?? 'custom',

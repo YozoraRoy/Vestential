@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { migrate } from '@stock/database'
 import { authorizeSync } from '@/lib/sync-auth'
 import { triggerSocialPublish } from '@/lib/social-trigger'
+import { isActiveSocialPlatform } from '@/lib/social-platforms'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -10,7 +11,7 @@ export const maxDuration = 300
  * 社群小編主發布端點（手動/補發）。
  * - 同 edition 逐平台去重，只發布未發過的平台。
  * - ?dryRun=true 只生成文案＋圖卡＋寫紀錄，不動 Meta API。
- * - ?platforms=instagram,threads 指定平台（預設兩者）。
+ * - ?platforms=threads 指定平台（預設 threads）；IG／FB 已停用，帶了也會被濾掉。
  */
 export async function POST(req: Request) {
   if (!authorizeSync(req)) {
@@ -20,10 +21,10 @@ export async function POST(req: Request) {
   const { searchParams } = new URL(req.url)
   const dryRun = searchParams.get('dryRun') === 'true'
   const force = searchParams.get('force') === 'true'
-  const platforms = (searchParams.get('platforms') ?? 'instagram,threads')
+  const platforms = (searchParams.get('platforms') ?? 'threads')
     .split(',')
-    .map((p) => p.trim() as 'instagram' | 'threads' | 'facebook')
-    .filter((p) => p === 'instagram' || p === 'threads' || p === 'facebook')
+    .map((p) => p.trim())
+    .filter(isActiveSocialPlatform)
 
   try {
     await migrate()

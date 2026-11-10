@@ -242,7 +242,7 @@ async function runJob(job: MarketFocusJob, watchdog: NodeJS.Timeout): Promise<vo
           job.socialResults = social?.results ?? []
         } catch (e: any) {
           console.error('[MarketFocusJob] social publish error:', e)
-          job.socialResults = [{ platform: 'instagram', status: 'failed', error: e?.message ?? String(e) }]
+          job.socialResults = [{ platform: 'threads', status: 'failed', error: e?.message ?? String(e) }]
         }
       }
     }

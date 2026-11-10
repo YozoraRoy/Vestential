@@ -455,6 +455,10 @@ async function resolveFbPageToken(systemUserToken: string, pageId: string): Prom
   )
   const json = await res.json()
   if (!res.ok) {
+    // 若 Meta 報 nonexisting field (accounts)，表示該 Token 本身即為粉專 Page Token，直接使用
+    if (json?.error?.message?.includes('nonexisting field (accounts)')) {
+      return systemUserToken
+    }
     throw new Error(`FB /me/accounts fail: ${json?.error?.message || res.status}`)
   }
   const page = (json?.data || []).find((p: any) => String(p?.id) === String(pageId))
@@ -651,8 +655,8 @@ export async function waitForContainer(
   opts?: { noRetry?: boolean },
 ): Promise<void> {
   const base = platform === 'instagram' ? IG_API : THREADS_API
-  // IG 用 status_code / Threads 用 status（Threads 沒有 status_code 欄位）
-  const fields = platform === 'instagram' ? 'status_code,error_message' : 'status,error_message'
+  // IG 只有 status_code（Meta IG container 無 error_message 欄位）；Threads 才有 status,error_message
+  const fields = platform === 'instagram' ? 'status_code' : 'status,error_message'
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     await sleep(3000)

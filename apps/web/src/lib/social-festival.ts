@@ -4,6 +4,7 @@ import { loadConfig } from '@stock/core'
 import { TAIWAN_MARKET_HOLIDAYS } from '@/utils/taiwan-calendar'
 import { attachLlmUsageRecorder } from '@/lib/llm-usage'
 import type { FestivalId } from '@/lib/festival-calendar'
+import type { SocialPostPlatform } from '@stock/database'
 
 // ─── 節慶賀詞生成（中秋 MVP）───────────────────────────────────────
 // 三平台差異化、speak-human-tw 語氣（無說教贅詞），LLM 失敗以標題拼接
@@ -36,12 +37,15 @@ export function isFestivalMarketClosed(dateStr: string): boolean {
 }
 
 /**
- * 生成節慶三平台賀詞。LLM 單平台失敗以對應 fallback 覆蓋，整體不 throw。
+ * 生成節慶賀詞。LLM 單平台失敗以對應 fallback 覆蓋，整體不 throw。
  * @param dateStr Asia/Taipei 的 YYYY-MM-DD（決定是否加休市問候），預設取今日。
+ * @param platforms 要實際生成賀詞的平台（正式流程只傳 ['threads']；
+ *   省略時維持三平台，供既有測試／日後恢復使用）。
  */
 export async function generateFestivalCaptions(
   id: FestivalId = 'mid-autumn',
   dateStr?: string,
+  platforms: SocialPostPlatform[] = ['instagram', 'threads', 'facebook'],
 ): Promise<SocialCaptions> {
   const day = dateStr ?? ''
   try {
@@ -61,11 +65,12 @@ export async function generateFestivalCaptions(
     const fallback = buildFestivalFallbackCaptions(id, day)
     const result: SocialCaptions = { ...fallback }
 
-    const plans: { key: PlatformKey; system: string }[] = [
+    const allPlans: { key: PlatformKey; system: string }[] = [
       { key: 'instagram', system: buildFestivalSystemPrompt(id, 'instagram', day) },
       { key: 'threads', system: buildFestivalSystemPrompt(id, 'threads', day) },
       { key: 'facebook', system: buildFestivalSystemPrompt(id, 'facebook', day) },
     ]
+    const plans = allPlans.filter((plan) => platforms.includes(plan.key))
     for (const { key, system } of plans) {
       try {
         const raw = await llm.generate(system, `${userPrompt}\n\n請撰寫 ${PLATFORM_LABELS[key]} 賀節文案。`)

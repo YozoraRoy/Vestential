@@ -33,9 +33,7 @@ interface DryRunResult {
 
 type SocialPlatform = 'instagram' | 'threads' | 'facebook'
 
-const IG_LIMIT = 500
 const TH_LIMIT = 500
-const FB_LIMIT = 500
 
 const BG_PRESET_OPTIONS = [
   { id: 'auto', label: '🤖 AI 智能匹配新聞' },
@@ -52,12 +50,10 @@ export function SocialClient() {
   const [preview, setPreview] = useState<DryRunResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0)
-  const [platforms, setPlatforms] = useState<SocialPlatform[]>(['instagram', 'threads', 'facebook'])
+  // 2026-11 起只留 Threads：平台固定 threads（IG／FB 已停用）。
+  const [platforms] = useState<SocialPlatform[]>(['threads'])
   const [threadsCardStyle, setThreadsCardStyle] = useState<SocialCardStyle>('ai')
-  const [fbCardStyle, setFbCardStyle] = useState<SocialCardStyle>('ai')
-  const [draftIg, setDraftIg] = useState('')
   const [draftThreads, setDraftThreads] = useState('')
-  const [draftFb, setDraftFb] = useState('')
   const [bgPreset, setBgPreset] = useState('auto')
   const [bgCustomPrompt, setBgCustomPrompt] = useState('')
   const [generatingBg, setGeneratingBg] = useState(false)
@@ -86,16 +82,6 @@ export function SocialClient() {
     error?: string
   } | null>(null)
   const [festivalBusy, setFestivalBusy] = useState(false)
-
-  const togglePlatform = (p: SocialPlatform) => {
-    setPlatforms((prev) => {
-      if (prev.includes(p)) {
-        if (prev.length === 1) return prev // 至少保留一個平台
-        return prev.filter((x) => x !== p)
-      }
-      return [...prev, p]
-    })
-  }
 
   useEffect(() => {
     if (!busy) {
@@ -132,10 +118,7 @@ export function SocialClient() {
       if (dryRun) {
         setPreview(r.body as DryRunResult)
         setThreadsCardStyle('ai')
-        setFbCardStyle('ai')
-        setDraftIg(r.body.captions?.instagram ?? '')
         setDraftThreads(r.body.captions?.threads ?? '')
-        setDraftFb(r.body.captions?.facebook ?? '')
         setResult({
           ok: true,
           message: r.body.triggered ? `乾跑完成（edition ${r.body.editionKey}）` : `${r.body.message ?? 'skipped'}（${r.body.error ?? ''}）`,
@@ -240,54 +223,18 @@ export function SocialClient() {
 
     const imageUrls: Partial<Record<SocialPlatform, string | null>> = {}
 
-    if (platforms.includes('instagram')) {
-      const upIg = await post(
+    if (platforms.includes('threads')) {
+      const upTh = await post(
         '/api/admin/social/card-image',
-        { editionKey: preview.editionKey, style: 'ai', dataUrl: preview.cards.ai },
+        { editionKey: preview.editionKey, style: threadsCardStyle, dataUrl: preview.cards[threadsCardStyle] },
         60000,
       )
-      if (!upIg.ok || !upIg.body?.success) {
+      if (!upTh.ok || !upTh.body?.success) {
         setBusy(false)
-        setResult({ ok: false, message: `上傳 Instagram 圖卡失敗：${upIg.body?.error ?? 'network'}` })
+        setResult({ ok: false, message: `上傳 Threads 圖卡失敗：${upTh.body?.error ?? 'network'}` })
         return
       }
-      imageUrls.instagram = upIg.body.url
-    }
-
-    if (platforms.includes('threads')) {
-      if (platforms.includes('instagram') && threadsCardStyle === 'ai' && imageUrls.instagram) {
-        imageUrls.threads = imageUrls.instagram
-      } else {
-        const upTh = await post(
-          '/api/admin/social/card-image',
-          { editionKey: preview.editionKey, style: threadsCardStyle, dataUrl: preview.cards[threadsCardStyle] },
-          60000,
-        )
-        if (!upTh.ok || !upTh.body?.success) {
-          setBusy(false)
-          setResult({ ok: false, message: `上傳 Threads 圖卡失敗：${upTh.body?.error ?? 'network'}` })
-          return
-        }
-        imageUrls.threads = upTh.body.url
-      }
-    }
-
-    if (platforms.includes('facebook')) {
-      if (platforms.includes('instagram') && fbCardStyle === 'ai' && imageUrls.instagram) {
-        imageUrls.facebook = imageUrls.instagram
-      } else {
-        const upFb = await post(
-          '/api/admin/social/card-image',
-          { editionKey: preview.editionKey, style: fbCardStyle, dataUrl: preview.cards[fbCardStyle] },
-          60000,
-        )
-        if (!upFb.ok || !upFb.body?.success) {
-          setBusy(false)
-          setResult({ ok: false, message: `上傳 Facebook 圖卡失敗：${upFb.body?.error ?? 'network'}` })
-          return
-        }
-        imageUrls.facebook = upFb.body.url
-      }
+      imageUrls.threads = upTh.body.url
     }
 
     const r = await post(
@@ -297,7 +244,8 @@ export function SocialClient() {
         force: false,
         platforms,
         imageUrls,
-        captions: { instagram: draftIg, threads: draftThreads, facebook: draftFb },
+        // IG／FB 已停用，仍帶空字串以符合 API 的 SocialCaptions 型別。
+        captions: { instagram: '', threads: draftThreads, facebook: '' },
       },
       180000,
     )
@@ -309,89 +257,38 @@ export function SocialClient() {
     }
   }
 
-  const overIg = draftIg.length > IG_LIMIT
   const overTh = draftThreads.length > TH_LIMIT
-  const overFb = draftFb.length > FB_LIMIT
-  const isIgSelected = platforms.includes('instagram')
   const isThSelected = platforms.includes('threads')
-  const isFbSelected = platforms.includes('facebook')
   const manualDisabled =
     busy ||
     platforms.length === 0 ||
-    (isIgSelected && (overIg || draftIg.trim() === '')) ||
-    (isThSelected && (overTh || draftThreads.trim() === '')) ||
-    (isFbSelected && (overFb || draftFb.trim() === ''))
+    (isThSelected && (overTh || draftThreads.trim() === ''))
 
-  const publishButtonText =
-    isIgSelected && isThSelected && isFbSelected
-      ? '確認發布（IG AI吉祥物全圖卡 ＋ Threads 資訊卡 ＋ Facebook 資訊卡）'
-      : isIgSelected && isThSelected
-        ? '確認發布（IG AI吉祥物全圖卡 ＋ Threads 資訊卡）'
-        : isIgSelected && isFbSelected
-          ? '確認發布（IG AI吉祥物全圖卡 ＋ Facebook 資訊卡）'
-          : isThSelected && isFbSelected
-            ? '確認發布（Threads ＋ Facebook 資訊卡）'
-            : isIgSelected
-              ? '確認發布（僅 Instagram）'
-              : isThSelected
-                ? '確認發布（僅 Threads）'
-                : '確認發布（僅 Facebook）'
+  const publishButtonText = '確認發布（僅 Threads）'
 
   return (
-    <SectionPageWrapper title="社群小編" subtitle="IG、Threads 與 Facebook (AI 吉祥物全圖卡) 文案＋圖卡預覽與發布">
+    <SectionPageWrapper title="社群小編" subtitle="Threads (AI 吉祥物全圖卡) 文案＋圖卡預覽與發布">
       <ResultBanner result={result} onDismiss={() => setResult(null)} />
       <Card title="操作">
-        <div className="mb-4 flex flex-wrap items-center gap-5 pb-3 border-b border-[var(--border)]">
+        <div className="mb-4 flex flex-wrap items-center gap-3 pb-3 border-b border-[var(--border)]">
           <span className="text-sm font-semibold text-[var(--text-secondary)]">發布目標平台：</span>
-          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isIgSelected}
-              onChange={() => togglePlatform('instagram')}
-              className="accent-[var(--accent)] h-4 w-4 rounded cursor-pointer"
-            />
-            <span className={isIgSelected ? 'font-medium text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}>
-              📷 Instagram
-            </span>
-          </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isThSelected}
-              onChange={() => togglePlatform('threads')}
-              className="accent-[var(--accent)] h-4 w-4 rounded cursor-pointer"
-            />
-            <span className={isThSelected ? 'font-medium text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}>
-              🧵 Threads
-            </span>
-          </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isFbSelected}
-              onChange={() => togglePlatform('facebook')}
-              className="accent-[var(--accent)] h-4 w-4 rounded cursor-pointer"
-            />
-            <span className={isFbSelected ? 'font-medium text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'}>
-              🅵 Facebook
-            </span>
-          </label>
-          <span className="text-xs text-[var(--text-secondary)]">（可單選或複選，直接發布與手動發布皆會套用）</span>
+          <span className="text-sm font-medium text-[var(--text-primary)]">🧵 Threads</span>
+          <span className="text-xs text-[var(--text-secondary)]">（Instagram／Facebook 已停用，發布與 token 偵測皆不再執行）</span>
         </div>
         <div className="mb-4 flex flex-wrap items-center gap-3 pb-3 border-b border-[var(--border)]">
-          <span className="text-sm font-semibold text-[var(--text-secondary)]">首回覆問 Meta AI：</span>
+          <span className="text-sm font-semibold text-[var(--text-secondary)]">首回覆（Threads）：</span>
           <select
             className={input + ' w-auto text-sm'}
             value={firstReplyMode}
             onChange={(e) => saveFirstReplyMode(e.target.value)}
             disabled={busy || firstReplyModeBusy}
-            aria-label="首回覆問 Meta AI 開關"
+            aria-label="首回覆（Threads）開關"
           >
             <option value="on">@meta.ai 版（預設）</option>
             <option value="editor">降級：小編提問版（去 tag）</option>
             <option value="off">關閉（不發首回覆）</option>
           </select>
-          <Help text="on＝主文後自動發「@meta.ai＋問題」首回覆（Threads 自回覆＋IG 第二則留言）；editor＝降級去 tag 小編提問版；off＝不發首回覆。驗證協議：首發 2 小時查 @meta.ai 有無回，有則維持 on、無則切 editor。" />
+          <Help text="on＝主文後自動發「@meta.ai＋問題」的 Threads 自回覆（IG 第二則留言已停用）；editor＝降級去 tag 小編提問版；off＝不發首回覆。驗證協議：首發 2 小時查 @meta.ai 有無回，有則維持 on、無則切 editor。" />
         </div>
         <div className="flex flex-wrap gap-3">
           <button className={btn} onClick={() => run(true, false)} disabled={busy}>
@@ -404,10 +301,10 @@ export function SocialClient() {
             強制重發選定平台（清去重）
           </button>
           <button className={btnGhost} onClick={runFestivalDryRun} disabled={busy || festivalBusy}>
-            {festivalBusy ? '節慶乾跑中…' : '🌕 節慶乾跑（中秋賀圖＋三平台文案）'}
+            {festivalBusy ? '節慶乾跑中…' : '🌕 節慶乾跑（中秋賀圖＋Threads 文案）'}
           </button>
           <div className="flex items-center">
-            <Help text="FB／IG／Threads 一律搭配「AI 吉祥物全圖卡」。乾跑只產出預覽，不呼叫 Meta API 也不寫去重。節慶乾跑僅在中秋當天產出賀圖＋賀詞，非節日回 skipped。" />
+            <Help text="Threads 一律搭配「AI 吉祥物全圖卡」。乾跑只產出預覽，不呼叫 Meta API 也不寫去重。節慶乾跑僅在中秋當天產出賀圖＋賀詞，非節日回 skipped。" />
           </div>
         </div>
         {busy && (
@@ -416,12 +313,12 @@ export function SocialClient() {
           </p>
         )}
         {!preview && !busy && (
-          <p className="mt-4 text-sm text-[var(--text-secondary)]">尚未乾跑。按下「乾跑預覽」會產出 FB／IG／Threads（AI 吉祥物全圖卡）＋梗圖大字卡供選，共三種圖卡與文案。</p>
+          <p className="mt-4 text-sm text-[var(--text-secondary)]">尚未乾跑。按下「乾跑預覽」會產出 Threads 文案＋三種圖卡（品牌資訊卡／梗圖大字卡／AI 吉祥物全圖卡）供選。</p>
         )}
       </Card>
 
       {festivalPreview?.card && festivalPreview?.captions && !festivalBusy && (
-        <Card title="🌕 節慶乾跑預覽（中秋賀圖＋三平台賀詞，不寫 DB、不真發）">
+        <Card title="🌕 節慶乾跑預覽（中秋賀圖＋Threads 賀詞，不寫 DB、不真發）">
           <p className="mb-4 text-sm text-[var(--text-secondary)]">edition：{festivalPreview.editionKey}</p>
           <div className="grid gap-6 lg:grid-cols-2">
             <div>
@@ -433,22 +330,14 @@ export function SocialClient() {
               />
             </div>
             <div className="space-y-4">
-              {(
-                [
-                  ['Instagram', festivalPreview.captions.instagram],
-                  ['Threads', festivalPreview.captions.threads],
-                  ['Facebook', festivalPreview.captions.facebook],
-                ] as const
-              ).map(([label, text]) => (
-                <div key={label}>
-                  <h3 className="mb-1 text-sm font-semibold text-[var(--accent)]">
-                    {label} 賀詞（{Array.from(text).length}/500）
-                  </h3>
-                  <p className="whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-black/20 p-3 text-sm text-[var(--text-primary)]">
-                    {text}
-                  </p>
-                </div>
-              ))}
+              <div>
+                <h3 className="mb-1 text-sm font-semibold text-[var(--accent)]">
+                  Threads 賀詞（{Array.from(festivalPreview.captions.threads).length}/500）
+                </h3>
+                <p className="whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-black/20 p-3 text-sm text-[var(--text-primary)]">
+                  {festivalPreview.captions.threads}
+                </p>
+              </div>
             </div>
           </div>
         </Card>
@@ -507,44 +396,7 @@ export function SocialClient() {
             </div>
           </Card>
 
-          <div className={`grid gap-6 ${isIgSelected && isThSelected ? 'lg:grid-cols-2' : 'max-w-2xl mx-auto'}`}>
-            {/* Instagram 設定與預覽 */}
-            {isIgSelected && (
-              <Card title="📷 Instagram 發布設定">
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-[var(--text-secondary)]">圖卡配圖：</span>
-                    <span className="text-sm">🤖 AI 吉祥物全圖卡（固定）</span>
-                  </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={preview.cards.ai}
-                    alt="Instagram 圖卡預覽"
-                    className="w-full max-w-[400px] mx-auto rounded-2xl border border-[var(--accent)]/40 shadow-lg mb-4"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-[var(--accent)]">Instagram 文案</h3>
-                    <span className={`text-xs ${overIg ? 'text-[var(--accent-red)]' : 'text-[var(--text-secondary)]'}`}>
-                      {draftIg.length}/{IG_LIMIT}
-                    </span>
-                  </div>
-                  <textarea
-                    className={input}
-                    rows={8}
-                    maxLength={IG_LIMIT + 200}
-                    value={draftIg}
-                    onChange={(e) => setDraftIg(e.target.value)}
-                  />
-                  <p className="text-xs text-[var(--text-secondary)] mt-1">
-                    🔗 導流「{preview.igDriveComment ?? '更多資訊 → vestential.com/market-focus'}」會在發布後自動放上第一則留言（IG caption 網址不可點）。
-                  </p>
-                </div>
-              </Card>
-            )}
-
+          <div className="grid gap-6 max-w-2xl mx-auto">
             {/* Threads 設定與預覽 */}
             {isThSelected && (
               <Card title="🧵 Threads 發布設定">
@@ -605,71 +457,6 @@ export function SocialClient() {
                     maxLength={TH_LIMIT + 100}
                     value={draftThreads}
                     onChange={(e) => setDraftThreads(e.target.value)}
-                  />
-                </div>
-              </Card>
-            )}
-
-            {/* Facebook 設定與預覽 */}
-            {isFbSelected && (
-              <Card title="🅵 Facebook 發布設定">
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-[var(--text-secondary)]">圖卡配圖：</span>
-                    <div className="flex gap-4 text-sm">
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="fbCardStyle"
-                          checked={fbCardStyle === 'classic'}
-                          onChange={() => setFbCardStyle('classic')}
-                          className="accent-[var(--accent)]"
-                        />
-                        品牌資訊卡
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="fbCardStyle"
-                          checked={fbCardStyle === 'meme'}
-                          onChange={() => setFbCardStyle('meme')}
-                          className="accent-[var(--accent)]"
-                        />
-                        梗圖大字卡
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="fbCardStyle"
-                          checked={fbCardStyle === 'ai'}
-                          onChange={() => setFbCardStyle('ai')}
-                          className="accent-[var(--accent)]"
-                        />
-                        🎨 AI 吉祥物全圖卡 (預設)
-                      </label>
-                    </div>
-                  </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={preview.cards[fbCardStyle]}
-                    alt="Facebook 圖卡預覽"
-                    className="w-full max-w-[400px] mx-auto rounded-2xl border border-white/20 shadow-lg mb-4"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-[var(--accent)]">Facebook 文案</h3>
-                    <span className={`text-xs ${overFb ? 'text-[var(--accent-red)]' : 'text-[var(--text-secondary)]'}`}>
-                      {draftFb.length}/{FB_LIMIT}
-                    </span>
-                  </div>
-                  <textarea
-                    className={input}
-                    rows={8}
-                    maxLength={FB_LIMIT + 200}
-                    value={draftFb}
-                    onChange={(e) => setDraftFb(e.target.value)}
                   />
                 </div>
               </Card>

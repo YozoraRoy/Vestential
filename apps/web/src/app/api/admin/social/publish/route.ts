@@ -6,6 +6,7 @@ import { triggerSocialPublish } from '@/lib/social-trigger'
 import { triggerFestivalPublish } from '@/lib/social-festival-trigger'
 import type { SocialPostPlatform } from '@stock/database'
 import type { SocialCaptions } from '@/lib/social'
+import { ACTIVE_SOCIAL_PLATFORMS, isActiveSocialPlatform } from '@/lib/social-platforms'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -42,9 +43,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: e?.message ?? 'festival dry-run 失敗' }, { status: 500 })
     }
   }
-  const platforms = (body.platforms ?? ['instagram', 'threads']).filter(
-    (p): p is SocialPostPlatform => p === 'instagram' || p === 'threads' || p === 'facebook',
-  )
+  const platforms = (body.platforms ?? [...ACTIVE_SOCIAL_PLATFORMS]).filter(isActiveSocialPlatform)
   try {
     const outcome = await triggerSocialPublish({
       dryRun: !!body.dryRun,

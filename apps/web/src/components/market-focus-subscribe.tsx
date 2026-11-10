@@ -1,6 +1,6 @@
 'use client'
 
-import { Instagram, Mail, MessageCircle } from 'lucide-react'
+import { Mail, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
 import { useI18n } from '@/i18n/LanguageProvider'
 import type { Dict } from '@/i18n/dictionaries'
@@ -10,7 +10,6 @@ type SubscribeState = 'idle' | 'loading' | 'done' | 'error'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export interface MarketFocusSocialLinks {
-  instagram?: string
   threads?: string
 }
 
@@ -96,31 +95,18 @@ export function MarketFocusSubscribe({ socialLinks, t: tProp }: MarketFocusSubsc
         <p className="mt-3 text-xs text-[var(--text-secondary)]/80">
           {t.subscribeOptIn}
         </p>
-        {(socialLinks?.instagram || socialLinks?.threads) && (
+        {socialLinks?.threads && (
           <div className="mt-4 pt-3 border-t border-white/10 text-xs text-[var(--text-secondary)]/80 flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>{t.followUs}</span>
-            {socialLinks.instagram && (
-              <a
-                href={socialLinks.instagram}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline font-medium"
-              >
-                <Instagram className="w-3.5 h-3.5" />
-                Instagram
-              </a>
-            )}
-            {socialLinks.threads && (
-              <a
-                href={socialLinks.threads}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline font-medium"
-              >
-                <MessageCircle className="w-3.5 h-3.5" />
-                Threads
-              </a>
-            )}
+            <a
+              href={socialLinks.threads}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline font-medium"
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              Threads
+            </a>
             <span className="text-[var(--text-secondary)]/60">{t.followDaily}</span>
           </div>
         )}

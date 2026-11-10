@@ -126,7 +126,7 @@ describe('DB gate｜延遲執行仍會發（10/14 重現）', () => {
 
     expect(out.triggered).toBe(true)
     expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-14 00:00:00')
-    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(3)
+    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(1)
   })
 
   it('非 00 時（06 UTC）＋當日未發 → 會發（舊 hour gate 跳過斷言按新語義改寫）', async () => {
@@ -137,12 +137,12 @@ describe('DB gate｜延遲執行仍會發（10/14 重現）', () => {
     expect(mocks.publishSocialPost).toHaveBeenCalled()
   })
 
-  it('00 UTC＋當日未發 → 照常發布且跑 redrive', async () => {
+  it('00 UTC＋當日未發 → 照常發布（IG 停用後不跑 redrive）', async () => {
     const out = await triggerSocialPublish({ now: AT_00 })
 
     expect(out.triggered).toBe(true)
-    expect(mocks.listDueDeferredSocialPosts).toHaveBeenCalledTimes(1)
-    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(3)
+    expect(mocks.listDueDeferredSocialPosts).not.toHaveBeenCalled()
+    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(1)
   })
 
   it('dryRun 不受 gate 影響（06 UTC 照樣預覽，不讀 DB gate）', async () => {
@@ -176,7 +176,7 @@ describe('DB gate｜failed／deferred 不阻擋＋跨日', () => {
     const out = await triggerSocialPublish({ now: AT_0302_DELAYED })
 
     expect(out.triggered).toBe(true)
-    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(3)
+    expect(mocks.publishSocialPost).toHaveBeenCalledTimes(1)
   })
 
   it('昨日有 published、今日無（gate 以今日 dayStart 查回 false）→ 今日照發', async () => {
@@ -190,11 +190,12 @@ describe('DB gate｜failed／deferred 不阻擋＋跨日', () => {
   })
 })
 
-describe('redrive 語意｜gate 通過＋非 force＋非 dryRun 才跑', () => {
-  it('gate 通過 → listDueDeferredSocialPosts 跑 1 次', async () => {
+describe('redrive 語意｜IG 停用後整個停用', () => {
+  it('gate 通過 → 不查 deferred、不重打（IG 已停用）', async () => {
     await triggerSocialPublish({ now: AT_0302_DELAYED })
 
-    expect(mocks.listDueDeferredSocialPosts).toHaveBeenCalledTimes(1)
+    expect(mocks.listDueDeferredSocialPosts).not.toHaveBeenCalled()
+    expect(mocks.republishDeferredPost).not.toHaveBeenCalled()
   })
 
   it('gate 跳過（當日已發）→ 不跑 redrive', async () => {
@@ -246,8 +247,8 @@ describe('舊函式去留｜deprecated 墊片不斷鏈', () => {
 describe('告警分流｜deferred 冷卻 vs 終態 force', () => {
   it('deferred 結果 → 冷卻告警（含 spam suspected, subcode 2207051），不走部分失敗口徑', async () => {
     mocks.publishSocialPost.mockImplementation(async (platform: string) =>
-      platform === 'instagram'
-        ? { platform, status: 'deferred', error: 'IG suspected spam (spam suspected, subcode 2207051): HTTP 403' }
+      platform === 'threads'
+        ? { platform, status: 'deferred', error: 'Threads suspected spam (spam suspected, subcode 2207051): HTTP 403' }
         : { platform, status: 'published', error: null },
     )
     mocks.getSocialPost.mockResolvedValue({ next_retry_at: '2026-10-14T00:00:00.000Z' })
@@ -261,7 +262,7 @@ describe('告警分流｜deferred 冷卻 vs 終態 force', () => {
     expect(bodies.join('\n')).toContain('spam suspected, subcode 2207051')
   })
 
-  it('redrive 終態 → 另發「等人工 force」信', async () => {
+  it('IG 舊 deferred 列不再 redrive（停用後只剩人工 force）', async () => {
     mocks.listDueDeferredSocialPosts.mockResolvedValue([
       { id: 7, platform: 'instagram', edition_key: '2026-10-12T00:00:00Z', status: 'deferred', next_retry_at: '2026-10-13T00:00:00.000Z' },
     ])
@@ -269,10 +270,9 @@ describe('告警分流｜deferred 冷卻 vs 終態 force', () => {
 
     await triggerSocialPublish({ now: AT_00 })
 
-    expect(mocks.republishDeferredPost).toHaveBeenCalledTimes(1)
+    expect(mocks.listDueDeferredSocialPosts).not.toHaveBeenCalled()
+    expect(mocks.republishDeferredPost).not.toHaveBeenCalled()
     const topics = mocks.sendMarketFocusAlert.mock.calls.map((c) => String(c[0]))
-    const bodies = mocks.sendMarketFocusAlert.mock.calls.map((c) => String(c[1]))
-    expect(topics.some((t) => t.includes('force'))).toBe(true)
-    expect(bodies.join('\n')).toContain('force')
+    expect(topics.some((t) => t.includes('force'))).toBe(false)
   })
 })

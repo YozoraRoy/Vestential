@@ -15,11 +15,9 @@ interface TokenCheck {
 }
 
 /**
- * 每日 cron 呼叫：以 read-only /me 驗證各平台 token 仍有效。
- * IG/Threads 皆為「長效型 token」（IGAA/THAA，不設到期日；
- * debug_token 也無法解析此格式），故只驗證可存取性。
- * FB（system user）以 graph.facebook.com /me 驗證。
- * 任一平台無法驗證 → sendMarketFocusAlert 告警。
+ * 每日 cron / AI 中控台呼叫：驗證各平台 token 有效性以確保鏈路暢通。
+ * IG/Threads 皆為長效型 token（不設到期日）。
+ * FB 支援 System User Token 及 Page Access Token 雙重相容驗證。
  */
 export async function GET(req: Request) {
   if (!authorizeSync(req)) {
@@ -29,19 +27,19 @@ export async function GET(req: Request) {
     await migrate()
     const checks: TokenCheck[] = []
 
+    const thToken = process.env.THREADS_ACCESS_TOKEN
+    if (thToken) {
+      checks.push(await checkUser('threads', 'https://graph.threads.net/v1.0/me', thToken))
+    } else {
+      checks.push({ platform: 'threads', ok: false, configured: false, error: 'THREADS_ACCESS_TOKEN 未設定' })
+    }
+
     const igToken = process.env.IG_ACCESS_TOKEN
     const igUserId = process.env.IG_USER_ID
     if (igToken) {
       checks.push(await checkIg(igToken, igUserId))
     } else {
       checks.push({ platform: 'instagram', ok: false, configured: false, error: 'IG_ACCESS_TOKEN 未設定' })
-    }
-
-    const thToken = process.env.THREADS_ACCESS_TOKEN
-    if (thToken) {
-      checks.push(await checkUser('threads', 'https://graph.threads.net/v1.0/me', thToken))
-    } else {
-      checks.push({ platform: 'threads', ok: false, configured: false, error: 'THREADS_ACCESS_TOKEN 未設定' })
     }
 
     const fbToken = process.env.FB_ACCESS_TOKEN

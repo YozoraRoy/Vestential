@@ -1,15 +1,14 @@
 import Link from 'next/link'
-import { Search, PieChart, Wallet, Activity, TrendingUp, Clock, AtSign, Facebook, Instagram } from 'lucide-react'
+import { Search, PieChart, Wallet, Activity, TrendingUp, Clock, AtSign } from 'lucide-react'
 import { getDict, getLocale } from '@/i18n/server'
 import { localizePath } from '@/i18n/paths'
 import { buildAlternates } from '@/i18n/metadata'
 import { SITE_SOCIAL_LINKS, type SiteSocialKey } from '@/lib/site-social'
 
 // 與 footer 共用同一組 icon 映射（lucide 無 Threads 品牌 icon，用 AtSign）。
+// 2026-11 起只留 Threads（IG／FB 已停止發布與 token 偵測）。
 const socialIcons: Record<SiteSocialKey, typeof AtSign> = {
   threads: AtSign,
-  instagram: Instagram,
-  facebook: Facebook,
 }
 
 export async function generateMetadata() {

@@ -1,4 +1,4 @@
-name: Check Social Tokens
+name: Check Threads Token
 
 on:
   schedule:

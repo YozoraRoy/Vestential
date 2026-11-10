@@ -354,4 +354,37 @@ describe('graphPost｜Issue #58 節流', () => {
       warnSpy.mockRestore()
     })
   })
+
+  describe('waitForContainer｜平台欄位與容錯', () => {
+    it('Instagram 輪詢只請求 status_code（不可帶 error_message 避免 Meta #100 報錯）', async () => {
+      const { waitForContainer } = await import('./social-publish')
+      let calledUrl = ''
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          calledUrl = url
+          return fakeRes(200, { status_code: 'FINISHED' })
+        }),
+      )
+
+      await waitForContainer('ig_user_1', 'ig_container_1', 'ig_token', 'instagram', 5000)
+      expect(calledUrl).toContain('fields=status_code')
+      expect(calledUrl).not.toContain('error_message')
+    })
+
+    it('Threads 輪詢仍保留 status,error_message', async () => {
+      const { waitForContainer } = await import('./social-publish')
+      let calledUrl = ''
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          calledUrl = url
+          return fakeRes(200, { status: 'FINISHED' })
+        }),
+      )
+
+      await waitForContainer('th_user_1', 'th_container_1', 'th_token', 'threads', 5000)
+      expect(calledUrl).toContain('fields=status,error_message')
+    })
+  })
 })

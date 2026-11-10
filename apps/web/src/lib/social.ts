@@ -2,7 +2,7 @@ import { createQuickLLM, FALLBACK_SAFE_MAX_TOKENS, sleep, getChainPaceMs } from 
 import { dataBlock, injectionGuardNote, sanitizeDataField } from '@stock/ai-engine'
 import { loadConfig } from '@stock/core'
 import { getAgentSetting } from '@stock/database'
-import type { MarketFocusItem, MarketFocusMeta } from '@stock/database'
+import type { MarketFocusItem, MarketFocusMeta, SocialPostPlatform } from '@stock/database'
 import { attachLlmUsageRecorder } from '@/lib/llm-usage'
 
 // ─── 社群文案生成 (小編 Agent) ─────────────────────────────────────
@@ -39,10 +39,14 @@ const PLATFORM_LABELS: Record<PlatformKey, string> = {
 /**
  * 生成當期社群文案；共用單一 LLM client 逐平台呼叫，單平台失敗以對應 fallback
  * 兜底（新聞標題拼接），不拖垮其他平台，整體不 throw。
+ *
+ * @param platforms 要實際生成文案的平台（2026-11 起正式流程只傳 ['threads']，
+ *   IG／FB 不再呼叫 LLM；省略時維持三平台，供既有測試／日後恢復使用）。
  */
 export async function generateSocialCaptions(
   meta: MarketFocusMeta,
   items: MarketFocusItem[],
+  platforms: SocialPostPlatform[] = ['instagram', 'threads', 'facebook'],
 ): Promise<SocialCaptions> {
   try {
     // 後台可調：字數上限與 prompt 覆寫（未設定使用內建預設）。
@@ -80,11 +84,12 @@ export async function generateSocialCaptions(
     const fallback = buildFallbackCaptions(meta, items)
     const result: SocialCaptions = { ...fallback }
 
-    const plans: { key: PlatformKey; system: string; max: number }[] = [
+    const allPlans: { key: PlatformKey; system: string; max: number }[] = [
       { key: 'instagram', system: buildPlatformSystemPrompt('instagram', igMax, igPromptOverride), max: igMax },
       { key: 'threads', system: buildPlatformSystemPrompt('threads', threadsMax, threadsPromptOverride), max: threadsMax },
       { key: 'facebook', system: buildPlatformSystemPrompt('facebook', fbMax, fbPromptOverride), max: fbMax },
     ]
+    const plans = allPlans.filter((plan) => platforms.includes(plan.key))
     for (let pi = 0; pi < plans.length; pi++) {
       const { key, system, max } = plans[pi]!
       // Issue #32：三平台文案呼叫序列＋間隔（原已序列，加錯峰避免同分鐘窗連打）

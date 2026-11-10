@@ -4,6 +4,7 @@ import { migrate } from '@stock/database'
 import type { SocialPostPlatform } from '@stock/database'
 import { getCurrentUserFromReq, isAdminUser } from '@/lib/auth'
 import { getFirstReplyState, recordFirstReplyVerdict, type FirstReplyVerdict } from '@/lib/social-first-reply'
+import { ACTIVE_SOCIAL_PLATFORMS } from '@/lib/social-platforms'
 
 // ─── Issue #31 驗證協議：首回覆狀態查詢＋驗證記錄（後台限定） ─────────
 // 首發 2 小時後人工查 @meta.ai 有無回覆，再用 POST 留下執行記錄：
@@ -12,7 +13,7 @@ import { getFirstReplyState, recordFirstReplyVerdict, type FirstReplyVerdict } f
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const PLATFORMS: SocialPostPlatform[] = ['threads', 'instagram']
+const PLATFORMS: SocialPostPlatform[] = [...ACTIVE_SOCIAL_PLATFORMS]
 
 export async function GET(req: NextRequest) {
   await migrate()
@@ -47,7 +48,7 @@ export async function POST(req: NextRequest) {
   const verdict = (body.verdict ?? '').trim() as FirstReplyVerdict
   if (!editionKey) return NextResponse.json({ success: false, error: '缺少 editionKey' }, { status: 400 })
   if (!PLATFORMS.includes(platform)) {
-    return NextResponse.json({ success: false, error: 'platform 僅支援 threads｜instagram' }, { status: 400 })
+    return NextResponse.json({ success: false, error: 'platform 僅支援 threads' }, { status: 400 })
   }
   if (verdict !== 'keep_tag' && verdict !== 'downgraded') {
     return NextResponse.json({ success: false, error: 'verdict 僅支援 keep_tag｜downgraded' }, { status: 400 })

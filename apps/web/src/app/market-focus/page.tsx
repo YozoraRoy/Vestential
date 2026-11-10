@@ -170,7 +170,6 @@ export default async function MarketFocusPage() {
       <MarketFocusSubscribe
         t={dict.marketFocus}
         socialLinks={{
-          instagram: process.env.INSTAGRAM_PROFILE_URL || undefined,
           threads: process.env.THREADS_PROFILE_URL || undefined,
         }}
       />
