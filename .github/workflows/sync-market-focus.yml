@@ -81,15 +81,33 @@ jobs:
           JOB_ID: ${{ steps.trigger.outputs.jobId }}
         run: |
           # 後台 job 最長 25 分鐘；輪詢 160 次 × 10s ≈ 27 分鐘，涵蓋完整 job 生命週期
+          # Issue #146：job 狀態改存 DB（sync_jobs），跨 container 重啟仍查得到；執行
+          # 實例被回收時端點回終態 failed（附原因）。404 代表 jobId 真的不存在，
+          # 立即失敗；只有連線類錯誤（000/5xx）才做有限重試（連續 3 次）。
+          ERR_STREAK=0
           for i in $(seq 1 160); do
             CODE=$(curl -s -o /tmp/mf_status.json -w "%{http_code}" --max-time 30 \
               -H "Authorization: Bearer $SYNC_TOKEN" \
               "https://vestential.com/api/market-focus/refresh/status?jobId=$JOB_ID" || echo "000")
             if [ "$CODE" != "200" ]; then
-              echo "attempt $i -> HTTP $CODE (retrying)"
+              if [ "$CODE" = "404" ]; then
+                echo "::error::market-focus job not found (HTTP 404) — jobId 無效或 DB 查無此紀錄"
+                cat /tmp/mf_status.json || true
+                echo ""
+                exit 1
+              fi
+              ERR_STREAK=$((ERR_STREAK + 1))
+              echo "attempt $i -> HTTP $CODE (連續錯誤 $ERR_STREAK/3)"
+              if [ "$ERR_STREAK" -ge 3 ]; then
+                echo "::error::market-focus status query failed after $ERR_STREAK attempts (HTTP $CODE)"
+                cat /tmp/mf_status.json || true
+                echo ""
+                exit 1
+              fi
               sleep 10
               continue
             fi
+            ERR_STREAK=0
             STATUS=$(python3 -c "import sys,json;d=json.load(open('/tmp/mf_status.json'));j=d.get('job',{});print(j.get('status',''))")
             STAGE=$(python3 -c "import sys,json;d=json.load(open('/tmp/mf_status.json'));j=d.get('job',{});print(j.get('stage') or '')")
             echo "attempt $i -> status=$STATUS stage=$STAGE"
@@ -100,14 +118,15 @@ jobs:
             fi
             if [ "$STATUS" = "failed" ]; then
               FAIL_MSG=$(python3 -c "import sys,json;d=json.load(open('/tmp/mf_status.json'));print(d['job'].get('error',''))")
-              echo "::error::market-focus refresh failed: $FAIL_MSG"
+              echo "::error::market-focus refresh failed (stage=$STAGE): $FAIL_MSG"
               echo "--- full job payload ---"
               cat /tmp/mf_status.json
+              echo ""
               exit 1
             fi
             sleep 10
           done
           echo "::error::market-focus refresh timed out waiting for job"
           echo "--- last status payload ---"
-          cat /tmp/mf_status.json
+          cat /tmp/mf_status.json || true
           exit 1

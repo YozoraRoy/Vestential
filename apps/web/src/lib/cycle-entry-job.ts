@@ -1,51 +1,76 @@
 import { revalidateTag } from 'next/cache'
 import { computeCycleEntryEdition } from '@/lib/cycle-entry'
+import { cleanupSyncJobs } from '@stock/database'
 import type { CycleEntrySignalRow } from '@stock/database'
+import {
+  SYNC_JOB_ERROR_MAX_CHARS,
+  SYNC_JOB_TIMEOUT_MS,
+  createSyncJobSettler,
+  loadSyncJobView,
+  serializeSyncJobPayload,
+  startSyncJob,
+} from '@/lib/sync-job'
+import type { SyncJobView } from '@/lib/sync-job'
 
-// ─── 週期進場背景 Job ────────────────────────────────────────────
+// ─── 週期進場背景 Job（Issue #146：狀態 DB 化）────────────────────
 // 整條盤後掃描管線（批次報價 → 120 檔歷史 → 規則初篩 → 擬合回測 → LLM 評述/總覽 → DB）
 // 需在背景執行並回傳 jobId，避免同步阻塞超過 Azure 240s 網關上限。
-// 另加 Job 層總逾時保護：LLM 每次呼叫已有 180s abort，但 429 退避＋fallback 鏈
-// 在大量 LLM 呼叫下會累積；超過 JOB_TIMEOUT_MS 即自動標記 failed 並釋放執行緒。
+//
+// 狀態存放於 DB（sync_jobs 表），不再只存在 process 記憶體：Azure App Service
+// 重啟／搬移 worker 後仍查得到 job，心跳斷掉則由 status 端點回終態 failed
+// （Issue #144 的 404 盲輪詢即源自 in-memory job 遺失）。
+
+/** sync_jobs.job_type。 */
+export const SYNC_JOB_TYPE = 'cycle-entry'
 
 export type CycleEntryJobKind = 'refresh' | 'dry'
 export type CycleEntryJobStatus = 'running' | 'done' | 'failed'
 
+/** Job 總逾時：25 分鐘（排程 workflow timeout 35 分鐘，保留緩衝）。 */
+export const JOB_TIMEOUT_MS = SYNC_JOB_TIMEOUT_MS
+
+/** 對外 job 視圖（欄位與既有 status API／後台 UI 相容）。 */
 export interface CycleEntryJob {
   id: string
   kind: CycleEntryJobKind
   status: CycleEntryJobStatus
-  startedAt: string
+  startedAt: string | null
   finishedAt: string | null
   error: string | null
   count: number | null
   editionDate: string | null
+  stage: string | null
   /** 僅 kind='dry'：乾跑結果（未寫入 DB）。 */
   signals?: Omit<CycleEntrySignalRow, 'editionDate'>[] | null
   summary?: string | null
 }
 
-const JOBS = new Map<string, CycleEntryJob>()
-const MAX_KEPT_JOBS = 20
-let activeJobId: string | null = null
-
-/** Job 總逾時：25 分鐘（排程 workflow timeout 35 分鐘，保留緩衝）。 */
-export const JOB_TIMEOUT_MS = 25 * 60 * 1000
-
-function makeJobId(): string {
-  return `ce_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+export interface StartedCycleEntryJob {
+  jobId: string
+  status: CycleEntryJobStatus
+  startedAt: string | null
+  deduplicated: boolean
 }
 
-function trimJobs(): void {
-  if (JOBS.size <= MAX_KEPT_JOBS) return
-  const finished = [...JOBS.entries()]
-    .filter(([, j]) => j.status !== 'running')
-    .sort((a, b) => a[1].startedAt.localeCompare(b[1].startedAt))
-  let overflow = JOBS.size - MAX_KEPT_JOBS
-  for (const [id] of finished) {
-    if (overflow <= 0) break
-    JOBS.delete(id)
-    overflow -= 1
+interface CycleEntryJobPayload {
+  summary?: string | null
+  signals?: Omit<CycleEntrySignalRow, 'editionDate'>[] | null
+}
+
+function toCycleEntryJob(view: SyncJobView): CycleEntryJob {
+  const payload = (view.payload ?? {}) as CycleEntryJobPayload
+  return {
+    id: view.id,
+    kind: view.kind as CycleEntryJobKind,
+    status: view.status,
+    startedAt: view.startedAt,
+    finishedAt: view.finishedAt,
+    error: view.error,
+    count: view.count,
+    editionDate: view.editionKey,
+    stage: view.stage,
+    signals: payload.signals ?? null,
+    summary: payload.summary ?? null,
   }
 }
 
@@ -53,64 +78,67 @@ function trimJobs(): void {
  * 啟動週期進場背景 Job。
  * - kind='refresh'：寫入 DB（供 GitHub 排程 / 後台呼叫）。
  * - kind='dry'：僅乾跑，不寫 DB（後台預覽）。
- * 若已有 Job 執行中，直接回傳該 Job，避免重疊執行。
+ * 若已有 Job 執行中（含其他 process／container），直接回傳該 Job，避免重疊執行。
  */
-export function startCycleEntryJob(options: { kind: CycleEntryJobKind }): CycleEntryJob {
-  if (activeJobId) {
-    const running = JOBS.get(activeJobId)
-    if (running?.status === 'running') return running
+export async function startCycleEntryJob(options: { kind: CycleEntryJobKind }): Promise<StartedCycleEntryJob> {
+  const started = await startSyncJob({
+    jobType: SYNC_JOB_TYPE,
+    kind: options.kind,
+    takeoverError: (job) =>
+      `被新觸發接管：前一個 job 心跳中斷（stage=${job.stage ?? 'unknown'}），判定執行實例已回收。`,
+  })
+
+  if (started.deduplicated) {
+    const view = await loadSyncJobView(started.jobId, SYNC_JOB_TYPE)
+    return {
+      jobId: String(started.jobId),
+      status: view?.status ?? 'running',
+      startedAt: view?.startedAt ?? null,
+      deduplicated: true,
+    }
   }
 
-  const job: CycleEntryJob = {
-    id: makeJobId(),
-    kind: options.kind,
+  void runJob(started.jobId, options.kind)
+  return {
+    jobId: String(started.jobId),
     status: 'running',
     startedAt: new Date().toISOString(),
-    finishedAt: null,
-    error: null,
-    count: null,
-    editionDate: null,
-    signals: null,
-    summary: null,
+    deduplicated: false,
   }
-  JOBS.set(job.id, job)
-  activeJobId = job.id
-
-  // 總逾時看門狗：超過 JOB_TIMEOUT_MS 尚未完成即自動失敗
-  const watchdog = setTimeout(() => {
-    const current = JOBS.get(job.id)
-    if (current?.status === 'running') {
-      current.status = 'failed'
-      current.error = `Job 執行逾時（超過 ${Math.round(JOB_TIMEOUT_MS / 60000)} 分鐘），已中止。`
-      current.finishedAt = new Date().toISOString()
-      if (activeJobId === job.id) activeJobId = null
-    }
-  }, JOB_TIMEOUT_MS)
-
-  void runJob(job, watchdog)
-  trimJobs()
-  return job
 }
 
-export function getCycleEntryJob(id: string): CycleEntryJob | null {
-  return JOBS.get(id) ?? null
+/** 查詢 job（含跨容器重啟後仍存活的紀錄）；不存在或型別不符回 null。 */
+export async function getCycleEntryJob(id: string | number): Promise<CycleEntryJob | null> {
+  const view = await loadSyncJobView(id, SYNC_JOB_TYPE)
+  return view ? toCycleEntryJob(view) : null
 }
 
-async function runJob(job: CycleEntryJob, watchdog: NodeJS.Timeout): Promise<void> {
+async function runJob(jobId: number, kind: CycleEntryJobKind): Promise<void> {
+  const settler = createSyncJobSettler(jobId)
   try {
-    const result = await computeCycleEntryEdition(job.kind === 'dry')
-    job.editionDate = result.editionDate
-    job.count = result.signalCount
-    job.summary = result.summary
-    if (job.kind === 'dry') job.signals = result.signals
-    if (job.kind === 'refresh') revalidateTag('cycle-entry', 'max')
-    job.status = 'done'
+    settler.setStage(kind === 'dry' ? 'dry' : 'refresh')
+    const result = await computeCycleEntryEdition(kind === 'dry')
+    if (kind === 'refresh') revalidateTag('cycle-entry', 'max')
+
+    const payload = serializeSyncJobPayload(
+      kind === 'dry'
+        ? { summary: result.summary, signals: result.signals }
+        : { summary: result.summary },
+    )
+    await settler.finish({
+      status: 'done',
+      count: result.signalCount,
+      editionKey: result.editionDate,
+      payload,
+    })
+
+    // 成功收尾順帶清理舊紀錄（30 天）
+    void cleanupSyncJobs(SYNC_JOB_TYPE, 30).catch(() => {})
   } catch (e: any) {
-    job.status = 'failed'
-    job.error = (e?.message ?? String(e)).slice(0, 500)
+    const message = String(e?.message ?? e).slice(0, SYNC_JOB_ERROR_MAX_CHARS)
+    console.error(`[CycleEntryJob] job ${jobId} failed:`, message)
+    await settler.finish({ status: 'failed', error: message || '執行失敗' })
   } finally {
-    clearTimeout(watchdog)
-    job.finishedAt = new Date().toISOString()
-    if (activeJobId === job.id) activeJobId = null
+    settler.cleanup()
   }
 }

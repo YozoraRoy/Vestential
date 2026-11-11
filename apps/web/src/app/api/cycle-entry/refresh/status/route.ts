@@ -27,9 +27,15 @@ export async function GET(req: NextRequest) {
   if (!jobId) {
     return NextResponse.json({ success: false, error: '缺少 jobId' }, { status: 400 })
   }
-  const job = getCycleEntryJob(jobId)
+
+  // Issue #146：job 狀態改存 DB（sync_jobs），跨 container 重啟仍查得到；
+  // 執行實例被回收時會回終態 failed（附原因），不再出現「404 盲輪詢到 timeout」。
+  const job = await getCycleEntryJob(jobId)
   if (!job) {
-    return NextResponse.json({ success: false, error: 'job not found' }, { status: 404 })
+    return NextResponse.json(
+      { success: false, code: 'JOB_NOT_FOUND', error: `job ${jobId} 不存在` },
+      { status: 404 },
+    )
   }
   return NextResponse.json({ success: true, job })
 }

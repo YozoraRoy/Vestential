@@ -27,32 +27,15 @@ export async function GET(req: NextRequest) {
   if (!jobId) {
     return NextResponse.json({ success: false, error: '缺少 jobId' }, { status: 400 })
   }
-  const job = getMarketFocusJob(jobId)
 
-  // Job 紀錄只存在於記憶體（單一 web instance）。若實例被回收/重啟（Azure 部署 slot swap、資源回收），
-  // job 會直接遺失 → 過去會回 404，讓 GitHub Actions 盲輪詢耗滿 27 分鐘才 failed。
-  // 改為回傳終態 failed + 可讀原因，讓 workflow 快速失敗並可直接重新觸發。
+  // Issue #146：job 狀態改存 DB（sync_jobs），跨 container 重啟仍查得到；
+  // 執行實例被回收時會回終態 failed（附原因），不再出現「404 盲輪詢到 timeout」。
+  const job = await getMarketFocusJob(jobId)
   if (!job) {
-    return NextResponse.json({
-      success: true,
-      job: {
-        id: jobId,
-        kind: 'refresh' as const,
-        status: 'failed' as const,
-        alsoSocial: true,
-        skipSocial: false,
-        startedAt: null,
-        finishedAt: new Date().toISOString(),
-        error: 'job 紀錄已流失（Azure 實例重啟/資源回收），未完成；請重新觸發一次。',
-        count: null,
-        editionKey: null,
-        timestamp: null,
-        summary: null,
-        items: null,
-        socialResults: null,
-        stage: null,
-      },
-    })
+    return NextResponse.json(
+      { success: false, code: 'JOB_NOT_FOUND', error: `job ${jobId} 不存在` },
+      { status: 404 },
+    )
   }
   return NextResponse.json({ success: true, job })
 }

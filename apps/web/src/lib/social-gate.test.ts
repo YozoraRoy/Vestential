@@ -125,7 +125,7 @@ describe('DB gate｜延遲執行仍會發（10/14 重現）', () => {
     const out = await triggerSocialPublish({ now: AT_0302_DELAYED })
 
     expect(out.triggered).toBe(true)
-    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-14 00:00:00')
+    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-14 00:00:00', 'threads')
     expect(mocks.publishSocialPost).toHaveBeenCalledTimes(1)
   })
 
@@ -133,7 +133,7 @@ describe('DB gate｜延遲執行仍會發（10/14 重現）', () => {
     const out = await triggerSocialPublish({ now: AT_06 })
 
     expect(out.triggered).toBe(true)
-    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-13 00:00:00')
+    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-13 00:00:00', 'threads')
     expect(mocks.publishSocialPost).toHaveBeenCalled()
   })
 
@@ -184,7 +184,7 @@ describe('DB gate｜failed／deferred 不阻擋＋跨日', () => {
 
     const out = await triggerSocialPublish({ now: new Date('2026-10-14T00:30:00Z') })
 
-    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-14 00:00:00')
+    expect(mocks.hasAnySocialPublishedSince).toHaveBeenCalledWith('2026-10-14 00:00:00', 'threads')
     expect(out.triggered).toBe(true)
     expect(mocks.publishSocialPost).toHaveBeenCalled()
   })

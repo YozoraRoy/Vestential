@@ -28,13 +28,14 @@ export async function POST(req: Request) {
   } catch {}
   try {
     await migrate()
-    const job = startMarketFocusJob({ kind, skipSocial })
+    const job = await startMarketFocusJob({ kind, skipSocial })
     return NextResponse.json({
       success: true,
       accepted: true,
-      jobId: job.id,
+      jobId: job.jobId,
       status: job.status,
       since: job.startedAt,
+      deduplicated: job.deduplicated,
       note: 'background job started; poll GET /api/market-focus/refresh/status?jobId=... for result',
     })
   } catch (e: any) {

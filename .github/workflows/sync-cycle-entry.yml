@@ -45,27 +45,52 @@ jobs:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
           JOB_ID: ${{ steps.trigger.outputs.jobId }}
         run: |
+          # Issue #146：job 狀態改存 DB（sync_jobs），跨 container 重啟仍查得到；
+          # 執行實例被回收時端點會回終態 failed（附原因）。因此 404 代表 jobId 真的
+          # 不存在（而非「暫時性錯誤」），立即失敗比盲重試 200 次（33 分鐘）好排查。
+          # 只有連線類錯誤（000/5xx）才做有限重試（連續 3 次）。
+          ERR_STREAK=0
           for i in $(seq 1 200); do
             CODE=$(curl -s -o /tmp/ce_status.json -w "%{http_code}" --max-time 30 \
               -H "Authorization: Bearer $SYNC_TOKEN" \
               "https://vestential.com/api/cycle-entry/refresh/status?jobId=$JOB_ID" || echo "000")
             if [ "$CODE" != "200" ]; then
-              echo "attempt $i -> HTTP $CODE (retrying)"
+              if [ "$CODE" = "404" ]; then
+                echo "::error::cycle-entry job not found (HTTP 404) — jobId 無效或 DB 查無此紀錄"
+                cat /tmp/ce_status.json || true
+                echo ""
+                exit 1
+              fi
+              ERR_STREAK=$((ERR_STREAK + 1))
+              echo "attempt $i -> HTTP $CODE (連續錯誤 $ERR_STREAK/3)"
+              if [ "$ERR_STREAK" -ge 3 ]; then
+                echo "::error::cycle-entry status query failed after $ERR_STREAK attempts (HTTP $CODE)"
+                cat /tmp/ce_status.json || true
+                echo ""
+                exit 1
+              fi
               sleep 10
               continue
             fi
+            ERR_STREAK=0
             STATUS=$(python3 -c "import sys,json;d=json.load(open('/tmp/ce_status.json'));j=d.get('job',{});print(j.get('status',''))")
-            echo "attempt $i -> status=$STATUS"
+            STAGE=$(python3 -c "import sys,json;d=json.load(open('/tmp/ce_status.json'));j=d.get('job',{});print(j.get('stage') or '')")
+            echo "attempt $i -> status=$STATUS stage=$STAGE"
             if [ "$STATUS" = "done" ]; then
               python3 -c "import sys,json;d=json.load(open('/tmp/ce_status.json'));j=d['job'];print(json.dumps({'count':j.get('count'),'editionDate':j.get('editionDate')},ensure_ascii=False))"
               echo "::notice::cycle-entry refresh completed"
               exit 0
             fi
             if [ "$STATUS" = "failed" ]; then
-              echo "::error::cycle-entry refresh failed: $(python3 -c "import sys,json;d=json.load(open('/tmp/ce_status.json'));print(d['job'].get('error',''))")"
+              echo "::error::cycle-entry refresh failed (stage=$STAGE): $(python3 -c "import sys,json;d=json.load(open('/tmp/ce_status.json'));print(d['job'].get('error',''))")"
+              echo "--- full job payload ---"
+              cat /tmp/ce_status.json
+              echo ""
               exit 1
             fi
             sleep 10
           done
-          echo "::error::cycle-entry refresh timed out waiting for job"
+          echo "::error::cycle-entry refresh timed out waiting for job（33 分鐘仍 running，理論上不應發生）"
+          echo "--- last status payload ---"
+          cat /tmp/ce_status.json || true
           exit 1

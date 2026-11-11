@@ -53,13 +53,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: '未知 action（需為 dry 或 refresh）' }, { status: 400 })
   }
   try {
-    const job = startCycleEntryJob({ kind: action })
+    const job = await startCycleEntryJob({ kind: action })
     return NextResponse.json({
       success: true,
       accepted: true,
-      jobId: job.id,
+      jobId: job.jobId,
       status: job.status,
       since: job.startedAt,
+      deduplicated: job.deduplicated,
       note: 'background job started; poll GET /api/cycle-entry/refresh/status?jobId=... for result',
     })
   } catch (e: any) {

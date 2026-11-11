@@ -25,14 +25,15 @@ export async function POST(req: NextRequest) {
   } catch {}
   const mode = body.mode === 'publish' ? 'publish' : 'dry'
   try {
-    const job = startMarketFocusJob({ kind: mode, alsoSocial: !!body.alsoSocial })
+    const job = await startMarketFocusJob({ kind: mode, alsoSocial: !!body.alsoSocial })
     return NextResponse.json({
       success: true,
       accepted: true,
       mode,
-      jobId: job.id,
+      jobId: job.jobId,
       status: job.status,
       since: job.startedAt,
+      deduplicated: job.deduplicated,
       note: 'background job started; poll GET /api/market-focus/refresh/status?jobId=... for result',
     })
   } catch (e: any) {

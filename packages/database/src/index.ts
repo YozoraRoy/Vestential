@@ -57,6 +57,7 @@ export {
   LLM_USAGE_ROW_LIMIT,
   saveAnalysisJob, updateAnalysisJob, getAnalysisJobById, listAnalysisJobsByUser,
   saveArenaTickJob, updateArenaTickJob, getArenaTickJobById, findRunningArenaTickJob, cleanupArenaTickJobs,
+  saveSyncJob, updateSyncJob, getSyncJobById, findRunningSyncJob, cleanupSyncJobs,
   upsertTwseDividends, getTwseDividendsByYear, hasTwseDividendsForDate, getTwseDividendsInWindow, deleteTwseDividendIfMatches,
   normalizeArenaDividendSymbol, saveArenaDividendCredit, hasArenaDividendCredit, getArenaDividendCredits,
   saveDcaPlan, getDcaPlans, logDcaEvent, getDcaEventStats,
@@ -72,6 +73,7 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
   LlmUsageLogInput, LlmUsageAgentReport, LlmUsageReportResult,
   LlmUsageRawRow, LlmUsageDailyAgentRow, LlmUsageDailyDay, LlmUsageDailyResult,
   LlmUsageMinuteBucket, LlmUsageMinuteResult,   ArenaTickJobRow, ArenaTickJobInput, ArenaTickJobUpdate,
+  SyncJobRow, SyncJobInput, SyncJobUpdate, SyncJobStatus,
   TwseDividendRow, TwseDividendInput, ArenaDividendCreditRow, ArenaDividendCreditInput, DcaPlanRow, DcaPlanInput,
   MarketLevelRow, MarketLevelStatus, MarketLevelInput } from './db.js'
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'

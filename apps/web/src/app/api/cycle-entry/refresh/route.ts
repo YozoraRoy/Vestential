@@ -17,13 +17,14 @@ export async function POST(req: Request) {
   }
   try {
     await migrate()
-    const job = startCycleEntryJob({ kind: 'refresh' })
+    const job = await startCycleEntryJob({ kind: 'refresh' })
     return NextResponse.json({
       success: true,
       accepted: true,
-      jobId: job.id,
+      jobId: job.jobId,
       status: job.status,
       since: job.startedAt,
+      deduplicated: job.deduplicated,
       note: 'background job started; poll GET /api/cycle-entry/refresh/status?jobId=... for result',
     })
   } catch (e: any) {

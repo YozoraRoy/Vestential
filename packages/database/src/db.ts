@@ -546,6 +546,22 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       );
       CREATE INDEX IF NOT EXISTS idx_cycle_entry_meta_date ON cycle_entry_meta(edition_date);
 
+      CREATE TABLE IF NOT EXISTS sync_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_type TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running',
+        stage TEXT,
+        count INTEGER,
+        edition_key TEXT,
+        error TEXT,
+        payload TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_sync_jobs_type_status ON sync_jobs(job_type, status);
+      CREATE INDEX IF NOT EXISTS idx_sync_jobs_updated ON sync_jobs(updated_at);
+
       CREATE TABLE IF NOT EXISTS llm_usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project TEXT DEFAULT 'vestential',
@@ -1203,6 +1219,25 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_arena_tick_jobs_key ON arena_tick_jobs(round_date, phase, slot);
         CREATE INDEX idx_arena_tick_jobs_status ON arena_tick_jobs(status);
+      END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'sync_jobs')
+      BEGIN
+        CREATE TABLE sync_jobs (
+          id          INT IDENTITY(1,1) PRIMARY KEY,
+          job_type    NVARCHAR(40) NOT NULL,                -- cycle-entry | market-focus
+          kind        NVARCHAR(40) NOT NULL,                -- refresh | dry | publish
+          status      NVARCHAR(20) NOT NULL DEFAULT 'running',  -- running | done | failed
+          stage       NVARCHAR(60),
+          count       INT,
+          edition_key NVARCHAR(100),
+          error       NVARCHAR(MAX),
+          payload     NVARCHAR(MAX),                        -- JSON：乾跑結果／社群結果
+          created_at  DATETIME2 DEFAULT GETDATE(),
+          updated_at  DATETIME2 DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_sync_jobs_type_status ON sync_jobs(job_type, status);
+        CREATE INDEX idx_sync_jobs_updated ON sync_jobs(updated_at);
       END
 
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'social_posts')
@@ -2535,6 +2570,323 @@ export async function cleanupArenaTickJobs(retentionDays = 7): Promise<number> {
     return deleted
   } catch (e) {
     console.error('[DB] cleanupArenaTickJobs failed:', e)
+    return 0
+  }
+}
+
+// ─── Sync jobs（排程背景 job 狀態，跨容器重啟存活；Issue #146）────────
+// cycle-entry / market-focus 的背景 job 原本只存在 Node process 記憶體，Azure
+// App Service 重啟或平台搬移 worker 後 job 憑空消失，呼叫端只能拿到 404 並盲等
+// 到 timeout。改存 DB：updated_at 由執行中的 job 每 60 秒心跳刷新，超過門檻即
+// 可判定「實例已回收」，status 端點直接回終態 failed。
+
+export type SyncJobStatus = 'running' | 'done' | 'failed'
+
+export interface SyncJobRow {
+  id: number
+  job_type: string
+  kind: string
+  status: SyncJobStatus
+  stage: string | null
+  count: number | null
+  edition_key: string | null
+  error: string | null
+  payload: string | null
+  /** ISO 8601（UTC），由 normalizeSyncJobRow 統一轉換。 */
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface SyncJobInput {
+  jobType: string
+  kind: string
+}
+
+export interface SyncJobUpdate {
+  status?: SyncJobStatus
+  stage?: string | null
+  count?: number | null
+  editionKey?: string | null
+  error?: string | null
+  payload?: string | null
+}
+
+/** UTC 的 'YYYY-MM-DD HH:mm:ss'（SQLite 文字比較用；Azure 走 DATETIME2）。 */
+function nowUtcStr(): string {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ')
+}
+
+/**
+ * 統一時間戳格式：Azure SQL 的 DATETIME2 會回傳 Date 物件，SQLite 回傳字串。
+ * 一律轉成 ISO 8601 UTC，避免上層要分方言處理。
+ */
+function toIsoUtc(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  }
+  const s = String(value)
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s)) {
+    const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(s)
+    const iso = s.replace(' ', 'T') + (hasTz ? '' : 'Z')
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  const t = Date.parse(s)
+  return Number.isNaN(t) ? null : new Date(t).toISOString()
+}
+
+function normalizeSyncJobRow(row: any): SyncJobRow {
+  return {
+    id: Number(row.id),
+    job_type: String(row.job_type),
+    kind: String(row.kind),
+    status: row.status as SyncJobStatus,
+    stage: row.stage ?? null,
+    count: row.count === null || row.count === undefined ? null : Number(row.count),
+    edition_key: row.edition_key ?? null,
+    error: row.error ?? null,
+    payload: row.payload ?? null,
+    created_at: toIsoUtc(row.created_at),
+    updated_at: toIsoUtc(row.updated_at),
+  }
+}
+
+/** 建立 job（status=running），回傳 DB id；失敗回 -1。 */
+export async function saveSyncJob(job: SyncJobInput): Promise<number> {
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return -1
+    try {
+      const result = await pool
+        .request()
+        .input('jobType', sql.NVarChar(40), job.jobType)
+        .input('kind', sql.NVarChar(40), job.kind)
+        .query(`
+          INSERT INTO sync_jobs (job_type, kind, status, created_at, updated_at)
+          OUTPUT INSERTED.id
+          VALUES (@jobType, @kind, 'running', GETDATE(), GETDATE())
+        `)
+      return Number(result.recordset?.[0]?.id ?? -1)
+    } catch (e) {
+      console.error('[AzureSQL] saveSyncJob error:', e)
+      return -1
+    }
+  }
+
+  const db = getSqliteDb()
+  if (!db) return -1
+  try {
+    const now = nowUtcStr()
+    const info = db
+      .prepare(
+        `INSERT INTO sync_jobs (job_type, kind, status, created_at, updated_at)
+         VALUES (?, ?, 'running', ?, ?)`,
+      )
+      .run(job.jobType, job.kind, now, now)
+    return Number(info.lastInsertRowid)
+  } catch (e) {
+    console.error('[SQLite] saveSyncJob error:', e)
+    return -1
+  }
+}
+
+/**
+ * 更新 job。任何呼叫都會刷新 updated_at（= 心跳），空 patch 即單純 touch。
+ */
+export async function updateSyncJob(jobId: number, patch: SyncJobUpdate = {}): Promise<boolean> {
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return false
+    try {
+      const req = pool.request()
+      const sets: string[] = []
+      if (patch.status !== undefined) {
+        req.input('status', sql.NVarChar(20), patch.status)
+        sets.push('status = @status')
+      }
+      if (patch.stage !== undefined) {
+        req.input('stage', sql.NVarChar(60), patch.stage)
+        sets.push('stage = @stage')
+      }
+      if (patch.count !== undefined) {
+        req.input('count', sql.Int, patch.count)
+        sets.push('count = @count')
+      }
+      if (patch.editionKey !== undefined) {
+        req.input('editionKey', sql.NVarChar(100), patch.editionKey)
+        sets.push('edition_key = @editionKey')
+      }
+      if (patch.error !== undefined) {
+        req.input('error', sql.NVarChar(sql.MAX), patch.error)
+        sets.push('error = @error')
+      }
+      if (patch.payload !== undefined) {
+        req.input('payload', sql.NVarChar(sql.MAX), patch.payload)
+        sets.push('payload = @payload')
+      }
+      sets.push('updated_at = @updatedAt')
+      req.input('updatedAt', sql.DateTime2, new Date())
+      req.input('jobId', sql.Int, jobId)
+      await req.query(`UPDATE sync_jobs SET ${sets.join(', ')} WHERE id = @jobId`)
+      return true
+    } catch (e) {
+      console.error('[AzureSQL] updateSyncJob error:', e)
+      return false
+    }
+  }
+
+  const db = getSqliteDb()
+  if (!db) return false
+  try {
+    const sets: string[] = []
+    const params: any[] = []
+    if (patch.status !== undefined) {
+      sets.push('status = ?')
+      params.push(patch.status)
+    }
+    if (patch.stage !== undefined) {
+      sets.push('stage = ?')
+      params.push(patch.stage)
+    }
+    if (patch.count !== undefined) {
+      sets.push('count = ?')
+      params.push(patch.count)
+    }
+    if (patch.editionKey !== undefined) {
+      sets.push('edition_key = ?')
+      params.push(patch.editionKey)
+    }
+    if (patch.error !== undefined) {
+      sets.push('error = ?')
+      params.push(patch.error)
+    }
+    if (patch.payload !== undefined) {
+      sets.push('payload = ?')
+      params.push(patch.payload)
+    }
+    sets.push('updated_at = ?')
+    params.push(nowUtcStr(), jobId)
+    db.prepare(`UPDATE sync_jobs SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    return true
+  } catch (e) {
+    console.error('[SQLite] updateSyncJob error:', e)
+    return false
+  }
+}
+
+export async function getSyncJobById(jobId: number): Promise<SyncJobRow | null> {
+  const cols =
+    'id, job_type, kind, status, stage, count, edition_key, error, payload, created_at, updated_at'
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return null
+    try {
+      const result = await pool
+        .request()
+        .input('jobId', sql.Int, jobId)
+        .query(`SELECT TOP 1 ${cols} FROM sync_jobs WHERE id = @jobId`)
+      const row = result.recordset?.[0]
+      return row ? normalizeSyncJobRow(row) : null
+    } catch (e) {
+      console.error('[AzureSQL] getSyncJobById error:', e)
+      return null
+    }
+  }
+
+  const db = getSqliteDb()
+  if (!db) return null
+  try {
+    const row = db.prepare(`SELECT ${cols} FROM sync_jobs WHERE id = ?`).get(jobId)
+    return row ? normalizeSyncJobRow(row) : null
+  } catch (e) {
+    console.error('[SQLite] getSyncJobById error:', e)
+    return null
+  }
+}
+
+/**
+ * 找出該 job_type 仍 running 的最新 job（跨 process／跨容器，供去重與接管用）。
+ * 是否 stale 由呼叫端用 updated_at 判定（見 lib/sync-job.ts）。
+ */
+export async function findRunningSyncJob(jobType: string): Promise<SyncJobRow | null> {
+  const cols =
+    'id, job_type, kind, status, stage, count, edition_key, error, payload, created_at, updated_at'
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return null
+    try {
+      const result = await pool
+        .request()
+        .input('jobType', sql.NVarChar(40), jobType)
+        .query(`
+          SELECT TOP 1 ${cols} FROM sync_jobs
+          WHERE job_type = @jobType AND status = 'running'
+          ORDER BY id DESC
+        `)
+      const row = result.recordset?.[0]
+      return row ? normalizeSyncJobRow(row) : null
+    } catch (e) {
+      console.error('[AzureSQL] findRunningSyncJob error:', e)
+      return null
+    }
+  }
+
+  const db = getSqliteDb()
+  if (!db) return null
+  try {
+    const row = db
+      .prepare(
+        `SELECT ${cols} FROM sync_jobs
+         WHERE job_type = ? AND status = 'running'
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(jobType)
+    return row ? normalizeSyncJobRow(row) : null
+  } catch (e) {
+    console.error('[SQLite] findRunningSyncJob error:', e)
+    return null
+  }
+}
+
+/** 清理超過 retentionDays（預設 30）天前已結束的 job，回傳刪除筆數。 */
+export async function cleanupSyncJobs(jobType: string, retentionDays = 30): Promise<number> {
+  try {
+    const days = Math.max(1, Math.floor(retentionDays))
+    if (isAzureSql) {
+      const pool = await getAzurePool()
+      if (!pool) return 0
+      const r = await pool
+        .request()
+        .input('jobType', sql.NVarChar(40), jobType)
+        .input('days', sql.Int, days)
+        .query(`
+          DELETE FROM sync_jobs
+          WHERE job_type = @jobType
+            AND status IN ('done', 'failed')
+            AND updated_at < DATEADD(day, -@days, GETDATE());
+          SELECT @@ROWCOUNT AS n
+        `)
+      return r.recordset?.[0]?.n ?? 0
+    }
+
+    const db = getSqliteDb()
+    if (!db) return 0
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ')
+    const r = db
+      .prepare(
+        `DELETE FROM sync_jobs
+         WHERE job_type = ?
+           AND status IN ('done', 'failed')
+           AND updated_at < ?`,
+      )
+      .run(jobType, cutoff)
+    return r.changes
+  } catch (e) {
+    console.error('[DB] cleanupSyncJobs failed:', e)
     return 0
   }
 }
