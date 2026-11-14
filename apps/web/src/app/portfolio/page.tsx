@@ -16,6 +16,7 @@ import {
   type YieldHistoryEntry,
 } from '@/lib/portfolio-yield'
 import { PortfolioYieldModal } from '@/components/portfolio-yield-modal'
+import { PortfolioDividendCalendar } from '@/components/portfolio-dividend-calendar'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
@@ -206,8 +207,9 @@ function num(s: string): number | null {
 
 export default function PortfolioPage() {
   const router = useRouter()
-  const { dict } = useI18n()
+  const { dict, locale } = useI18n()
   const ui = dict.portfolio
+  const [portfolioTab, setPortfolioTab] = useState<'overview' | 'dividend-calendar'>('overview')
   const STRATEGIES = useMemo(() => buildStrategies(ui), [ui])
   const typo = useTableTypography()
   // #23：safe-parse 友善文案（i18n 三語），傳給 parseJsonSafe。
@@ -1334,7 +1336,7 @@ export default function PortfolioPage() {
             <p className="text-sm text-[var(--text-secondary)]">{showAdd ? ui.headerSubtitleAdd : ui.headerSubtitleView}</p>
           </div>
         </div>
-        {!showAdd && (
+        {!showAdd && portfolioTab === 'overview' && (
           <button
             type="button"
             onClick={() => setShowAdd(true)}
@@ -1345,6 +1347,48 @@ export default function PortfolioPage() {
           </button>
         )}
       </div>
+
+      {/* #120：持股總覽 / 股利現金流 分頁切換 */}
+      <div className="mb-5 flex items-center gap-2 border-b border-white/10 pb-2">
+        <button
+          type="button"
+          onClick={() => setPortfolioTab('overview')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            portfolioTab === 'overview'
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+          }`}
+        >
+          {locale === 'en' ? 'Holdings Overview' : locale === 'ja' ? '保有銘柄一覧' : '持股總覽'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPortfolioTab('dividend-calendar')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            portfolioTab === 'dividend-calendar'
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+          }`}
+        >
+          {locale === 'en' ? 'Dividend Cashflow' : locale === 'ja' ? '配当キャッシュフロー' : '股利現金流'}
+        </button>
+      </div>
+
+      {portfolioTab === 'dividend-calendar' ? (
+        <PortfolioDividendCalendar
+          holdings={history.map((r) => ({
+            symbol: r.symbol,
+            name: r.symbol_name,
+            shares: r.shares,
+            market: r.market,
+            costBasis: r.cost * r.shares,
+            marketValue: r.market_value,
+          }))}
+          dividends={divRows}
+          today={getTaiwanDateStrClient()}
+        />
+      ) : (
+        <>
 
       {error && <p className="text-xs text-red-400 mb-4">{error}</p>}
       {notice && <p className="text-xs text-[var(--accent)] mb-4">{notice}</p>}
@@ -2763,6 +2807,8 @@ export default function PortfolioPage() {
           dict={ui}
           onClose={closeYieldModal}
         />
+      )}
+        </>
       )}
     </div>
   )

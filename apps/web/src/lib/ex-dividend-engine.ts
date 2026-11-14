@@ -427,3 +427,92 @@ export function computeLiveFillProgress(
   }
 }
 
+/** Issue #135：填息天數分布直方圖單一分箱 */
+export interface FillDaysBin {
+  key: 'd1' | 'd2_5' | 'd6_10' | 'd11_20' | 'd21_40' | 'unfilled'
+  label: string
+  minDays: number | null
+  maxDays: number | null
+  count: number
+  ratio: number
+}
+
+/** Issue #135：填息天數分布直方圖彙總 */
+export interface FillDaysHistogram {
+  eventCount: number
+  filledCount: number
+  unfilledCount: number
+  fillRate: number | null
+  medianFillDays: number | null
+  bins: FillDaysBin[]
+}
+
+/**
+ * Issue #135：純函式（client-safe）將 `analyzeExDividendEvents` 的逐事件結果
+ * 聚合為填息天數分布直方圖、成功/未填計數與填息天數中位數。
+ */
+export function computeFillDaysHistogram(
+  events: readonly Pick<ExDividendEventFill, 'filled' | 'daysToFill'>[],
+): FillDaysHistogram {
+  const list = events ?? []
+  const eventCount = list.length
+  const counts = {
+    d1: 0,
+    d2_5: 0,
+    d6_10: 0,
+    d11_20: 0,
+    d21_40: 0,
+    unfilled: 0,
+  }
+  const fillDays: number[] = []
+  let filledCount = 0
+  let unfilledCount = 0
+
+  for (const e of list) {
+    if (e.filled && e.daysToFill != null && Number.isFinite(e.daysToFill)) {
+      filledCount++
+      fillDays.push(e.daysToFill)
+      if (e.daysToFill <= 1) counts.d1++
+      else if (e.daysToFill <= 5) counts.d2_5++
+      else if (e.daysToFill <= 10) counts.d6_10++
+      else if (e.daysToFill <= 20) counts.d11_20++
+      else counts.d21_40++
+    } else {
+      unfilledCount++
+      counts.unfilled++
+    }
+  }
+
+  let medianFillDays: number | null = null
+  if (fillDays.length > 0) {
+    fillDays.sort((a, b) => a - b)
+    const mid = Math.floor(fillDays.length / 2)
+    const rawMedian =
+      fillDays.length % 2 === 1
+        ? fillDays[mid]!
+        : (fillDays[mid - 1]! + fillDays[mid]!) / 2
+    medianFillDays = Math.round(rawMedian * 10) / 10
+  }
+
+  const ratioOf = (c: number) => (eventCount > 0 ? Math.round((c / eventCount) * 1000) / 1000 : 0)
+
+  const bins: FillDaysBin[] = [
+    { key: 'd1', label: 'D1', minDays: 1, maxDays: 1, count: counts.d1, ratio: ratioOf(counts.d1) },
+    { key: 'd2_5', label: 'D2-5', minDays: 2, maxDays: 5, count: counts.d2_5, ratio: ratioOf(counts.d2_5) },
+    { key: 'd6_10', label: 'D6-10', minDays: 6, maxDays: 10, count: counts.d6_10, ratio: ratioOf(counts.d6_10) },
+    { key: 'd11_20', label: 'D11-20', minDays: 11, maxDays: 20, count: counts.d11_20, ratio: ratioOf(counts.d11_20) },
+    { key: 'd21_40', label: 'D21-40', minDays: 21, maxDays: 40, count: counts.d21_40, ratio: ratioOf(counts.d21_40) },
+    { key: 'unfilled', label: '未填息', minDays: null, maxDays: null, count: counts.unfilled, ratio: ratioOf(counts.unfilled) },
+  ]
+
+  return {
+    eventCount,
+    filledCount,
+    unfilledCount,
+    fillRate: eventCount > 0 ? filledCount / eventCount : null,
+    medianFillDays,
+    bins,
+  }
+}
+
+

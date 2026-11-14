@@ -33,6 +33,7 @@ const workspaceGroupPaths = [
   '/portfolio',
   '/analyze',
   '/ex-dividend',
+  '/dividend-refill',
 ]
 
 export interface HeaderUser {

@@ -1,6 +1,7 @@
 import {
   Activity,
   ArrowRight,
+  BarChart3,
   Coins,
   Gauge,
   Search,
@@ -120,6 +121,23 @@ export default async function WorkspacePage() {
           icon: Coins,
           title: w.exDividendTitle,
           desc: w.exDividendDesc,
+          accent: 'accent',
+        },
+        {
+          href: '/dividend-refill',
+          icon: BarChart3,
+          title:
+            locale === 'en'
+              ? 'Single-Stock Refill Review'
+              : locale === 'ja'
+                ? '銘柄別配当落ち回復分析'
+                : '單檔填息回顧器',
+          desc:
+            locale === 'en'
+              ? 'Historical ex-dividend fill-days distribution, completion rate & max drawdown.'
+              : locale === 'ja'
+                ? '過去の配当落ち回復日数分布・回復率・最大ドローダウンを確認。'
+                : '查詢個股/ETF 歷史除息填息天數分布、填息成功率與最大貼息幅度。',
           accent: 'accent',
         },
       ],

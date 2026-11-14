@@ -4,6 +4,7 @@ import {
   assetKindLabel,
   classifyAssetKind,
   computeExLastBuyDate,
+  computeFillDaysHistogram,
   computeFillScore,
   computeLiveFillProgress,
   daysUntilEx,
@@ -312,3 +313,51 @@ describe('Issue #93 computeLiveFillProgress｜即時填息進度計算', () => {
     expect(res.statusLabel).toBe('貼息中 -40%')
   })
 })
+
+describe('Issue #135 computeFillDaysHistogram', () => {
+  it('空陣列回傳全 0、null 中位數與比率', () => {
+    const h = computeFillDaysHistogram([])
+    expect(h.eventCount).toBe(0)
+    expect(h.filledCount).toBe(0)
+    expect(h.unfilledCount).toBe(0)
+    expect(h.fillRate).toBeNull()
+    expect(h.medianFillDays).toBeNull()
+    expect(h.bins.reduce((s, b) => s + b.count, 0)).toBe(0)
+  })
+
+  it('分箱總數 == eventCount、filled + unfilled == eventCount、奇/偶數中位數正確', () => {
+    const events = [
+      { filled: true, daysToFill: 1 },   // D1
+      { filled: true, daysToFill: 3 },   // D2-5
+      { filled: true, daysToFill: 8 },   // D6-10
+      { filled: true, daysToFill: 15 },  // D11-20
+      { filled: true, daysToFill: 30 },  // D21-40
+      { filled: false, daysToFill: null }, // 未填息
+    ]
+    const h = computeFillDaysHistogram(events)
+    expect(h.eventCount).toBe(6)
+    expect(h.filledCount).toBe(5)
+    expect(h.unfilledCount).toBe(1)
+    expect(h.filledCount + h.unfilledCount).toBe(h.eventCount)
+    expect(h.bins.reduce((s, b) => s + b.count, 0)).toBe(h.eventCount)
+    expect(h.fillRate).toBeCloseTo(5 / 6, 5)
+    expect(h.medianFillDays).toBe(8)
+
+    expect(h.bins.find((b) => b.key === 'd1')?.count).toBe(1)
+    expect(h.bins.find((b) => b.key === 'd2_5')?.count).toBe(1)
+    expect(h.bins.find((b) => b.key === 'd6_10')?.count).toBe(1)
+    expect(h.bins.find((b) => b.key === 'd11_20')?.count).toBe(1)
+    expect(h.bins.find((b) => b.key === 'd21_40')?.count).toBe(1)
+    expect(h.bins.find((b) => b.key === 'unfilled')?.count).toBe(1)
+
+    // 偶數筆達標：[1, 3, 8, 20] -> (3+8)/2 = 5.5
+    const hEven = computeFillDaysHistogram([
+      { filled: true, daysToFill: 20 },
+      { filled: true, daysToFill: 1 },
+      { filled: true, daysToFill: 8 },
+      { filled: true, daysToFill: 3 },
+    ])
+    expect(hEven.medianFillDays).toBe(5.5)
+  })
+})
+
