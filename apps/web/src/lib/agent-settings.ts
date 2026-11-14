@@ -86,6 +86,12 @@ export const DEFAULT_AGENT_SETTINGS: Record<string, AgentSettingMeta> = {
     defaultValue: '',
     help: '覆寫「梗圖概念」生成提示詞；空白＝用內建預設。',
   },
+  'social.first_reply_prompt': {
+    category: 'social',
+    label: '首則互動留言 System Prompt',
+    defaultValue: '',
+    help: '覆寫「首回覆問題」生成提示詞；空白＝用內建預設。',
+  },
   'social.reply_tag_metaai': {
     category: 'social',
     label: '首回覆（Threads）',
