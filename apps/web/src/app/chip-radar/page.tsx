@@ -8,6 +8,7 @@ import { googleStockSearchUrl } from '@/lib/stock-search-url'
 import { sortChipRows, type ChipSortDir, type ChipSortKey } from '@/lib/chip-sort'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import type { LendingLevel } from '@/lib/securities-lending'
 
 // Issue #71：主力籌碼雷達 /chip-radar（MVP 純統計，免 AI）。
 // 文案紅線：僅歷史統計＋免責「統計訊號非投資建議」，禁「預測/必漲」字眼；
@@ -24,6 +25,16 @@ interface ChipAnomalyRow {
   trend: number[]
   diverge: boolean
   marginNote: string
+}
+
+interface LendingBadgeInfo {
+  level: LendingLevel
+  consecutiveIncreaseDays: number
+  zScore: number | null
+  pctChange5d: number | null
+  pctChange20d: number | null
+  latestBalance: number | null
+  insufficientData: boolean
 }
 
 interface ChipRadarResponse {
@@ -86,6 +97,8 @@ export default function ChipRadarPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [lendingMap, setLendingMap] = useState<Record<string, LendingBadgeInfo>>({})
+  const [lendingFilter, setLendingFilter] = useState<'all' | 'anomaly'>('all')
   // Issue #75：四欄排序（預設佔比↓＝引擎 ratioPct desc＝API／信件順序）。
   const [sortKey, setSortKey] = useState<ChipSortKey>('ratioPct')
   const [sortDir, setSortDir] = useState<ChipSortDir>('desc')
@@ -97,7 +110,20 @@ export default function ChipRadarPage() {
       .then((res) => res.json())
       .then((json: ChipRadarResponse) => {
         if (cancelled) return
-        if (json?.success) setData(json)
+        if (json?.success) {
+          setData(json)
+          if (Array.isArray(json.items) && json.items.length > 0) {
+            const syms = json.items.map((x) => x.symbol).join(',')
+            fetch(`/api/securities-lending?symbols=${encodeURIComponent(syms)}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((lendingJson) => {
+                if (!cancelled && lendingJson?.success && lendingJson.items) {
+                  setLendingMap(lendingJson.items as Record<string, LendingBadgeInfo>)
+                }
+              })
+              .catch(() => {})
+          }
+        }
         else setError(json?.error ?? '讀取失敗')
       })
       .catch((e) => {
@@ -122,10 +148,16 @@ export default function ChipRadarPage() {
   }
 
   // 排序只重排主列；展開列以代號 key 維持，不受影響。
-  const sortedItems = useMemo(
-    () => (data ? sortChipRows(data.items, sortKey, sortDir) : []),
-    [data, sortKey, sortDir],
-  )
+  const sortedItems = useMemo(() => {
+    const base = data ? sortChipRows(data.items, sortKey, sortDir) : []
+    if (lendingFilter === 'anomaly') {
+      return base.filter((it) => {
+        const l = lendingMap[it.symbol]
+        return l && (l.level === 'alert' || l.level === 'watch')
+      })
+    }
+    return base
+  }, [data, sortKey, sortDir, lendingFilter, lendingMap])
 
   const toggle = (symbol: string) => {
     setExpanded((prev) => {
@@ -195,6 +227,37 @@ export default function ChipRadarPage() {
                 門檻：連買／賣 ≥{data.thresholds.consec_days} 天且佔比 ≥{data.thresholds.ratio_pct}%（後台可調）·
                 依佔比排序 · 掃描 {data.scanned} 檔 · 點列展開近 5 日趨勢（趨勢軸僅站上提供，信內無）
               </p>
+              {/* Issue #151：借券異常快速篩選 */}
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <span className="text-xs text-[var(--text-secondary)]">借券動能篩選：</span>
+                <button
+                  type="button"
+                  onClick={() => setLendingFilter('all')}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                    lendingFilter === 'all'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'bg-white/5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  全部標的 ({data.items.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLendingFilter('anomaly')}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                    lendingFilter === 'anomaly'
+                      ? 'bg-rose-500/80 text-white'
+                      : 'bg-white/5 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                  }`}
+                >
+                  借券異常
+                </button>
+              </div>
+              {sortedItems.length === 0 ? (
+                <div className="rounded-xl bg-[var(--bg-card)] border border-white/5 px-6 py-8 text-center mb-6 text-sm text-[var(--text-secondary)]">
+                  目前篩選條件下無借券異常標的
+                </div>
+              ) : (
               <div className="overflow-x-auto rounded-xl border border-white/5 mb-6">
                 <table className={tableClass(typo, 'w-full min-w-[560px]')}>
                   <thead>
@@ -241,12 +304,14 @@ export default function ChipRadarPage() {
                           isOpen={isOpen}
                           onToggle={() => toggle(it.symbol)}
                           windowDays={data.window_days}
+                          lending={lendingMap[it.symbol]}
                         />
                       )
                     })}
                   </tbody>
                 </table>
               </div>
+              )}
             </>
           )}
         </>
@@ -256,7 +321,7 @@ export default function ChipRadarPage() {
         <p className="flex items-start gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5 text-[var(--accent)]" />
           <span>
-            統計訊號非投資建議。法人＝外資合計（TWT38U）＋投信（TWT44U）；佔比＝|當日淨超×收盤|／成交額（STOCK_DAY_ALL）；
+            統計訊號僅為統計參考，非投資建議。法人＝外資合計（TWT38U）＋投信（TWT44U）；借券動能＝TWSE TWT93U 借券賣出餘額（連增天數＋20 日 Z-Score）；佔比＝|當日淨超×收盤|／成交額（STOCK_DAY_ALL）；
             上市標的為主（上櫃、分點集中度另案）；融資券本期未含（第二期）。
           </span>
         </p>
@@ -305,16 +370,37 @@ function SortTh({
   )
 }
 
+function LendingBadge({ lending }: { lending?: LendingBadgeInfo }) {
+  if (!lending) return null
+  const cfg =
+    lending.level === 'alert'
+      ? { label: '借券警戒', cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30' }
+      : lending.level === 'watch'
+        ? { label: '借券注意', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30' }
+        : { label: '借券正常', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' }
+  const tip = `借券連增 ${lending.consecutiveIncreaseDays} 天 · Z=${lending.zScore ?? '—'}`
+  return (
+    <span
+      title={tip}
+      className={`ml-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
+  )
+}
+
 function FragmentRow({
   it,
   isOpen,
   onToggle,
   windowDays,
+  lending,
 }: {
   it: ChipAnomalyRow
   isOpen: boolean
   onToggle: () => void
   windowDays: string[]
+  lending?: LendingBadgeInfo
 }) {
   const buy = it.direction === 'buy'
   return (
@@ -337,6 +423,7 @@ function FragmentRow({
           </a>
           <span className="font-semibold">{it.symbol}</span>
           <span className="ml-1.5 text-xs text-[var(--text-secondary)]">{it.name}</span>
+          <LendingBadge lending={lending} />
         </td>
         <td className="px-3 py-2.5">
           <span
@@ -359,6 +446,9 @@ function FragmentRow({
             <MiniTrend trend={it.trend} days={windowDays} />
             <p className="text-[11px] text-[var(--text-secondary)] pb-1">
               近 5 日法人合計淨超（外資＋投信，股數）{it.diverge ? '' : '· 無背離標籤（未含融資）'}
+              {lending
+                ? ` · 借券餘額連增 ${lending.consecutiveIncreaseDays} 日 / 5日變化 ${lending.pctChange5d ?? '—'}% / Z-Score ${lending.zScore ?? '—'}`
+                : ''}
             </p>
           </td>
         </tr>
