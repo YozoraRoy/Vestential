@@ -37,6 +37,39 @@ interface LendingBadgeInfo {
   insufficientData: boolean
 }
 
+interface OrderPlanData {
+  symbol: string
+  insufficientData: boolean
+  barsCount: number
+  lastClose: number
+  todayVwap: number
+  vwap20: number
+  ma20: number
+  atr14: number
+  support60: number
+  resistance60: number
+  limitBuyPrice: number
+  chaseStopPrice: number
+  stopLossPrice: number
+  breakEvenPrice: number
+  riskRewardRatio: number | null
+  negativeRiskReward: boolean
+  positionSizeSuggestion: {
+    capital: number
+    riskBudget: number
+    riskPerShare: number
+    suggestedShares: number
+    suggestedLots: number
+  }
+  vwapMethodology: string
+}
+
+interface OrderPlanState {
+  loading: boolean
+  error?: string
+  data?: OrderPlanData
+}
+
 interface ChipRadarResponse {
   success: boolean
   today: string
@@ -99,6 +132,7 @@ export default function ChipRadarPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lendingMap, setLendingMap] = useState<Record<string, LendingBadgeInfo>>({})
   const [lendingFilter, setLendingFilter] = useState<'all' | 'anomaly'>('all')
+  const [orderPlanMap, setOrderPlanMap] = useState<Record<string, OrderPlanState>>({})
   // Issue #75：四欄排序（預設佔比↓＝引擎 ratioPct desc＝API／信件順序）。
   const [sortKey, setSortKey] = useState<ChipSortKey>('ratioPct')
   const [sortDir, setSortDir] = useState<ChipSortDir>('desc')
@@ -159,13 +193,41 @@ export default function ChipRadarPage() {
     return base
   }, [data, sortKey, sortDir, lendingFilter, lendingMap])
 
+  const loadOrderPlan = (symbol: string) => {
+    const existing = orderPlanMap[symbol]
+    if (existing && (existing.loading || existing.data)) return
+    setOrderPlanMap((prev) => ({ ...prev, [symbol]: { loading: true } }))
+    fetch(`/api/chip-radar/order-plan?symbol=${encodeURIComponent(symbol)}`)
+      .then(async (res) => {
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.error || `無法取得 ${symbol} 掛單計畫（${res.status}）`)
+        }
+        setOrderPlanMap((prev) => ({
+          ...prev,
+          [symbol]: { loading: false, data: json as OrderPlanData },
+        }))
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : '載入掛單計畫失敗'
+        setOrderPlanMap((prev) => ({
+          ...prev,
+          [symbol]: { loading: false, error: msg },
+        }))
+      })
+  }
+
   const toggle = (symbol: string) => {
+    const willOpen = !expanded.has(symbol)
     setExpanded((prev) => {
       const next = new Set(prev)
       if (next.has(symbol)) next.delete(symbol)
       else next.add(symbol)
       return next
     })
+    if (willOpen) {
+      loadOrderPlan(symbol)
+    }
   }
 
   return (
@@ -305,6 +367,7 @@ export default function ChipRadarPage() {
                           onToggle={() => toggle(it.symbol)}
                           windowDays={data.window_days}
                           lending={lendingMap[it.symbol]}
+                          orderPlan={orderPlanMap[it.symbol]}
                         />
                       )
                     })}
@@ -389,18 +452,115 @@ function LendingBadge({ lending }: { lending?: LendingBadgeInfo }) {
   )
 }
 
+function OrderPlanDrawer({ planState }: { planState?: OrderPlanState }) {
+  if (!planState || planState.loading) {
+    return (
+      <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-xs text-[var(--text-secondary)]">
+        計算明日掛單計畫與風險邊界中…
+      </div>
+    )
+  }
+  if (planState.error || !planState.data) {
+    return (
+      <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+        {planState.error ?? '暫無此標的之掛單計畫資料'}
+      </div>
+    )
+  }
+
+  const p = planState.data
+  const rrText = p.riskRewardRatio !== null ? `${p.riskRewardRatio.toFixed(2)}x` : '—'
+
+  return (
+    <div className="mt-2.5 rounded-xl border border-white/10 bg-[#0d1118]/70 p-3 space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-[var(--text-primary)]">明日掛單計畫</span>
+          <span className="text-[11px] text-[var(--text-secondary)]">
+            收盤 {p.lastClose.toFixed(2)} · MA20 {p.ma20.toFixed(2)} · ATR(14) {p.atr14.toFixed(2)}
+          </span>
+        </div>
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+            p.negativeRiskReward
+              ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+              : (p.riskRewardRatio ?? 0) >= 1.5
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+          }`}
+        >
+          風險報酬比 {rrText}
+        </span>
+      </div>
+
+      {p.insufficientData ? (
+        <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+          歷史日線不足 60 個交易日（目前僅 {p.barsCount} 日），支撐／壓力與均線僅供參考。
+        </p>
+      ) : null}
+
+      {p.negativeRiskReward ? (
+        <p className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-200">
+          警示：目前為負或零風險報酬比（近月主力成本／停損價位貼近或高於參考掛單價，或上檔空間有限），請審慎評估風險。
+        </p>
+      ) : null}
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <div className="rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-2">
+          <div className="text-[10px] text-[var(--text-secondary)]">掛單參考價</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--accent-green)]">
+            {p.limitBuyPrice.toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-2">
+          <div className="text-[10px] text-[var(--text-secondary)]">追價上限</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums text-amber-300">
+            {p.chaseStopPrice.toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-2">
+          <div className="text-[10px] text-[var(--text-secondary)]">停損參考價</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums text-rose-400">
+            {p.stopLossPrice.toFixed(2)}
+          </div>
+        </div>
+        <div className="rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-2">
+          <div className="text-[10px] text-[var(--text-secondary)]">保本賣出價</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text-primary)]">
+            {p.breakEvenPrice.toFixed(2)}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-secondary)]">
+        <span>
+          60日支撐 {p.support60.toFixed(2)} / 壓力 {p.resistance60.toFixed(2)} · 20日成本估算 {p.vwap20.toFixed(2)}
+        </span>
+        <span>
+          2% 風險建議：{p.positionSizeSuggestion.suggestedLots} 張（{p.positionSizeSuggestion.suggestedShares.toLocaleString('en-US')} 股，依 100 萬帳戶）
+        </span>
+      </div>
+      <p className="text-[10px] text-[var(--text-secondary)]/80">
+        {p.vwapMethodology}；保本價含買賣手續費 0.1425%＋證交稅 0.3%。僅為統計參考，非投資建議。
+      </p>
+    </div>
+  )
+}
+
 function FragmentRow({
   it,
   isOpen,
   onToggle,
   windowDays,
   lending,
+  orderPlan,
 }: {
   it: ChipAnomalyRow
   isOpen: boolean
   onToggle: () => void
   windowDays: string[]
   lending?: LendingBadgeInfo
+  orderPlan?: OrderPlanState
 }) {
   const buy = it.direction === 'buy'
   return (
@@ -450,6 +610,7 @@ function FragmentRow({
                 ? ` · 借券餘額連增 ${lending.consecutiveIncreaseDays} 日 / 5日變化 ${lending.pctChange5d ?? '—'}% / Z-Score ${lending.zScore ?? '—'}`
                 : ''}
             </p>
+            <OrderPlanDrawer planState={orderPlan} />
           </td>
         </tr>
       ) : null}
