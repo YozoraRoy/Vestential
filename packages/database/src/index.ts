@@ -62,6 +62,7 @@ export {
   normalizeArenaDividendSymbol, saveArenaDividendCredit, hasArenaDividendCredit, getArenaDividendCredits,
   saveDcaPlan, getDcaPlans, logDcaEvent, getDcaEventStats,
   upsertMarketLevel, upsertMarketLevels, getMarketLevels, getLatestMarketLevel, getMarketLevelByDate,
+  upsertDailyMover, getDailyMoversHistory, getLatestDailyMover, getDailyMoverByDate, listDailyMoverDates,
 } from './db.js'
 export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdate, AnalysisJobAgentState, AnalysisJobStatus, PortfolioRecord, PortfolioRecordInput, PortfolioRecordUpdate, PortfolioSyncedPricePatch, PortfolioSyncTarget, TradeJournalEntry, TradeJournalInput, TradeJournalDirection, TradeJournalUpdate, HistoricalGift, UserRow, UserIdentityRow, AuthProvider, IdentityInput, QuotaResult, MarketFocusItem, MarketFocusMeta, MarketFocusWind, MarketFocusWindDirection, MarketFocusLogRow, MarketFocusLogInput,
   ArenaSeasonRow, ArenaAgentRow, ArenaHoldingRow, ArenaTradeRow, ArenaSnapshotRow, ArenaAgentInput, ArenaLeaderboardRow,
@@ -75,7 +76,8 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
   LlmUsageMinuteBucket, LlmUsageMinuteResult,   ArenaTickJobRow, ArenaTickJobInput, ArenaTickJobUpdate,
   SyncJobRow, SyncJobInput, SyncJobUpdate, SyncJobStatus,
   TwseDividendRow, TwseDividendInput, ArenaDividendCreditRow, ArenaDividendCreditInput, DcaPlanRow, DcaPlanInput,
-  MarketLevelRow, MarketLevelStatus, MarketLevelInput } from './db.js'
+  MarketLevelRow, MarketLevelStatus, MarketLevelInput,
+  DailyMoverRow, DailyMoverInput } from './db.js'
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'
 export type { Database } from 'better-sqlite3'

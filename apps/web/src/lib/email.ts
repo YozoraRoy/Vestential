@@ -691,3 +691,102 @@ ${SITE_LINK}`
     </div>`
   return sendMailCore(`🩺 Vestential 健康覆盤告警 — ${report.issues.length} 項`, text, html)
 }
+
+export interface DailyMoversEmailData {
+  tradeDate: string
+  summaryText: string
+  limitUpCount: number
+  limitDownCount: number
+  newPunish: { code: string; name: string; reason: string }[]
+  topLimitUp: { code: string; name: string; close: number; changePct: number }[]
+  topVolume: { code: string; name: string; volumeRatio: number | null }[]
+}
+
+/** Issue #78：收盤異動日報快訊（沿用 market_focus_subscribers＋日別去重）。 */
+export async function sendDailyMoversDigest(data: DailyMoversEmailData, force = false): Promise<boolean> {
+  try {
+    if (!force) {
+      const lastSent = await getAgentSetting('email.last_daily_movers_date').catch(() => null)
+      if (lastSent === data.tradeDate) return false
+    }
+
+    const subject = `📊 台股收盤異動日報 ${data.tradeDate} — 漲停 ${data.limitUpCount} / 跌停 ${data.limitDownCount}${data.newPunish.length > 0 ? ` / 新增處置 ${data.newPunish.length} 檔` : ''}`
+    const punishLines =
+      data.newPunish.length > 0
+        ? data.newPunish.map((p) => `- ${p.code} ${p.name}：${p.reason || '處置公告'}`).join('\n')
+        : '今日無新增處置股'
+    const upLines =
+      data.topLimitUp.length > 0
+        ? data.topLimitUp.slice(0, 5).map((u) => `- ${u.code} ${u.name}（收 ${u.close.toFixed(2)}，+${u.changePct.toFixed(2)}%）`).join('\n')
+        : '無'
+    const volLines =
+      data.topVolume.length > 0
+        ? data.topVolume.slice(0, 5).map((v) => `- ${v.code} ${v.name}（量比 ${v.volumeRatio !== null ? `${v.volumeRatio}x` : '成交額領先'}）`).join('\n')
+        : '無'
+
+    const text = `Vestential 台股收盤異動日報（${data.tradeDate}）
+
+${data.summaryText}
+
+【新增處置股】
+${punishLines}
+
+【漲停焦點】
+${upLines}
+
+【爆量焦點】
+${volLines}
+
+查看完整日報：${SITE_BASE}/daily-movers
+僅為統計參考，非投資建議；使用即代表同意服務條款 ${SITE_BASE}/terms。`
+
+    const html = `
+    <div style="background:#f1f5f9;padding:24px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,Microsoft JhengHei,sans-serif;">
+      <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+        <div style="background:#0f172a;color:#ffffff;padding:20px 24px;font-weight:800;font-size:16px;">📊 台股收盤異動日報 — ${escapeHtml(data.tradeDate)}</div>
+        <div style="padding:20px 24px;font-size:14px;color:#0f172a;line-height:1.7;">
+          <p style="margin:0 0 12px;padding:12px;background:#f8fafc;border-radius:8px;font-weight:600;">${escapeHtml(data.summaryText)}</p>
+          <p style="margin:8px 0 4px;font-weight:700;">🚨 新增處置股（${data.newPunish.length}）</p>
+          <pre style="margin:0 0 12px;font-family:inherit;white-space:pre-wrap;font-size:13px;color:#334155;">${escapeHtml(punishLines)}</pre>
+          <p style="margin:8px 0 4px;font-weight:700;">🔥 漲停焦點前 5</p>
+          <pre style="margin:0 0 12px;font-family:inherit;white-space:pre-wrap;font-size:13px;color:#334155;">${escapeHtml(upLines)}</pre>
+          <div style="text-align:center;margin:18px 0 8px;">
+            <a href="${escapeHtml(SITE_BASE)}/daily-movers" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:10px 24px;border-radius:9999px;">查看完整異動日報 →</a>
+          </div>
+        </div>
+        <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;font-size:12px;color:#64748b;">
+          僅為統計參考，非投資建議；使用即代表同意<a href="${escapeHtml(SITE_BASE)}/terms" style="color:#64748b;text-decoration:underline;">服務條款</a>。
+        </div>
+      </div>
+    </div>`
+
+    const adminOk = await sendMailCore(subject, text, html)
+    const subscribers = await listActiveMarketFocusSubscribers().catch(() => [])
+    const tasks = subscribers
+      .map((sub) => {
+        const to = sub.email
+        if (!to || !to.includes('@')) return null
+        const unsub = buildUnsubscribeBlock({ email: to, token: sub.token })
+        const htmlWithUnsub = unsub ? html.replace('服務條款</a>。', `服務條款</a>。${unsub}`) : html
+        const textWithUnsub = unsub
+          ? `${text}\n\n退訂：${SITE_BASE}/api/market-focus/unsubscribe?email=${encodeURIComponent(to)}&token=${encodeURIComponent(sub.token)}`
+          : text
+        return sendMailCore(subject, textWithUnsub, htmlWithUnsub, to)
+      })
+      .filter((t): t is Promise<boolean> => t !== null)
+    await Promise.allSettled(tasks)
+
+    if (adminOk) {
+      await setAgentSetting({
+        key: 'email.last_daily_movers_date',
+        value: data.tradeDate,
+        category: 'email',
+        label: '收盤異動日報最後寄送日',
+      }).catch(() => {})
+    }
+    return adminOk
+  } catch (e) {
+    console.error('[Notify] daily movers digest failed (non-blocking):', e)
+    return false
+  }
+}

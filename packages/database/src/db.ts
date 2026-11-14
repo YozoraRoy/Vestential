@@ -683,6 +683,25 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       );
       CREATE INDEX IF NOT EXISTS idx_market_levels_trade_date ON market_levels(trade_date DESC);
 
+      -- Issue #78：daily_movers（收盤異動日報：漲跌停、爆量、處置注意、法人大買賣超與量比歷史）。
+      CREATE TABLE IF NOT EXISTS daily_movers (
+        trade_date           TEXT PRIMARY KEY,
+        summary_text         TEXT,
+        breadth_json         TEXT,
+        limit_up_json        TEXT,
+        limit_down_json      TEXT,
+        volume_surge_json    TEXT,
+        punish_json          TEXT,
+        notice_json          TEXT,
+        inst_buy_json        TEXT,
+        inst_sell_json       TEXT,
+        volume_history_json  TEXT,
+        degraded             INTEGER DEFAULT 0,
+        degraded_reason      TEXT,
+        updated_at           TEXT DEFAULT (datetime('now', 'localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_daily_movers_trade_date ON daily_movers(trade_date DESC);
+
 
     `)
 
@@ -1498,6 +1517,30 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
           updated_at           DATETIME2 DEFAULT GETDATE()
         );
         CREATE INDEX idx_market_levels_trade_date ON market_levels(trade_date DESC);
+      END
+    `)
+
+    // Issue #78：daily_movers（收盤異動日報）。
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'daily_movers')
+      BEGIN
+        CREATE TABLE daily_movers (
+          trade_date           NVARCHAR(20) NOT NULL PRIMARY KEY,
+          summary_text         NVARCHAR(MAX) NULL,
+          breadth_json         NVARCHAR(MAX) NULL,
+          limit_up_json        NVARCHAR(MAX) NULL,
+          limit_down_json      NVARCHAR(MAX) NULL,
+          volume_surge_json    NVARCHAR(MAX) NULL,
+          punish_json          NVARCHAR(MAX) NULL,
+          notice_json          NVARCHAR(MAX) NULL,
+          inst_buy_json        NVARCHAR(MAX) NULL,
+          inst_sell_json       NVARCHAR(MAX) NULL,
+          volume_history_json  NVARCHAR(MAX) NULL,
+          degraded             BIT DEFAULT 0,
+          degraded_reason      NVARCHAR(200) NULL,
+          updated_at           DATETIME2 DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_daily_movers_trade_date ON daily_movers(trade_date DESC);
       END
     `)
 
@@ -7861,4 +7904,218 @@ export async function getMarketLevelByDate(tradeDate: string): Promise<MarketLev
     }
   }
   return marketLevelMemoryStore.find((m) => m.trade_date === date) ?? null
+}
+
+// ─── Issue #78: daily_movers (收盤異動日報) ──────────────────────
+
+export interface DailyMoverRow {
+  trade_date: string
+  summary_text: string | null
+  breadth_json: string | null
+  limit_up_json: string | null
+  limit_down_json: string | null
+  volume_surge_json: string | null
+  punish_json: string | null
+  notice_json: string | null
+  inst_buy_json: string | null
+  inst_sell_json: string | null
+  volume_history_json: string | null
+  degraded: number
+  degraded_reason: string | null
+  updated_at?: string
+}
+
+export interface DailyMoverInput {
+  tradeDate: string
+  summaryText: string | null
+  breadthJson: string | null
+  limitUpJson: string | null
+  limitDownJson: string | null
+  volumeSurgeJson: string | null
+  punishJson: string | null
+  noticeJson: string | null
+  instBuyJson: string | null
+  instSellJson: string | null
+  volumeHistoryJson: string | null
+  degraded?: boolean
+  degradedReason?: string | null
+}
+
+const dailyMoverMemoryStore: DailyMoverRow[] = []
+
+const DAILY_MOVER_COLUMNS =
+  'trade_date, summary_text, breadth_json, limit_up_json, limit_down_json, volume_surge_json, punish_json, notice_json, inst_buy_json, inst_sell_json, volume_history_json, degraded, degraded_reason, updated_at'
+
+export async function upsertDailyMover(input: DailyMoverInput): Promise<void> {
+  const row: DailyMoverRow = {
+    trade_date: input.tradeDate,
+    summary_text: input.summaryText,
+    breadth_json: input.breadthJson,
+    limit_up_json: input.limitUpJson,
+    limit_down_json: input.limitDownJson,
+    volume_surge_json: input.volumeSurgeJson,
+    punish_json: input.punishJson,
+    notice_json: input.noticeJson,
+    inst_buy_json: input.instBuyJson,
+    inst_sell_json: input.instSellJson,
+    volume_history_json: input.volumeHistoryJson,
+    degraded: input.degraded ? 1 : 0,
+    degraded_reason: input.degradedReason ?? null,
+  }
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      await pool
+        .request()
+        .input('tradeDate', row.trade_date)
+        .input('summaryText', row.summary_text)
+        .input('breadthJson', row.breadth_json)
+        .input('limitUpJson', row.limit_up_json)
+        .input('limitDownJson', row.limit_down_json)
+        .input('volumeSurgeJson', row.volume_surge_json)
+        .input('punishJson', row.punish_json)
+        .input('noticeJson', row.notice_json)
+        .input('instBuyJson', row.inst_buy_json)
+        .input('instSellJson', row.inst_sell_json)
+        .input('volumeHistoryJson', row.volume_history_json)
+        .input('degraded', row.degraded)
+        .input('degradedReason', row.degraded_reason)
+        .query(`
+          MERGE daily_movers AS target
+          USING (SELECT @tradeDate AS trade_date) AS src
+          ON target.trade_date = src.trade_date
+          WHEN MATCHED THEN
+            UPDATE SET
+              summary_text = @summaryText,
+              breadth_json = @breadthJson,
+              limit_up_json = @limitUpJson,
+              limit_down_json = @limitDownJson,
+              volume_surge_json = @volumeSurgeJson,
+              punish_json = @punishJson,
+              notice_json = @noticeJson,
+              inst_buy_json = @instBuyJson,
+              inst_sell_json = @instSellJson,
+              volume_history_json = @volumeHistoryJson,
+              degraded = @degraded,
+              degraded_reason = @degradedReason,
+              updated_at = GETDATE()
+          WHEN NOT MATCHED THEN
+            INSERT (trade_date, summary_text, breadth_json, limit_up_json, limit_down_json, volume_surge_json, punish_json, notice_json, inst_buy_json, inst_sell_json, volume_history_json, degraded, degraded_reason)
+            VALUES (@tradeDate, @summaryText, @breadthJson, @limitUpJson, @limitDownJson, @volumeSurgeJson, @punishJson, @noticeJson, @instBuyJson, @instSellJson, @volumeHistoryJson, @degraded, @degradedReason);
+        `)
+      return
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      db.prepare(`
+        INSERT INTO daily_movers (trade_date, summary_text, breadth_json, limit_up_json, limit_down_json, volume_surge_json, punish_json, notice_json, inst_buy_json, inst_sell_json, volume_history_json, degraded, degraded_reason, updated_at)
+        VALUES (@trade_date, @summary_text, @breadth_json, @limit_up_json, @limit_down_json, @volume_surge_json, @punish_json, @notice_json, @inst_buy_json, @inst_sell_json, @volume_history_json, @degraded, @degraded_reason, datetime('now', 'localtime'))
+        ON CONFLICT(trade_date) DO UPDATE SET
+          summary_text = excluded.summary_text,
+          breadth_json = excluded.breadth_json,
+          limit_up_json = excluded.limit_up_json,
+          limit_down_json = excluded.limit_down_json,
+          volume_surge_json = excluded.volume_surge_json,
+          punish_json = excluded.punish_json,
+          notice_json = excluded.notice_json,
+          inst_buy_json = excluded.inst_buy_json,
+          inst_sell_json = excluded.inst_sell_json,
+          volume_history_json = excluded.volume_history_json,
+          degraded = excluded.degraded,
+          degraded_reason = excluded.degraded_reason,
+          updated_at = datetime('now', 'localtime')
+      `).run(row)
+      return
+    }
+  }
+
+  const idx = dailyMoverMemoryStore.findIndex((m) => m.trade_date === row.trade_date)
+  if (idx >= 0) {
+    dailyMoverMemoryStore[idx] = { ...row, updated_at: new Date().toISOString() }
+  } else {
+    dailyMoverMemoryStore.push({ ...row, updated_at: new Date().toISOString() })
+  }
+}
+
+export async function getDailyMoversHistory(limit = 30): Promise<DailyMoverRow[]> {
+  const maxRows = Math.max(1, Math.min(limit, 365))
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool.request().query(`
+        SELECT TOP (${maxRows}) ${DAILY_MOVER_COLUMNS}
+        FROM daily_movers
+        ORDER BY trade_date DESC
+      `)
+      return res.recordset as DailyMoverRow[]
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      return db.prepare(`
+        SELECT ${DAILY_MOVER_COLUMNS}
+        FROM daily_movers
+        ORDER BY trade_date DESC
+        LIMIT ?
+      `).all(maxRows) as DailyMoverRow[]
+    }
+  }
+  return [...dailyMoverMemoryStore]
+    .sort((a, b) => (b.trade_date > a.trade_date ? 1 : -1))
+    .slice(0, maxRows)
+}
+
+export async function getLatestDailyMover(): Promise<DailyMoverRow | null> {
+  const rows = await getDailyMoversHistory(1)
+  return rows[0] ?? null
+}
+
+export async function getDailyMoverByDate(tradeDate: string): Promise<DailyMoverRow | null> {
+  const date = tradeDate.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool.request()
+        .input('tradeDate', date)
+        .query(`SELECT ${DAILY_MOVER_COLUMNS} FROM daily_movers WHERE trade_date = @tradeDate`)
+      return (res.recordset[0] as DailyMoverRow) ?? null
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      const row = db.prepare(`SELECT ${DAILY_MOVER_COLUMNS} FROM daily_movers WHERE trade_date = ?`).get(date)
+      return (row as DailyMoverRow) ?? null
+    }
+  }
+  return dailyMoverMemoryStore.find((m) => m.trade_date === date) ?? null
+}
+
+export async function listDailyMoverDates(limit = 30): Promise<string[]> {
+  const maxRows = Math.max(1, Math.min(limit, 365))
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool.request().query(`
+        SELECT TOP (${maxRows}) trade_date
+        FROM daily_movers
+        ORDER BY trade_date DESC
+      `)
+      return (res.recordset as { trade_date: string }[]).map((r) => r.trade_date)
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      const rows = db.prepare(`
+        SELECT trade_date FROM daily_movers ORDER BY trade_date DESC LIMIT ?
+      `).all(maxRows) as { trade_date: string }[]
+      return rows.map((r) => r.trade_date)
+    }
+  }
+  return [...dailyMoverMemoryStore]
+    .sort((a, b) => (b.trade_date > a.trade_date ? 1 : -1))
+    .slice(0, maxRows)
+    .map((r) => r.trade_date)
 }
