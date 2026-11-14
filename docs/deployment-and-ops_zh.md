@@ -345,3 +345,38 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 3. **更新 GitHub Secrets**：`IG_ACCESS_TOKEN`／`THREADS_ACCESS_TOKEN`／`FB_ACCESS_TOKEN`（如 `IG_USER_ID`／`FB_PAGE_ID` 有變也一併更新）。
 4. **重新部署**：push 任一變更或手動 rerun `deploy.yml`，讓 GH Secrets 同步進 Azure App Settings。
 5. **驗證**：起本地 `npm run dev`，呼叫 `/api/social/token-health`（帶 `Authorization: Bearer $SYNC_TOKEN`）應回 `200`；或等隔日 03:30 workflow 自動確認。
+
+---
+
+## 7. 本機 `.env*` 憑證盤點與同步
+
+本機診斷與腳本會讀取 `.env.local`、`apps/web/.env.local` 與 `apps/web/.env.azure`（均已列於 `.gitignore`）。當生產環境在 Azure App Service 輪替密鑰或換發社群 token 後，即使線上正常，本機 `.env*` 仍可能過期不同步。
+
+### 7.1 從 Azure App Service 同步（唯讀取值）
+
+前提：已完成 `az login` 且具備 `rg-yuzora_roy_ai` 讀取權限。**嚴禁**將取得的憑證值貼進檔案、Issue、commit 或 log。
+
+```powershell
+# 檢查特定設定是否存在與長度（例如 IG_ACCESS_TOKEN、IG_USER_ID、THREADS_ACCESS_TOKEN、DATABASE_URL）
+az webapp config appsettings list --name stock-platform-roy `
+  --resource-group rg-yuzora_roy_ai -o json |
+  ConvertFrom-Json | Where-Object name -in @('IG_ACCESS_TOKEN','IG_USER_ID','THREADS_ACCESS_TOKEN') |
+  Select-Object name, @{N='len';E={$_.value.Length}}
+```
+
+取得新值後，直接覆寫 `apps/web/.env.local`（或 `apps/web/.env.azure` 的 `DATABASE_URL`）對應的 `KEY=value` 單行，不要把明文印到終端輸出。
+
+### 7.2 各第三方憑證唯讀驗證方式
+
+以下所有檢查皆為唯讀，且務必加上短 timeout（例如 `10s`）：
+
+| 憑證群組 | 唯讀驗證方式 | 通過標準 |
+| :--- | :--- | :--- |
+| **Instagram (`IG_ACCESS_TOKEN`, `IG_USER_ID`)** | `GET https://graph.facebook.com/v21.0/{IG_USER_ID}?fields=username&access_token={IG_ACCESS_TOKEN}` 與 `GET .../{IG_USER_ID}/media?fields=id,media_type,timestamp&limit=3` | HTTP `200` 且回傳 `username` / `data[]` |
+| **Facebook 粉專 (`FB_ACCESS_TOKEN`, `FB_PAGE_ID`)** | `GET https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=id,name` 與 `GET .../me/accounts?fields=id,name` | HTTP `200` 且含目標 `FB_PAGE_ID` |
+| **Threads (`THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`)** | `GET https://graph.threads.net/v1.0/me?fields=username&access_token={THREADS_ACCESS_TOKEN}` | HTTP `200` 且回傳 `username` |
+| **LLM (`FALLBACK*_LLM_API_KEY`, `OPENAI_API_KEY`)** | `GET {BACKEND_URL}/models`（帶 `Authorization: Bearer {API_KEY}`） | HTTP `200` 回傳模型清單（註：`opencode.ai` 主 key 為歷史遺留，生產已改走 Gemini + Groq 備援） |
+| **Cloudflare Workers AI (`CF_AI_TOKEN`, `CF_ACCOUNT_ID`)** | `GET https://api.cloudflare.com/client/v4/user/tokens/verify` 與 `GET .../accounts/{CF_ACCOUNT_ID}/ai/models/search?per_page=1`（帶 `Bearer {CF_AI_TOKEN}`） | HTTP `200`、`success: true`、`status: "active"` |
+| **SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`)** | 連線 `SMTP_HOST:SMTP_PORT`（`587`），依序執行 `EHLO` → `STARTTLS` → `AUTH LOGIN` → `QUIT`（不寄信） | 回傳 `235 Authentication successful` |
+| **Google / LINE OAuth (`GOOGLE_CLIENT_*`, `LINE_CLIENT_*`, `THREADS_APP_*`)** | 需瀏覽器互動取得授權碼（authorization code），無法以無狀態唯讀 API 單獨驗證 | 核對與 Azure App Settings 是否一致 |
+| **Azure SQL (`apps/web/.env.azure` 之 `DATABASE_URL`)** | 執行 `node packages/database/scripts/diag-size.mjs`（需先暫時放行單一來源 IP 防火牆，用完即刪） | 正常輸出 `DATABASE SIZE`、`TOP TABLES`、`ROW COUNTS` |

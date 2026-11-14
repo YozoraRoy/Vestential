@@ -363,3 +363,38 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 3. **Update the GitHub Secrets**: `IG_ACCESS_TOKEN`/`THREADS_ACCESS_TOKEN`/`FB_ACCESS_TOKEN` (and update `IG_USER_ID`/`FB_PAGE_ID` too if they have changed).
 4. **Redeploy**: push any change or manually re-run `deploy.yml` so the GH Secrets are synced into Azure App Settings.
 5. **Verify**: start a local `npm run dev` and call `/api/social/token-health` (with `Authorization: Bearer $SYNC_TOKEN`), which should return `200`; or wait for the 03:30 workflow the next day to confirm automatically.
+
+---
+
+## 7. Local `.env*` Credential Verification & Sync
+
+Local scripts and diagnostics read `.env.local`, `apps/web/.env.local`, and `apps/web/.env.azure` (all gitignored). When production secrets rotate on Azure App Service (or Meta tokens renew), local `.env*` files can go stale even though production is healthy.
+
+### 7.1 Syncing from Azure App Service (Read-only Fetch)
+
+Prerequisite: `az login` completed with access to `rg-yuzora_roy_ai`. Never paste or commit fetched values into files, issues, or logs.
+
+```powershell
+# Inspect keys / sync a specific setting (e.g. IG_ACCESS_TOKEN, IG_USER_ID, THREADS_ACCESS_TOKEN, DATABASE_URL)
+az webapp config appsettings list --name stock-platform-roy `
+  --resource-group rg-yuzora_roy_ai -o json |
+  ConvertFrom-Json | Where-Object name -in @('IG_ACCESS_TOKEN','IG_USER_ID','THREADS_ACCESS_TOKEN') |
+  Select-Object name, @{N='len';E={$_.value.Length}}
+```
+
+Update the matching `KEY=value` lines in `apps/web/.env.local` (or `apps/web/.env.azure` for `DATABASE_URL`) directly in-place without printing secrets to stdout.
+
+### 7.2 Read-only Verification per Third-Party Service
+
+All checks below are read-only and must use an explicit short timeout (e.g. `10s`):
+
+| Credential Group | Verification Method (Read-only) | Expected Pass Signal |
+| :--- | :--- | :--- |
+| **Instagram (`IG_ACCESS_TOKEN`, `IG_USER_ID`)** | `GET https://graph.facebook.com/v21.0/{IG_USER_ID}?fields=username&access_token={IG_ACCESS_TOKEN}` and `GET .../{IG_USER_ID}/media?fields=id,media_type,timestamp&limit=3` | HTTP `200` with `username` / `data[]` |
+| **Facebook Page (`FB_ACCESS_TOKEN`, `FB_PAGE_ID`)** | `GET https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=id,name` and `GET .../me/accounts?fields=id,name` | HTTP `200` matching `FB_PAGE_ID` |
+| **Threads (`THREADS_ACCESS_TOKEN`, `THREADS_USER_ID`)** | `GET https://graph.threads.net/v1.0/me?fields=username&access_token={THREADS_ACCESS_TOKEN}` | HTTP `200` with `username` |
+| **LLM (`FALLBACK*_LLM_API_KEY`, `OPENAI_API_KEY`)** | `GET {BACKEND_URL}/models` with `Authorization: Bearer {API_KEY}` | HTTP `200` with model list (`opencode.ai` primary key is legacy; production uses Gemini + Groq fallback) |
+| **Cloudflare Workers AI (`CF_AI_TOKEN`, `CF_ACCOUNT_ID`)** | `GET https://api.cloudflare.com/client/v4/user/tokens/verify` and `GET .../accounts/{CF_ACCOUNT_ID}/ai/models/search?per_page=1` with `Bearer {CF_AI_TOKEN}` | HTTP `200`, `success: true`, `status: "active"` |
+| **SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`)** | Connect to `SMTP_HOST:SMTP_PORT` (`587`), issue `EHLO` → `STARTTLS` → `AUTH LOGIN` → `QUIT` (do not send mail) | `235 Authentication successful` |
+| **Google / LINE OAuth (`GOOGLE_CLIENT_*`, `LINE_CLIENT_*`, `THREADS_APP_*`)** | Browser interactive authorization-code flow required; cannot be verified via stateless read-only API | Verify key parity against Azure App Settings |
+| **Azure SQL (`DATABASE_URL` in `apps/web/.env.azure`)** | `node packages/database/scripts/diag-size.mjs` (requires temporary single-IP SQL firewall rule) | Prints `DATABASE SIZE`, `TOP TABLES`, `ROW COUNTS` |

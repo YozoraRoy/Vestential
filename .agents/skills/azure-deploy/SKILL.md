@@ -191,6 +191,7 @@ az webapp config appsettings set --name stock-platform-roy --resource-group rg-y
 >
 > 取得後以單行 `DATABASE_URL=<值>` 覆寫 `apps/web/.env.azure`（保留首行註解），再以 `node packages/database/scripts/diag-size.mjs` 驗證（應跑出 DATABASE SIZE／TOP TABLES 三張表）。
 > 前提：本機已 `az login`，且 Azure SQL 防火牆已放行目前 IP（見上一節第 4 點，用完即刪）。
+> 若需同步或盤點 `apps/web/.env.local` 的其他第三方憑證（IG／Threads／FB／LLM／Cloudflare／SMTP），請依循 [deployment-and-ops_zh.md §7](../../docs/deployment-and-ops_zh.md#7-本機-env-憑證盤點與同步) 的唯讀驗證與同步流程。
 
 ---
 
