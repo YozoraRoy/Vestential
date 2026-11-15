@@ -12,6 +12,7 @@ import {
   META_RETRY_MAX_ATTEMPTS,
 } from '@stock/ai-engine'
 import { IG_DRIVE_COMMENT } from '@/lib/social'
+import { getSocialAccessToken } from './social-tokens'
 
 export { MetaSpamSuspectedError }
 
@@ -39,28 +40,33 @@ export interface PublishConfig {
   }
 }
 
-function getPublishConfig(): PublishConfig {
+async function getPublishConfig(): Promise<PublishConfig> {
+  const [igTok, thTok, fbTok] = await Promise.all([
+    getSocialAccessToken('instagram'),
+    getSocialAccessToken('threads'),
+    getSocialAccessToken('facebook'),
+  ])
   return {
     instagram: {
-      accessToken: process.env.IG_ACCESS_TOKEN,
+      accessToken: igTok.token,
       userId: process.env.IG_USER_ID,
     },
     threads: {
-      accessToken: process.env.THREADS_ACCESS_TOKEN,
+      accessToken: thTok.token,
       userId: process.env.THREADS_USER_ID,
       appId: process.env.THREADS_APP_ID,
       appSecret: process.env.THREADS_APP_SECRET,
     },
     facebook: {
-      accessToken: process.env.FB_ACCESS_TOKEN,
+      accessToken: fbTok.token,
       pageId: process.env.FB_PAGE_ID,
     },
   }
 }
 
-/** 從 env 讀取單平台設定；未設定時回傳 null。 */
-function platformEnv(platform: SocialPostPlatform): PublishConfig[SocialPostPlatform] | null {
-  const c = getPublishConfig()
+/** 從 DB（優先）或 env 讀取單平台設定；未設定時回傳 null。 */
+async function platformEnv(platform: SocialPostPlatform): Promise<PublishConfig[SocialPostPlatform] | null> {
+  const c = await getPublishConfig()
   return c[platform] ?? null
 }
 
@@ -110,7 +116,7 @@ export async function publishSocialPost(
     await clearSocialPost(platform, editionKey)
   }
 
-  const env = platformEnv(platform)
+  const env = await platformEnv(platform)
   if (!env?.accessToken) {
     await recordFailure(platform, editionKey, content, imageUrl, 'missing access token in env')
     return { platform, status: 'failed', error: 'missing access token in env' }
@@ -352,7 +358,7 @@ async function publishInstagram(
  * retry_count＋1，first_error 保留首次，error 記末次），只剩人工 force。
  */
 export async function republishDeferredPost(row: SocialPostRow): Promise<PublishResult> {
-  const env = platformEnv('instagram')
+  const env = await platformEnv('instagram')
   if (!env?.accessToken) {
     return markSocialDeferred(row, 'missing access token in env（重打）', 'terminal')
   }

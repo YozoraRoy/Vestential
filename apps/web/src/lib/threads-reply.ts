@@ -1,6 +1,7 @@
 import { createQuickLLM, dataBlock, injectionGuardNote, sanitizeDataField } from '@stock/ai-engine'
 import { loadConfig } from '@stock/core'
 import { graphPost, waitForContainer } from './social-publish'
+import { getSocialAccessToken } from './social-tokens'
 
 // ─── Threads 回覆小編（擬稿 → 審核 → 發布）────────────────────────────
 // 讀取「目標貼文」採公開 SSR 頁（API 對非自家貼文回 subcode 33，讀不到）；
@@ -96,7 +97,7 @@ const decode = (s: string) => {
 
 /** 用 API 反查自家貼文（permalink 含該 shortcode 的就是）。 */
 async function findOwnThreadByShortcode(shortcode: string): Promise<ThreadsPostInfo | null> {
-  const token = process.env.THREADS_ACCESS_TOKEN
+  const { token } = await getSocialAccessToken('threads')
   const userId = process.env.THREADS_USER_ID
   if (!token || !userId) return null
   try {
@@ -122,7 +123,7 @@ async function findOwnThreadByShortcode(shortcode: string): Promise<ThreadsPostI
 
 /** 刪除一則自家 Threads media（回覆也適用）。注意 endpoint 是 /{media-id}，不要帶 user-id。 */
 export async function deleteThreadsMedia(mediaId: string): Promise<void> {
-  const token = process.env.THREADS_ACCESS_TOKEN
+  const { token } = await getSocialAccessToken('threads')
   if (!token) throw new Error('THREADS_ACCESS_TOKEN 未設定')
   const res = await fetch(`${THREADS_API}/${mediaId}?access_token=${encodeURIComponent(token)}`, { method: 'DELETE', signal: AbortSignal.timeout(30_000) })
   if (!res.ok) {
@@ -161,7 +162,7 @@ export async function publishThreadsReply(
   replyText: string,
   replyToId: string,
 ): Promise<{ replyMediaId: string; permalink: string }> {
-  const token = process.env.THREADS_ACCESS_TOKEN
+  const { token } = await getSocialAccessToken('threads')
   const userId = process.env.THREADS_USER_ID
   if (!token) throw new Error('THREADS_ACCESS_TOKEN 未設定')
   if (!userId) throw new Error('THREADS_USER_ID 未設定')
