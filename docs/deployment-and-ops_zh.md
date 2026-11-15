@@ -51,6 +51,8 @@
 | `FB_ACCESS_TOKEN` | Facebook system user token（EAAL…，長期有效） | `FB_ACCESS_TOKEN` |
 | `FB_PAGE_ID` | 粉專 ID（發文時自動由 system user 換出 page token） | `FB_PAGE_ID` |
 
+> 2026-11 起社群只啟用 **Threads**（`lib/social-platforms.ts` 的 `ACTIVE_SOCIAL_PLATFORMS`）：Instagram／Facebook 已停止發布與 token 偵測，`deploy.yml` 也不再注入 `IG_*`／`FB_*` secrets（Azure 上的舊 App Settings 留著無害，程式不會讀）。IG／FB 的發布程式保留，日後要恢復只改該常數並把 secrets 加回 deploy.yml。
+
 > 註：以下為**選填 env（deploy.yml 未硬編，不設即用 code 預設）**，有 Meta 限流疑慮時才需到 Azure App Settings 加設：
 >
 > | Azure App Setting | 預設值 | 說明 |
@@ -101,7 +103,7 @@
    - 行為：驅動 `/agent-arena` 五階段（briefing → 4 agent 決策 → discussion → 裁決 → 排行榜）。為 GH 排程備援，主要時鐘為 in-process 的 `arena-scheduler.ts`（`ARENA_CRON_ENABLED=true`）。
 7. **社群 token 健康檢查 (`check-social-tokens.yml`)**：
    - 時間：每日台灣時間 **03:30**。
-   - 行為：呼叫 `/api/social/token-health`，檢查 IG/Threads/FB 憑證；異常即寄發告警信（換發步驟見 §6）。
+   - 行為：呼叫 `/api/social/token-health`，只檢查目前啟用平台（目前僅 Threads）的憑證；異常即寄發告警信（換發步驟見 §6）。
 8. **部署 (`deploy.yml`)**：
    - 觸發：任何 push 至 `main` 分支。
    - 行為：GitHub Runner 建置→zipdeploy 至 Azure App Service，並同步 App Settings（含所有社群 token）。
@@ -316,9 +318,11 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 
 ---
 
-## 6. 社群憑證（IG / Threads / Facebook）維運
+## 6. 社群憑證（目前僅 Threads）維運
 
-`check-social-tokens.yml` 每日台灣時間 03:30 呼叫 `/api/social/token-health` 檢查三平台憑證，任一失效即在健康檢查回信通知中夾帶告警。**Token 一旦過期，社群自動發文（`social-publish.ts`）與乾跑預覽的圖卡上傳都會失敗。**
+> 2026-11 起只留 Threads：`/api/social/token-health` 只驗 Threads，IG／FB 不再偵測、也不再寄告警。以下 IG／FB 段落保留給日後恢復參考（恢復時把 `ACTIVE_SOCIAL_PLATFORMS` 加回 `'instagram'`／`'facebook'`，並把 secrets 加回 `deploy.yml`）。
+
+`check-social-tokens.yml` 每日台灣時間 03:30 呼叫 `/api/social/token-health` 檢查目前啟用平台的憑證（目前僅 Threads），失效即在健康檢查回信通知中夾帶告警。**Token 一旦過期，社群自動發文（`social-publish.ts`）與乾跑預覽的圖卡上傳都會失敗。**
 
 > 節慶發文與首回覆提問沿用同一套憑證與去重表（`social_posts`），維運方式相同，功能細節見 `docs/features-guide.md` §8.2。
 

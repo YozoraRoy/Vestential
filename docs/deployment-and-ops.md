@@ -51,6 +51,8 @@ Set the following keys under **Settings → Secrets and variables → Actions** 
 | `FB_ACCESS_TOKEN` | Facebook system user token (EAAL…, long-lived) | `FB_ACCESS_TOKEN` |
 | `FB_PAGE_ID` | Page ID (the page token is automatically exchanged from the system user when posting) | `FB_PAGE_ID` |
 
+> Since 2026-11 only **Threads** is active (`ACTIVE_SOCIAL_PLATFORMS` in `lib/social-platforms.ts`): Instagram/Facebook publishing and token checks are stopped, and `deploy.yml` no longer injects the `IG_*`/`FB_*` secrets (old Azure App Settings are harmless; the code does not read them). The IG/FB publishing code is kept; to restore, change that constant and add the secrets back to `deploy.yml`.
+
 > Note: the following are **optional env vars (not hard-coded in deploy.yml; the code default applies if unset)**; add them in Azure App Settings only when there is a concern about Meta rate limiting:
 >
 > | Azure App Setting | Default value | Description |
@@ -101,7 +103,7 @@ The system uses **12 GitHub Actions workflows** (8 scheduled jobs + 1 manual bac
    - Behaviour: drives the five `/agent-arena` stages (briefing → 4 agent decisions → discussion → ruling → leaderboard). This is the GitHub schedule fallback; the main clock is the in-process `arena-scheduler.ts` (`ARENA_CRON_ENABLED=true`).
 7. **Social token health check (`check-social-tokens.yml`)**:
    - Time: **03:30** Taiwan time daily.
-   - Behaviour: calls `/api/social/token-health` to check the IG/Threads/FB credentials; on an anomaly it sends an alert email immediately (for the renewal steps see §6).
+   - Behaviour: calls `/api/social/token-health` to check the credentials of the active platforms only (currently Threads); on an anomaly it sends an alert email immediately (for the renewal steps see §6).
 8. **Deploy (`deploy.yml`)**:
    - Trigger: any push to the `main` branch.
    - Behaviour: build on the GitHub Runner → zipdeploy to Azure App Service, and sync the App Settings (including all social tokens).
@@ -334,9 +336,11 @@ gh issue close <N> --repo YozoraRoy/vestential --reason completed
 
 ---
 
-## 6. Social Credential (IG / Threads / Facebook) Operations
+## 6. Social Credential (Threads only) Operations
 
-`check-social-tokens.yml` calls `/api/social/token-health` daily at 03:30 Taiwan time to check the three platforms' credentials, and if any is invalid it attaches an alert to the health-check reply. **Once a token expires, social auto-posting (`social-publish.ts`) and the card uploads of dry-run previews will both fail.**
+> Since 2026-11 only Threads is enabled (`ACTIVE_SOCIAL_PLATFORMS` in `lib/social-platforms.ts`): Instagram/Facebook publishing and token checks are stopped, and `deploy.yml` no longer injects the `IG_*`/`FB_*` secrets (old Azure App Settings are harmless because the code no longer reads them). The IG/FB publishing code is kept; to restore, add them back to that constant and to `deploy.yml`.
+
+`check-social-tokens.yml` calls `/api/social/token-health` daily at 03:30 Taiwan time to check the active platforms' credentials (currently Threads only), and if any is invalid it attaches an alert to the health-check reply. **Once a token expires, social auto-posting (`social-publish.ts`) and the card uploads of dry-run previews will both fail.**
 
 > Festival posting and the first-reply question reuse the same set of credentials and the deduplication table (`social_posts`), and are operated the same way; for the feature details see §8.2 of `docs/features-guide.md`.
 

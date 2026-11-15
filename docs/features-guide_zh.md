@@ -192,13 +192,14 @@
 - 進入 `/admin/*` 需通過 `isAdminUser`（`lib/auth.ts`）：`ADMIN_LINE_USER_IDS`（LINE user id）或 `ADMIN_EMAILS`（登入 email）任一符合即管理員，否則導向登入。
 - 8 個子頁：總覽（概況＋狀態檢查）、市場焦點（手動觸發/檢視）、週期進場（掃描記錄）、社群小編（乾跑＋自動發文）、競技場（檢視＋手動 tick）、使用量、設定（agent 參數設定）、訂閱者。
 
-### 8.2 社群小編（IG / Threads / FB）
-- **平台**：Instagram（IGAA 長效 token）、Threads（THAA）、Facebook 粉專（system user token）。三平台皆自動發文。
+### 8.2 社群小編（目前僅 Threads）
+- **啟用平台**：只留 Threads（2026-11 起，開關 `lib/social-platforms.ts` 的 `ACTIVE_SOCIAL_PLATFORMS`）。Instagram／Facebook 的發布與 token 偵測已停用，程式與 DB 型別保留；後台也只顯示 Threads。
+- **平台**：Instagram（IGAA 長效 token）、Threads（THAA）、Facebook 粉專（system user token）——IG／FB 為保留程式、目前不執行。
 - **圖卡風格**：`ai`（AI 吉祥物全圖卡，**預設**）、`classic`（資訊卡）、`meme`（梗圖）；由 `social.card_style` 全域設定，亦可在乾跑時按平台指定。
-- **乾跑 (dry-run)**：後台觸發即產生三平台文案＋圖卡（base64）預覽，不實際發布。
+- **乾跑 (dry-run)**：後台觸發即產生啟用平台（目前僅 Threads）文案＋圖卡（base64）預覽，不實際發布。
 - **自動發文規則**：每日以 6 小時為頻率檢查（`social-trigger.ts`），有 `hasNewEdition`（新一期市場焦點）且未重複發過才發布，並寫入 `social_posts` 去重。
 - **節慶小編**：獨立節慶日期表（`lib/festival-calendar.ts`，中秋 2024–2026 確定值、2027–2028 推估待確認；時區一律 Asia/Taipei）；節日當天 08:00（台北）由 `social-festival.yml`（每日 00:00 UTC）觸發全自動發賀圖＋貼文，去重 key `festival:{id}:{YYYY-MM-DD}`；站內全域頂部橫幅僅當天顯示、隔日自動恢復。
-- **首回覆問 Meta AI**：主文發出後 Threads 自回覆（`reply_to_id`）＋IG 第二則留言（第一則維持導流）自動發提問；問題由 LLM 依當期內容四類輪換（價值投資／新聞／風險／情緒）生成、固定題庫兜底；開關 `social.reply_tag_metaai` 三態（`on`＝@meta.ai 版／`editor`＝去 tag 小編提問／`off`＝不發）——台灣未開放 @meta.ai，**預設 `editor`**，待開放後乾跑驗證再切 `on`。
+- **首回覆問 Meta AI**：主文發出後 Threads 自回覆（`reply_to_id`）自動發提問（IG 第二則留言自 2026-11 停用）；問題由 LLM 依當期內容四類輪換（價值投資／新聞／風險／情緒）生成、固定題庫兜底；開關 `social.reply_tag_metaai` 三態（`on`＝@meta.ai 版／`editor`＝去 tag 小編提問／`off`＝不發）——台灣未開放 @meta.ai，**預設 `editor`**，待開放後乾跑驗證再切 `on`。
 - **FB 特殊流程**：system user token 不能直接貼文，系統先呼叫 `/me/accounts` 換出對應 `FB_PAGE_ID` 的 page token 再發布。
 - **Meta 呼叫保護**：所有 Meta Graph API 呼叫經 `graphFetch` 統一出口——呼叫間錯峰（`META_PACE_MS`，預設 5 秒）、暫態錯誤（HTTP 5xx／Graph code -1／Fatal 訊息／`is_transient`）退避重試（`Retry-After` 優先否則指數退避＋jitter，最多 `META_RETRY_MAX_ATTEMPTS`＝3 次）；耗盡後告警信載明 HTTP 狀態＋Graph code＋已重試次數。
 - **憑證健康**：`check-social-tokens.yml` 每日 03:30 檢查 `GET /api/social/token-health`，失效即告警；換發步驟見 `docs/deployment-and-ops.md` §5。
