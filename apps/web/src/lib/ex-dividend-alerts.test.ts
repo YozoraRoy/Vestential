@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn(async () => true) }))
+const { sendMock, settingStore } = vi.hoisted(() => ({
+  sendMock: vi.fn(async () => true),
+  settingStore: new Map<string, string>(),
+}))
 vi.mock('./email', () => ({ sendMarketFocusAlert: sendMock }))
+vi.mock('@stock/database', () => ({
+  getAgentSetting: vi.fn(async (key: string) => settingStore.get(key) ?? null),
+  setAgentSetting: vi.fn(async ({ key, value }: { key: string; value: string }) => {
+    settingStore.set(key, value)
+  }),
+}))
 
 import {
   alertExLastBuyCountdown,

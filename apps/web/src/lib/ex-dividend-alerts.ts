@@ -12,8 +12,11 @@
  *   不新增 cron（排程順帶更新語義沿既有同步鈕／16:00 排程）。
  */
 
+import { getAgentSetting, setAgentSetting } from '@stock/database'
 import { sendMarketFocusAlert } from './email'
 import { escapeHtml } from './html-escape'
+
+const LAST_EX_BUY_ALERT_DATE_KEY = 'email.last_ex_last_buy_date'
 
 const DEDUP_MS = 30 * 60 * 1000
 const lastSentAt = new Map<string, number>()
@@ -118,16 +121,27 @@ export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[], n
     if (!isExDividendAlertWindow(now)) return
     const list = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date)
     if (list.length === 0) return
-    if (!shouldSend(`ex-dividend:last-buy-countdown:${taiwanDateKey(now)}`)) return
+    const dateKey = taiwanDateKey(now)
+    const lastDbDate = await getAgentSetting(LAST_EX_BUY_ALERT_DATE_KEY).catch(() => null)
+    if (lastDbDate === dateKey) return
+    if (!shouldSend(`ex-dividend:last-buy-countdown:${dateKey}`)) return
     const lines = list
       .slice(0, 20)
       .map((i) => `- ${stockDisplayLabel(i.symbol, i.name)}：除息日 ${i.ex_date}，最後買進日 ${i.ex_last_buy_date}（今日）`)
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
-    await sendMarketFocusAlert(
+    const sent = await sendMarketFocusAlert(
       '除權息最後買進日提醒',
       `以下標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`,
       { variant: 'notice', htmlDetail: buildExLastBuyCountdownHtml(list) },
     )
+    if (sent) {
+      await setAgentSetting({
+        key: LAST_EX_BUY_ALERT_DATE_KEY,
+        value: dateKey,
+        category: 'email',
+        label: '除權息最後買進日提醒最後寄送日',
+      }).catch(() => {})
+    }
   } catch (e) {
     console.error('[ExDividendAlert] countdown alert failed (non-blocking):', e)
   }
