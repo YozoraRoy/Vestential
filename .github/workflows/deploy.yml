@@ -102,7 +102,7 @@ jobs:
               THREADS_APP_SECRET="${{ secrets.THREADS_APP_SECRET }}" \
               ADMIN_LINE_USER_IDS=U992bf6b74efcd58e3dc5d3f8d356e880 \
               ADMIN_EMAILS=yuzora_roy@hotmail.com,yozora.sc@gmail.com \
-              ARENA_CRON_ENABLED=true
+              ARENA_CRON_ENABLED=false
 
       - name: Set startup command
         run: |

@@ -1,30 +1,34 @@
+import { findRunningArenaTickJob, getArenaRoundProgress } from '@stock/database'
 import { isTaiwanMarketTradingDay } from '@/utils/taiwan-calendar'
 
 /**
- * 台灣時區的競技場階段排程（與 .github/workflows/arena-tick.yml 相同時間表）。
- * GitHub Actions `schedule` 事件常有 4~5 小時佇列延遲，導致盤中進度顯示為空；
- * 此排程在 App Service 內直接以台灣時間準時觸發，做為主要時鐘；
- * GH workflow 保留做為冪等補跑備援（tick 有 alreadyRun 防呆，重複呼叫安全）。
+ * 台灣時區的競技場階段排程（與 .github/workflows/arena-tick.yml 及 VM crontab 相同時間表）。
  *
- * 觸發方式是呼叫本機 tick route（`/api/agent-arena/tick`），
- * 使用已部署的 `SYNC_TOKEN` 走 `authorizeSync` 驗證，不需要額外密鑰。
+ * 防爆設計（Issue/Plan 2026-11-16）：
+ * 1. 容器啟動後延遲 STARTUP_DELAY_MS（90 秒）才開始第一次 sweep，避開開機與連線池暖機高峰。
+ * 2. 觸發前先查 DB `getArenaRoundProgress(roundDate, spec.key)` 與 `findRunningArenaTickJob()`：
+ *    重啟前已跑完（done）或正在執行中的階段直接略過，絕不在重啟瞬間重複打內部 API。
+ * 3. `sweepInFlight` 互斥鎖＋每次 sweep 最多只觸發 1 個未完成階段，避免單核 B1 同時塞入多個重型 tick。
  */
 
 interface PhaseSpec {
   key: string
+  phase: 'premarket' | 'slot' | 'close'
+  slot: number | null
   query: string // URL query：phase/slot
   atMin: number // 當日分鐘數（台灣時間）
 }
 
 const PHASE_SCHEDULE: PhaseSpec[] = [
-  { key: 'premarket', query: 'phase=premarket', atMin: 9 * 60 },
-  { key: 'slot0', query: 'phase=slot&slot=0', atMin: 9 * 60 + 35 },
-  { key: 'slot1', query: 'phase=slot&slot=1', atMin: 10 * 60 + 35 },
-  { key: 'slot2', query: 'phase=slot&slot=2', atMin: 11 * 60 + 35 },
-  { key: 'slot3', query: 'phase=slot&slot=3', atMin: 13 * 60 + 5 },
-  { key: 'close', query: 'phase=close', atMin: 15 * 60 + 30 },
+  { key: 'premarket', phase: 'premarket', slot: null, query: 'phase=premarket', atMin: 9 * 60 },
+  { key: 'slot0', phase: 'slot', slot: 0, query: 'phase=slot&slot=0', atMin: 9 * 60 + 35 },
+  { key: 'slot1', phase: 'slot', slot: 1, query: 'phase=slot&slot=1', atMin: 10 * 60 + 35 },
+  { key: 'slot2', phase: 'slot', slot: 2, query: 'phase=slot&slot=2', atMin: 11 * 60 + 35 },
+  { key: 'slot3', phase: 'slot', slot: 3, query: 'phase=slot&slot=3', atMin: 13 * 60 + 5 },
+  { key: 'close', phase: 'close', slot: null, query: 'phase=close', atMin: 15 * 60 + 30 },
 ]
 
+const STARTUP_DELAY_MS = 90 * 1000 // 啟動後延遲 90 秒再首次掃描
 const RETRY_COOLDOWN_MS = 10 * 60 * 1000 // 10 分鐘內不重複嘗試同一個階段
 const SWEEP_INTERVAL_MS = 30 * 1000
 const WINDOW_MINUTES = 240 // 目標時間後 4 小時內仍允許補跑
@@ -49,6 +53,7 @@ async function fetchJobStatus(
 }
 
 let started = false
+let sweepInFlight = false
 const lastAttemptAt: Record<string, number> = {}
 
 function taiwanNowMinutes(): number {
@@ -75,7 +80,6 @@ async function triggerPhase(roundDate: string, spec: PhaseSpec): Promise<void> {
     ...(syncToken ? { Authorization: `Bearer ${syncToken}` } : {}),
   }
 
-  // POST 建 job：route 立即回 jobId（背景執行，不再同步等 LLM；秒級返回）。
   let postRes: Response
   try {
     postRes = await fetch(`${base}/api/agent-arena/tick?date=${roundDate}&${spec.query}`, {
@@ -98,7 +102,6 @@ async function triggerPhase(roundDate: string, spec: PhaseSpec): Promise<void> {
     return
   }
 
-  // 本地輪詢 status（每 10s；上限涵蓋 watchdog（20 min 最長）＋緩衝，約 26 min）。
   const statusUrl = `${base}/api/agent-arena/tick/status?jobId=${posted.jobId}`
   const deadline = Date.now() + 26 * 60 * 1000
   while (Date.now() < deadline) {
@@ -119,38 +122,58 @@ async function triggerPhase(roundDate: string, spec: PhaseSpec): Promise<void> {
       console.warn(`[ArenaScheduler] ${spec.key} failed date=${roundDate}: ${st.error ?? '未知錯誤'}`)
       return
     }
-    // running → 繼續輪詢
   }
   console.warn(`[ArenaScheduler] ${spec.key} 輪詢逾時（job ${posted.jobId}），下次 sweep 再確認`)
 }
 
 async function sweep(): Promise<void> {
-  const nowMin = taiwanNowMinutes()
-  const roundDate = taiwanNowDate()
-  const todayTw = new Date(`${roundDate}T00:00:00`)
-  if (!isTaiwanMarketTradingDay(todayTw)) return
+  if (sweepInFlight) return
+  sweepInFlight = true
+  try {
+    const nowMin = taiwanNowMinutes()
+    const roundDate = taiwanNowDate()
+    const todayTw = new Date(`${roundDate}T00:00:00`)
+    if (!isTaiwanMarketTradingDay(todayTw)) return
 
-  for (const spec of PHASE_SCHEDULE) {
-    if (nowMin < spec.atMin) continue
-    if (nowMin > spec.atMin + WINDOW_MINUTES) continue
-    const lastAt = lastAttemptAt[spec.key] ?? 0
-    if (Date.now() - lastAt < RETRY_COOLDOWN_MS) continue
+    for (const spec of PHASE_SCHEDULE) {
+      if (nowMin < spec.atMin) continue
+      if (nowMin > spec.atMin + WINDOW_MINUTES) continue
+      const lastAt = lastAttemptAt[spec.key] ?? 0
+      if (Date.now() - lastAt < RETRY_COOLDOWN_MS) continue
 
-    lastAttemptAt[spec.key] = Date.now()
-    try {
-      await triggerPhase(roundDate, spec)
-    } catch (e) {
-      console.error(`[ArenaScheduler] ${spec.key} tick failed:`, (e as Error).message ?? e)
+      // 先查 DB：該階段若已完成或正在執行中，記下時間戳直接略過，不打內部 HTTP API
+      const [alreadyDone, runningJob] = await Promise.all([
+        getArenaRoundProgress(roundDate, spec.key).catch(() => false),
+        findRunningArenaTickJob(roundDate, spec.phase, spec.slot).catch(() => null),
+      ])
+      if (alreadyDone || runningJob) {
+        lastAttemptAt[spec.key] = Date.now()
+        continue
+      }
+
+      lastAttemptAt[spec.key] = Date.now()
+      try {
+        await triggerPhase(roundDate, spec)
+      } catch (e) {
+        console.error(`[ArenaScheduler] ${spec.key} tick failed:`, (e as Error).message ?? e)
+      }
+      // 單次 sweep 最多只觸發 1 個未完成階段，避免連續轟炸單核 B1
+      break
     }
+  } finally {
+    sweepInFlight = false
   }
 }
 
 export function startArenaPhaseScheduler(): void {
   if (started) return
   started = true
-  const timer = setInterval(() => {
+  const startTimer = setTimeout(() => {
     void sweep()
-  }, SWEEP_INTERVAL_MS)
-  timer.unref?.()
-  void sweep()
+    const timer = setInterval(() => {
+      void sweep()
+    }, SWEEP_INTERVAL_MS)
+    timer.unref?.()
+  }, STARTUP_DELAY_MS)
+  startTimer.unref?.()
 }
