@@ -3,6 +3,7 @@ import {
   buildDividendCalendar,
   computeDividendTaxCredit,
   computeNhiSupplementFee,
+  shouldWarnNhiForHolding,
   DIVIDEND_TAX_CREDIT_CAP,
 } from './dividend-calendar'
 
@@ -80,5 +81,35 @@ describe('Issue #120 dividend-calendar engine', () => {
     expect(noDivs.hasHoldings).toBe(true)
     expect(noDivs.eventCount).toBe(0)
     expect(noDivs.totalGross).toBe(0)
+  })
+
+  it('2027 年尚無官方公告時，依 2026 同期推估預覽並標註 isEstimated', () => {
+    const res = buildDividendCalendar(
+      [{ symbol: '0056', name: '元大高股息', shares: 10000, market: 'tw' }],
+      [{ symbol: '0056', ex_date: '2026-02-05', cash_dividend: 1.07 }],
+      { today: '2026-11-16', year: 2027 },
+    )
+    expect(res.isEstimatedYear).toBe(true)
+    expect(res.estimatedFromYear).toBe(2026)
+    expect(res.eventCount).toBe(1)
+    expect(res.months[1]?.events[0]?.exDate).toBe('2027-02-05')
+    expect(res.months[1]?.events[0]?.isEstimated).toBe(true)
+  })
+
+  it('不配息 ETF（無現金股利紀錄）即使超過 25,000 股也不誤報健保預警', () => {
+    const noDivResult = shouldWarnNhiForHolding('009816', 50_000, 'tw', [])
+    expect(noDivResult.warn).toBe(false)
+
+    const zeroDivResult = shouldWarnNhiForHolding('009816', 50_000, 'tw', [
+      { symbol: '009816', ex_date: '2026-06-01', cash_dividend: 0 },
+    ])
+    expect(zeroDivResult.warn).toBe(false)
+
+    // 有配息且單次預估 >= 20,000 元才會預警
+    const highDivResult = shouldWarnNhiForHolding('0056', 25_000, 'tw', [
+      { symbol: '0056', ex_date: '2026-10-15', cash_dividend: 1.07 },
+    ])
+    expect(highDivResult.warn).toBe(true)
+    expect(highDivResult.estimatedGross).toBe(26_750)
   })
 })

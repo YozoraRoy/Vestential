@@ -17,6 +17,8 @@ import {
 } from '@/lib/portfolio-yield'
 import { PortfolioYieldModal } from '@/components/portfolio-yield-modal'
 import { PortfolioDividendCalendar } from '@/components/portfolio-dividend-calendar'
+import { PortfolioRadarPanel } from '@/components/portfolio-radar-panel'
+import { shouldWarnNhiForHolding } from '@/lib/dividend-calendar'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
@@ -209,7 +211,7 @@ export default function PortfolioPage() {
   const router = useRouter()
   const { dict, locale } = useI18n()
   const ui = dict.portfolio
-  const [portfolioTab, setPortfolioTab] = useState<'overview' | 'dividend-calendar'>('overview')
+  const [portfolioTab, setPortfolioTab] = useState<'overview' | 'dividend-calendar' | 'radar'>('overview')
   const STRATEGIES = useMemo(() => buildStrategies(ui), [ui])
   const typo = useTableTypography()
   // #23：safe-parse 友善文案（i18n 三語），傳給 parseJsonSafe。
@@ -1326,7 +1328,7 @@ export default function PortfolioPage() {
     'w-full bg-[var(--bg-secondary)] border border-white/10 rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)] disabled:opacity-50'
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
+    <div className={portfolioTab === 'overview' ? 'w-full max-w-[1800px] mx-auto px-4 lg:px-8 py-8' : 'max-w-5xl mx-auto px-4 py-8'}>
       <WorkspaceBackLink className="mb-4" />
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
@@ -1372,6 +1374,17 @@ export default function PortfolioPage() {
         >
           {locale === 'en' ? 'Dividend Cashflow' : locale === 'ja' ? '配当キャッシュフロー' : '股利現金流'}
         </button>
+        <button
+          type="button"
+          onClick={() => setPortfolioTab('radar')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            portfolioTab === 'radar'
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+          }`}
+        >
+          {locale === 'en' ? 'Holdings Radar' : locale === 'ja' ? '銘柄レーダー' : '穿透雷達'}
+        </button>
       </div>
 
       {portfolioTab === 'dividend-calendar' ? (
@@ -1386,6 +1399,26 @@ export default function PortfolioPage() {
           }))}
           dividends={divRows}
           today={getTaiwanDateStrClient()}
+        />
+      ) : portfolioTab === 'radar' ? (
+        <PortfolioRadarPanel
+          radar={holdingsRadar}
+          hasHoldings={history.length > 0}
+          formatMoney={formatMoney}
+          labels={{
+            title: ui.radarTitle,
+            subtitle: ui.radarSubtitle,
+            topExposures: ui.radarTopExposures,
+            directHolding: ui.radarDirectHolding,
+            fromEtf: ui.radarFromEtf,
+            overlapTitle: ui.radarOverlapTitle,
+            overlapDesc: ui.radarOverlapDesc,
+            emptyTitle: locale === 'en' ? 'No ETF look-through data yet' : '尚無 ETF 穿透曝險資料',
+            emptyDesc:
+              locale === 'en'
+                ? 'Add at least one Taiwan ETF holding in Holdings Overview to inspect look-through stock exposure and overlaps.'
+                : '於「持股總覽」新增任一台股 ETF 持股後，即可於此檢視成分股真實曝險比例與重疊度分析。',
+          }}
         />
       ) : (
         <>
@@ -1780,198 +1813,6 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{ui.formMarket}</span>
-            <div className="flex rounded-lg overflow-hidden border border-white/10">
-              {(['tw', 'us'] as Market[]).map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMarket(m); setSymbol(''); setSymbolName(''); setCurrentPrice('') }}
-                  className={`px-4 py-1.5 text-sm transition ${market === m ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-                >
-                  {m === 'tw' ? ui.marketTw : ui.marketUs}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formSymbolLabel.replace('{example}', market === 'tw' ? ui.formSymbolExampleTw : ui.formSymbolExampleUs)}</label>
-            <div className="flex gap-2">
-              <input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder={market === 'tw' ? '2330' : 'AAPL'} className={inputCls} />
-              <button
-                type="button"
-                onClick={handleFetchQuote}
-                disabled={quoteLoading}
-                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15 transition disabled:opacity-50"
-              >
-                {quoteLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                {ui.formFetchPrice}
-              </button>
-            </div>
-            {symbolName && <p className="mt-1 text-xs text-[var(--accent)]">{symbolName}</p>}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formShares}</label>
-              <input type="number" min="0" step="1" value={shares} onChange={e => setShares(e.target.value)} placeholder="1000" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formCostPerShare.replace('{currency}', currency)}</label>
-              <input type="number" min="0" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="100" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formPricePerShare.replace('{currency}', currency)}</label>
-              <input type="number" min="0" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} placeholder="110" className={inputCls} />
-            </div>
-            {/* #44：累計股息輸入欄已移除（寫入一律 0；殖利率改由 TWSE 真源欄呈現）。 */}
-          </div>
-
-          <div>
-            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formStrategy}</label>
-            <select value={strategyId} onChange={e => setStrategyId(e.target.value)} className={inputCls}>
-              {STRATEGIES.map(s => (
-                <option key={s.id} value={s.id}>{s.nameZh}（{s.nameEn}）</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || analyzing}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-sm font-medium hover:bg-white/15 transition disabled:opacity-50"
-            >
-              <History className="w-4 h-4" />
-              {saving ? ui.formSaving : ui.formSavePnl}
-            </button>
-            <button
-              type="button"
-              onClick={handleAnalyze}
-              disabled={analyzing || saving || authMode !== 'user'}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
-            >
-              <Sparkles className="w-4 h-4" />
-              {analyzing ? ui.formAiAnalyzing : ui.formAiAnalyze}
-            </button>
-          </div>
-
-          {analyzing && (
-            <div className="space-y-1">
-              {retryCountdown !== null && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-                  <span className="text-xs font-medium text-amber-400">
-                    {ui.rateLimitRetrying.replace('{n}', String(retryCountdown))}
-                  </span>
-                </div>
-              )}
-              {progress.map((p, i) => (
-                <p key={i} className="text-xs text-[var(--text-secondary)]">
-                  {p.step}: {p.detail}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          {savedResult && (
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
-              <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[var(--accent-green)]" />
-                {savedResult.symbolName || savedResult.symbol} — {ui.resultTitle}
-              </h2>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalCost}</p>
-                  <p className="font-medium">{formatMoney(savedResult.costBasis, savedResult.market)}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultMarketValue}</p>
-                  <p className="font-medium">{formatMoney(savedResult.marketValue, savedResult.market)}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultUnrealizedPnl}</p>
-                  <p className={`font-bold ${savedResult.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
-                    {formatMoney(savedResult.unrealizedPnl, savedResult.market)}{' '}
-                    <span className="text-xs">{formatPct(savedResult.unrealizedPnlPct)}</span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalReturn}</p>
-                  <p className={`font-bold ${savedResult.totalReturn >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
-                    {formatMoney(savedResult.totalReturn, savedResult.market)}{' '}
-                    <span className="text-xs">{formatPct(savedResult.totalReturnPct)}</span>
-                  </p>
-                </div>
-                {/* #44：成本殖利率欄已移除（totalReturn 改裸價差；殖利率改由 TWSE 真源欄呈現）。 */}
-                {/* #27：淨損益並列（保留裸損益，稅費明細三行＋公式註腳＋三語） */}
-                <NetPnlView
-                  market={savedResult.market}
-                  symbol={savedResult.symbol}
-                  shares={savedResult.shares}
-                  cost={savedResult.cost}
-                  currentPrice={savedResult.currentPrice}
-                  discount={feeDiscount}
-                  ui={ui}
-                  helpText={ui.helpNet}
-                />
-              </div>
-            </div>
-          )}
-
-          {aiResult && (
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-medium flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-[var(--accent)]" />
-                  {ui.aiSuggestionTitle.replace('{strategy}', aiResult.strategy.nameZh)}
-                </h2>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${RATING_STYLE[aiResult.advice.rating]?.text}`}
-                  style={{ backgroundColor: `${RATING_STYLE[aiResult.advice.rating]?.bg}22` }}>
-                  {aiResult.advice.rating}
-                </span>
-              </div>
-              <p className="text-sm mb-1">{ui.aiConfidence.replace('{pct}', (aiResult.advice.confidence * 100).toFixed(0))}</p>
-              {(aiResult.advice.fairValue != null || aiResult.advice.marginOfSafety != null || aiResult.advice.upsideDownsidePct != null) && (
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] mb-2">
-                  {aiResult.advice.fairValue != null && <span>{ui.aiFairValue.replace('{currency}', currency).replace('{value}', aiResult.advice.fairValue.toLocaleString('en-US', { maximumFractionDigits: 2 }))}</span>}
-                  {aiResult.advice.marginOfSafety != null && <span>{ui.aiMarginOfSafety.replace('{pct}', aiResult.advice.marginOfSafety.toFixed(2))}</span>}
-                  {aiResult.advice.upsideDownsidePct != null && <span>{ui.aiUpside.replace('{pct}', formatPct(aiResult.advice.upsideDownsidePct))}</span>}
-                </div>
-              )}
-              <p className="text-sm font-medium mb-2">{aiResult.advice.summary}</p>
-              <div className="mb-2">
-                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiKeyPoints}</p>
-                <ul className="space-y-0.5">
-                  {aiResult.advice.keyPoints.map((k, i) => (
-                    <li key={i} className="text-xs text-[var(--text-primary)]">• {k}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="mb-3">
-                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiRisks}</p>
-                <ul className="space-y-0.5">
-                  {aiResult.advice.risks.map((r, i) => (
-                    <li key={i} className="text-xs text-[var(--accent-red)]">• {r}</li>
-                  ))}
-                </ul>
-              </div>
-              <p className="text-sm bg-[var(--bg-secondary)] rounded-lg p-3 border border-white/5">{aiResult.advice.action}</p>
-              {aiResult.usedFallback && <p className="mt-2 text-[10px] text-[var(--text-secondary)]">{ui.aiUsedFallback}</p>}
-            </div>
-          )}
-        </div>
-      </div>
-        </>
-      )}
-
       {history.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
@@ -1993,168 +1834,7 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {history.length > 0 && coreAssetStats.twCount > 0 && (
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold">{ui.coreAssetRatioTitle}</span>
-              <span
-                className={`px-2 py-0.5 rounded text-xs font-medium border ${
-                  coreAssetStats.ratioPct >= 70
-                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                    : coreAssetStats.ratioPct >= 50
-                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
-                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                }`}
-              >
-                {coreAssetStats.ratioPct >= 70
-                  ? ui.coreAssetRatioHealthy
-                  : coreAssetStats.ratioPct >= 50
-                  ? ui.coreAssetRatioModerate
-                  : ui.coreAssetRatioRisky}
-              </span>
-            </div>
-            <div className="text-xs text-[var(--text-secondary)]">
-              {ui.coreAssetRatioValue}：{formatMoney(coreAssetStats.coreMarketValue, 'tw')} / {formatMoney(coreAssetStats.totalMarketValue, 'tw')}
-              <span className="ml-2 font-mono font-bold text-[var(--text-primary)]">{coreAssetStats.ratioPct.toFixed(1)}%</span>
-            </div>
-          </div>
-
-          <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden mb-2">
-            <div
-              className={`h-full transition-all duration-500 ${
-                coreAssetStats.ratioPct >= 70
-                  ? 'bg-emerald-400'
-                  : coreAssetStats.ratioPct >= 50
-                  ? 'bg-blue-400'
-                  : 'bg-amber-400'
-              }`}
-              style={{ width: `${Math.min(100, Math.max(0, coreAssetStats.ratioPct))}%` }}
-            />
-          </div>
-
-          <p className="text-xs text-[var(--text-secondary)]">
-            {ui.coreAssetRatioHelp}（{coreAssetStats.coreCount} / {coreAssetStats.twCount} 檔標的符合核心資產）
-          </p>
-        </div>
-      )}
-
-      {/* Issue #132: 穿透式成分股重疊度雷達 */}
-      {history.length > 0 && holdingsRadar.hasEtf && (
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-8 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/5 pb-4">
-            <div>
-              <h3 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
-                <Target className="w-5 h-5 text-[var(--accent)]" />
-                {ui.radarTitle}
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">{ui.radarSubtitle}</p>
-            </div>
-          </div>
-
-          {/* 集中度預警 */}
-          {holdingsRadar.warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-amber-200 space-y-1.5 text-xs">
-              {holdingsRadar.warnings.map((w, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <span className="font-bold text-amber-400">⚠️</span>
-                  <span>{w}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 真實 Top 10 個股曝險排行榜 */}
-          <div>
-            <h4 className="text-xs font-semibold text-[var(--text-secondary)] mb-3">
-              {ui.radarTopExposures} (總市值 {formatMoney(holdingsRadar.totalPortfolioValue, 'tw')})
-            </h4>
-            <div className="space-y-3">
-              {holdingsRadar.topExposures.map((exp, idx) => (
-                <div key={exp.symbol} className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-[var(--accent)]">
-                        #{idx + 1}
-                      </span>
-                      <span className="text-sm font-semibold text-[var(--text-primary)]">
-                        {exp.name}
-                      </span>
-                      <span className="text-xs text-[var(--text-secondary)] font-mono">
-                        {exp.symbol}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="font-mono font-bold text-sm text-[var(--text-primary)]">
-                        {exp.weightPct.toFixed(1)}%
-                      </span>
-                      <span className="text-xs text-[var(--text-secondary)] ml-2">
-                        ({formatMoney(exp.totalExposedValue, 'tw')})
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 進度條 */}
-                  <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden mb-2">
-                    <div
-                      className="bg-[var(--accent)] h-full rounded-full transition-all duration-300"
-                      style={{ width: `${Math.min(100, exp.weightPct)}%` }}
-                    />
-                  </div>
-
-                  {/* 穿透組成來源 Chips */}
-                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                    {exp.directValue > 0 && (
-                      <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">
-                        {ui.radarDirectHolding}: {formatMoney(exp.directValue, 'tw')}
-                      </span>
-                    )}
-                    {exp.etfContributions.map((c) => (
-                      <span
-                        key={c.etfSymbol}
-                        className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-                      >
-                        {ui.radarFromEtf} {c.etfName}: {formatMoney(c.value, 'tw')} ({c.weightInEtfPct}%)
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* ETF 重疊度分析 */}
-          {holdingsRadar.overlaps.length > 0 && (
-            <div className="border-t border-white/5 pt-4">
-              <h4 className="text-xs font-semibold text-[var(--text-secondary)] mb-2">
-                {ui.radarOverlapTitle}
-              </h4>
-              <p className="text-xs text-[var(--text-secondary)] mb-3">{ui.radarOverlapDesc}</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {holdingsRadar.overlaps.map((pair, idx) => (
-                  <div key={idx} className="bg-white/[0.02] border border-white/5 rounded-xl p-3 text-xs">
-                    <div className="flex items-center justify-between font-medium mb-1.5 text-[var(--text-primary)]">
-                      <span>{pair.etfA} × {pair.etfB}</span>
-                      <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[10px]">
-                        重疊 {pair.overlapCount} 檔成分股
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1 text-[11px] text-[var(--text-secondary)]">
-                      {pair.commonStocks.map((cs) => (
-                        <span key={cs.symbol} className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
-                          {cs.name} ({(cs.weightA * 100).toFixed(1)}% / {(cs.weightB * 100).toFixed(1)}%)
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-10">
+      <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -2374,6 +2054,7 @@ export default function PortfolioPage() {
             <table className={tableClass(typo, 'w-full min-w-[1500px]')}>
               <thead>
                 <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
+                  <th className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap font-medium">{ui.colAction}</th>
                   {visibleColumns.rating && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colRating}</th>}
                   {visibleColumns.name && (
                     <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('name')}>
@@ -2438,7 +2119,6 @@ export default function PortfolioPage() {
                       <RecordsSortHeader label={ui.detailCreatedAt} active={sortKey === 'created'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('created')} />
                     </th>
                   )}
-                  <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colAction}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2449,6 +2129,31 @@ export default function PortfolioPage() {
                   return (
                     <Fragment key={item.id}>
                       <tr onClick={() => expandHistory(item)} className="border-b border-white/5 hover:bg-white/5 transition cursor-pointer">
+                        <td className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap">
+                          {authMode === 'user' && (
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => openEditRecord(item)}
+                                title={ui.btnEditRecord}
+                                aria-label={ui.btnEditRecord}
+                                className="p-1.5 rounded-lg bg-white/5 text-[var(--accent)] hover:bg-white/10 transition"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteRecord(item)}
+                                disabled={deletingId === item.id}
+                                title={ui.btnDeleteRecord}
+                                aria-label={ui.btnDeleteRecord}
+                                className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50 disabled:cursor-wait"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         {visibleColumns.rating && (
                           <td className="px-3 py-2 whitespace-nowrap">
                             <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${ratingColor(item.recommendation)}`}
@@ -2462,14 +2167,18 @@ export default function PortfolioPage() {
                           <td className="px-3 py-2 whitespace-nowrap text-xs text-[var(--text-secondary)]">
                             <span className="inline-flex items-center gap-1.5">
                               <span>{item.symbol}</span>
-                              {item.market !== 'us' && item.symbol.startsWith('00') && item.shares >= 25000 && (
-                                <span
-                                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                                  title={ui.healthTaxWarning}
-                                >
-                                  ⚠️ 健保預警
-                                </span>
-                              )}
+                              {(() => {
+                                const nhi = shouldWarnNhiForHolding(item.symbol, item.shares, item.market, divRows)
+                                if (!nhi.warn) return null
+                                return (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                    title={`${ui.healthTaxWarning}（預估單次股利 NT$${nhi.estimatedGross.toLocaleString('en-US')}，約扣 2.11% NT$${nhi.estimatedFee.toLocaleString('en-US')}）`}
+                                  >
+                                    ⚠️ 健保預警
+                                  </span>
+                                )
+                              })()}
                               {item.market !== 'us' && (() => {
                                 const badge = getTierBadgeInfo(item.symbol, ui)
                                 return (
@@ -2521,31 +2230,6 @@ export default function PortfolioPage() {
                           </td>
                         )}
                         {visibleColumns.created && <td className="px-3 py-2 whitespace-nowrap text-xs">{(item.created_at || '').replace('T', ' ')}</td>}
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          {authMode === 'user' && (
-                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={() => openEditRecord(item)}
-                                title={ui.btnEditRecord}
-                                aria-label={ui.btnEditRecord}
-                                className="p-1.5 rounded-lg bg-white/5 text-[var(--accent)] hover:bg-white/10 transition"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRecord(item)}
-                                disabled={deletingId === item.id}
-                                title={ui.btnDeleteRecord}
-                                aria-label={ui.btnDeleteRecord}
-                                className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50 disabled:cursor-wait"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </td>
                       </tr>
                       {open && (
                         <tr className="border-b border-white/5">
@@ -2688,6 +2372,244 @@ export default function PortfolioPage() {
           </div>
         )}
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{ui.formMarket}</span>
+            <div className="flex rounded-lg overflow-hidden border border-white/10">
+              {(['tw', 'us'] as Market[]).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMarket(m); setSymbol(''); setSymbolName(''); setCurrentPrice('') }}
+                  className={`px-4 py-1.5 text-sm transition ${market === m ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                >
+                  {m === 'tw' ? ui.marketTw : ui.marketUs}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formSymbolLabel.replace('{example}', market === 'tw' ? ui.formSymbolExampleTw : ui.formSymbolExampleUs)}</label>
+            <div className="flex gap-2">
+              <input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder={market === 'tw' ? '2330' : 'AAPL'} className={inputCls} />
+              <button
+                type="button"
+                onClick={handleFetchQuote}
+                disabled={quoteLoading}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15 transition disabled:opacity-50"
+              >
+                {quoteLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {ui.formFetchPrice}
+              </button>
+            </div>
+            {symbolName && <p className="mt-1 text-xs text-[var(--accent)]">{symbolName}</p>}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formShares}</label>
+              <input type="number" min="0" step="1" value={shares} onChange={e => setShares(e.target.value)} placeholder="1000" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formCostPerShare.replace('{currency}', currency)}</label>
+              <input type="number" min="0" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="100" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formPricePerShare.replace('{currency}', currency)}</label>
+              <input type="number" min="0" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} placeholder="110" className={inputCls} />
+            </div>
+            {/* #44：累計股息輸入欄已移除（寫入一律 0；殖利率改由 TWSE 真源欄呈現）。 */}
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formStrategy}</label>
+            <select value={strategyId} onChange={e => setStrategyId(e.target.value)} className={inputCls}>
+              {STRATEGIES.map(s => (
+                <option key={s.id} value={s.id}>{s.nameZh}（{s.nameEn}）</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || analyzing}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-sm font-medium hover:bg-white/15 transition disabled:opacity-50"
+            >
+              <History className="w-4 h-4" />
+              {saving ? ui.formSaving : ui.formSavePnl}
+            </button>
+            <button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={analyzing || saving || authMode !== 'user'}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              {analyzing ? ui.formAiAnalyzing : ui.formAiAnalyze}
+            </button>
+          </div>
+
+          {analyzing && (
+            <div className="space-y-1">
+              {retryCountdown !== null && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                  <span className="text-xs font-medium text-amber-400">
+                    {ui.rateLimitRetrying.replace('{n}', String(retryCountdown))}
+                  </span>
+                </div>
+              )}
+              {progress.map((p, i) => (
+                <p key={i} className="text-xs text-[var(--text-secondary)]">
+                  {p.step}: {p.detail}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          {savedResult && (
+            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
+              <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-[var(--accent-green)]" />
+                {savedResult.symbolName || savedResult.symbol} — {ui.resultTitle}
+              </h2>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalCost}</p>
+                  <p className="font-medium">{formatMoney(savedResult.costBasis, savedResult.market)}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultMarketValue}</p>
+                  <p className="font-medium">{formatMoney(savedResult.marketValue, savedResult.market)}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultUnrealizedPnl}</p>
+                  <p className={`font-bold ${savedResult.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                    {formatMoney(savedResult.unrealizedPnl, savedResult.market)}{' '}
+                    <span className="text-xs">{formatPct(savedResult.unrealizedPnlPct)}</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalReturn}</p>
+                  <p className={`font-bold ${savedResult.totalReturn >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                    {formatMoney(savedResult.totalReturn, savedResult.market)}{' '}
+                    <span className="text-xs">{formatPct(savedResult.totalReturnPct)}</span>
+                  </p>
+                </div>
+                {/* #44：成本殖利率欄已移除（totalReturn 改裸價差；殖利率改由 TWSE 真源欄呈現）。 */}
+                {/* #27：淨損益並列（保留裸損益，稅費明細三行＋公式註腳＋三語） */}
+                <NetPnlView
+                  market={savedResult.market}
+                  symbol={savedResult.symbol}
+                  shares={savedResult.shares}
+                  cost={savedResult.cost}
+                  currentPrice={savedResult.currentPrice}
+                  discount={feeDiscount}
+                  ui={ui}
+                  helpText={ui.helpNet}
+                />
+              </div>
+            </div>
+          )}
+
+          {aiResult && (
+            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-medium flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+                  {ui.aiSuggestionTitle.replace('{strategy}', aiResult.strategy.nameZh)}
+                </h2>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${RATING_STYLE[aiResult.advice.rating]?.text}`}
+                  style={{ backgroundColor: `${RATING_STYLE[aiResult.advice.rating]?.bg}22` }}>
+                  {aiResult.advice.rating}
+                </span>
+              </div>
+              <p className="text-sm mb-1">{ui.aiConfidence.replace('{pct}', (aiResult.advice.confidence * 100).toFixed(0))}</p>
+              {(aiResult.advice.fairValue != null || aiResult.advice.marginOfSafety != null || aiResult.advice.upsideDownsidePct != null) && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] mb-2">
+                  {aiResult.advice.fairValue != null && <span>{ui.aiFairValue.replace('{currency}', currency).replace('{value}', aiResult.advice.fairValue.toLocaleString('en-US', { maximumFractionDigits: 2 }))}</span>}
+                  {aiResult.advice.marginOfSafety != null && <span>{ui.aiMarginOfSafety.replace('{pct}', aiResult.advice.marginOfSafety.toFixed(2))}</span>}
+                  {aiResult.advice.upsideDownsidePct != null && <span>{ui.aiUpside.replace('{pct}', formatPct(aiResult.advice.upsideDownsidePct))}</span>}
+                </div>
+              )}
+              <p className="text-sm font-medium mb-2">{aiResult.advice.summary}</p>
+              <div className="mb-2">
+                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiKeyPoints}</p>
+                <ul className="space-y-0.5">
+                  {aiResult.advice.keyPoints.map((k, i) => (
+                    <li key={i} className="text-xs text-[var(--text-primary)]">• {k}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="mb-3">
+                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiRisks}</p>
+                <ul className="space-y-0.5">
+                  {aiResult.advice.risks.map((r, i) => (
+                    <li key={i} className="text-xs text-[var(--accent-red)]">• {r}</li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-sm bg-[var(--bg-secondary)] rounded-lg p-3 border border-white/5">{aiResult.advice.action}</p>
+              {aiResult.usedFallback && <p className="mt-2 text-[10px] text-[var(--text-secondary)]">{ui.aiUsedFallback}</p>}
+            </div>
+          )}
+        </div>
+      </div>
+        </>
+      )}
+
+      {history.length > 0 && coreAssetStats.twCount > 0 && (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">{ui.coreAssetRatioTitle}</span>
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                  coreAssetStats.ratioPct >= 70
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : coreAssetStats.ratioPct >= 50
+                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                }`}
+              >
+                {coreAssetStats.ratioPct >= 70
+                  ? ui.coreAssetRatioHealthy
+                  : coreAssetStats.ratioPct >= 50
+                  ? ui.coreAssetRatioModerate
+                  : ui.coreAssetRatioRisky}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--text-secondary)]">
+              {ui.coreAssetRatioValue}：{formatMoney(coreAssetStats.coreMarketValue, 'tw')} / {formatMoney(coreAssetStats.totalMarketValue, 'tw')}
+              <span className="ml-2 font-mono font-bold text-[var(--text-primary)]">{coreAssetStats.ratioPct.toFixed(1)}%</span>
+            </div>
+          </div>
+
+          <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden mb-2">
+            <div
+              className={`h-full transition-all duration-500 ${
+                coreAssetStats.ratioPct >= 70
+                  ? 'bg-emerald-400'
+                  : coreAssetStats.ratioPct >= 50
+                  ? 'bg-blue-400'
+                  : 'bg-amber-400'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, coreAssetStats.ratioPct))}%` }}
+            />
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)]">
+            {ui.coreAssetRatioHelp}（{coreAssetStats.coreCount} / {coreAssetStats.twCount} 檔標的符合核心資產）
+          </p>
+        </div>
+      )}
 
       {/* #26：紀錄編輯 modal（欄位預填市場/代號/股數/成本/現價/策略；#44 配息欄已移除） */}
       {editingItem && (

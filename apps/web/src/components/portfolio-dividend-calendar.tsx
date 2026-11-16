@@ -147,7 +147,7 @@ export function PortfolioDividendCalendar({
   const [selectedYear, setSelectedYear] = useState<number>(currentYear)
   const [taxMode, setTaxMode] = useState<'post' | 'pre'>('post')
 
-  const yearOptions = useMemo(() => [currentYear, currentYear - 1], [currentYear])
+  const yearOptions = useMemo(() => [currentYear + 1, currentYear, currentYear - 1], [currentYear])
 
   const calendar = useMemo(
     () => buildDividendCalendar(holdings, dividends, { today, year: selectedYear }),
@@ -164,6 +164,15 @@ export function PortfolioDividendCalendar({
             <h2 className="text-lg font-bold text-[var(--text-primary)]">{t.title}</h2>
           </div>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">{t.subtitle}</p>
+          {calendar.isEstimatedYear && calendar.estimatedFromYear ? (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300">
+              {locale === 'en'
+                ? `Showing estimated preview based on ${calendar.estimatedFromYear} payouts (not yet officially announced)`
+                : locale === 'ja'
+                  ? `${calendar.estimatedFromYear}年の実績に基づく予想プレビュー（公式発表前）`
+                  : `尚未有 ${calendar.year} 年正式公告，目前依 ${calendar.estimatedFromYear} 同月份實際配息推估預覽（實際以投信/公司公告為準）`}
+            </p>
+          ) : null}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -326,6 +335,14 @@ export function PortfolioDividendCalendar({
                             <span className="rounded-full bg-[var(--bg-card)] px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
                               {t.payPending}
                             </span>
+
+                            {ev.isEstimated && ev.sourceYear ? (
+                              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300">
+                                {locale === 'en'
+                                  ? `Est. from ${ev.sourceYear}`
+                                  : `依 ${ev.sourceYear} 推估`}
+                              </span>
+                            ) : null}
 
                             {ev.nhiTriggered && (
                               <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-400">
