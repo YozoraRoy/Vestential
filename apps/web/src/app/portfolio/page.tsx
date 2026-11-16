@@ -251,6 +251,7 @@ export default function PortfolioPage() {
   const [riskSummary, setRiskSummary] = useState<(RiskSummaryValue & { dateStr: string; hash: string }) | null>(null)
   const [riskQuota, setRiskQuota] = useState<RiskQuotaValue | null>(null)
   const [historyReady, setHistoryReady] = useState(false)
+  const [divLoading, setDivLoading] = useState(false)
   // #28：紀錄區檢視切換（卡片｜表格，沿用持倉/風險 segmented 風格）。
   // 偏好存 localStorage（key portfolio-records-view）；首次依 matchMedia(md) 決定預設。
   // 手機（md 以下）不渲染切換器與表格本體，一律顯示卡片。
@@ -475,9 +476,11 @@ export default function PortfolioPage() {
     if (twSymbols.length === 0) {
       setDivRows([])
       setDivReason(null)
+      setDivLoading(false)
       return
     }
     let cancelled = false
+    setDivLoading(true)
     ;(async () => {
       try {
         // #95：讀取窗＝(Y-5)..Y 共 6 年（當年 YTD＋5 個完整年度；API years 上限同為 6）。
@@ -489,6 +492,9 @@ export default function PortfolioPage() {
           setDivReason(typeof data.reason === 'string' ? data.reason : null)
         }
       } catch {}
+      finally {
+        if (!cancelled) setDivLoading(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -1399,11 +1405,13 @@ export default function PortfolioPage() {
           }))}
           dividends={divRows}
           today={getTaiwanDateStrClient()}
+          loading={divLoading}
         />
       ) : portfolioTab === 'radar' ? (
         <PortfolioRadarPanel
           radar={holdingsRadar}
           hasHoldings={history.length > 0}
+          loading={!historyReady}
           formatMoney={formatMoney}
           labels={{
             title: ui.radarTitle,
@@ -1800,6 +1808,8 @@ export default function PortfolioPage() {
         )}
       </div>
       )}
+        </>
+      )}
 
       {authMode !== 'user' && (
         <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-6 text-center">
@@ -1813,7 +1823,16 @@ export default function PortfolioPage() {
         </div>
       )}
 
-      {history.length > 0 && (
+      {!historyReady ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8 animate-pulse">
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={idx} className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4 space-y-2">
+              <div className="h-3 w-20 rounded bg-white/10" />
+              <div className="h-6 w-24 rounded bg-white/10" />
+            </div>
+          ))}
+        </div>
+      ) : history.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
             <p className="text-xs text-[var(--text-secondary)]">{ui.summaryHoldings}</p>
@@ -2035,6 +2054,16 @@ export default function PortfolioPage() {
             onSummarySaved={handleRiskSummarySaved}
             onQuota={handleRiskQuota}
           />
+        ) : !historyReady ? (
+          <div className="bg-[var(--bg-card)] rounded-xl border border-white/5 p-4 space-y-3 animate-pulse">
+            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-ping" />
+              <span>{locale === 'en' ? 'Loading portfolio records...' : '讀取持股與損益紀錄中…'}</span>
+            </div>
+            {Array.from({ length: 5 }).map((_, idx) => (
+              <div key={idx} className="h-10 rounded-lg bg-white/5" />
+            ))}
+          </div>
         ) : history.length === 0 ? (
           <div className="bg-[var(--bg-card)] rounded-xl border border-white/5 p-8 text-center">
             <p className="text-sm text-[var(--text-secondary)]">{ui.historyEmpty}</p>
@@ -2219,7 +2248,9 @@ export default function PortfolioPage() {
                                 onClick={(e) => openYieldModal(e, item.id)}
                                 className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:bg-white/10 hover:decoration-current transition cursor-pointer"
                               >
-                                {ttmYieldText(item.id)}
+                                {divLoading && divRows.length === 0 ? (
+                                  <span className="inline-block h-4 w-12 animate-pulse rounded bg-white/10 align-middle" />
+                                ) : ttmYieldText(item.id)}
                               </button>
                             )}
                           </td>
@@ -2312,7 +2343,9 @@ export default function PortfolioPage() {
                               onClick={(e) => openYieldModal(e, item.id)}
                               className="font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:decoration-current transition cursor-pointer"
                             >
-                              {ttmYieldText(item.id)}
+                              {divLoading && divRows.length === 0 ? (
+                                <span className="inline-block h-4 w-12 animate-pulse rounded bg-white/10 align-middle" />
+                              ) : ttmYieldText(item.id)}
                             </button>
                           )}
                         </div>
@@ -2562,10 +2595,16 @@ export default function PortfolioPage() {
           )}
         </div>
       </div>
-        </>
-      )}
 
-      {history.length > 0 && coreAssetStats.twCount > 0 && (
+      {!historyReady ? (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8 space-y-3 animate-pulse">
+          <div className="flex justify-between">
+            <div className="h-4 w-36 rounded bg-white/10" />
+            <div className="h-4 w-28 rounded bg-white/10" />
+          </div>
+          <div className="h-2 w-full rounded-full bg-white/10" />
+        </div>
+      ) : history.length > 0 && coreAssetStats.twCount > 0 && (
         <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2">

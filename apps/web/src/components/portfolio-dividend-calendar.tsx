@@ -15,6 +15,7 @@ interface PortfolioDividendCalendarProps {
   holdings: CalendarHoldingInput[]
   dividends: CalendarDividendInput[]
   today: string
+  loading?: boolean
 }
 
 const COPY: Record<
@@ -140,6 +141,7 @@ export function PortfolioDividendCalendar({
   holdings,
   dividends,
   today,
+  loading = false,
 }: PortfolioDividendCalendarProps) {
   const { locale } = useI18n()
   const t = COPY[locale] ?? COPY['zh-TW']
@@ -260,8 +262,30 @@ export function PortfolioDividendCalendar({
         </div>
       </div>
 
-      {/* 空狀態 */}
-      {!calendar.hasHoldings ? (
+      {/* 空狀態 / 讀取骨架 */}
+      {loading && dividends.length === 0 ? (
+        <div className="space-y-4">
+          <div className="text-xs text-[var(--text-secondary)] flex items-center gap-2">
+            <span className="inline-block h-2 w-2 rounded-full bg-[var(--accent)] animate-ping" />
+            <span>{locale === 'en' ? 'Loading dividend calendar data...' : '讀取歷年除息資料與計算現金流中…'}</span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, idx) => (
+              <div
+                key={idx}
+                className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 space-y-3 animate-pulse"
+              >
+                <div className="flex justify-between">
+                  <div className="h-4 w-14 rounded bg-white/10" />
+                  <div className="h-4 w-20 rounded bg-white/10" />
+                </div>
+                <div className="h-12 rounded-xl bg-white/5" />
+                <div className="h-12 rounded-xl bg-white/5" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : !calendar.hasHoldings ? (
         <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg-card)] p-8 text-center text-sm text-[var(--text-secondary)]">
           {t.emptyHoldings}
         </div>

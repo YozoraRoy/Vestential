@@ -6,6 +6,7 @@ import type { LookThroughRadarResult } from '@/lib/etf-holdings-radar'
 interface PortfolioRadarPanelProps {
   radar: LookThroughRadarResult
   hasHoldings: boolean
+  loading?: boolean
   formatMoney: (val: number, market: 'tw' | 'us') => string
   labels: {
     title: string
@@ -23,9 +24,32 @@ interface PortfolioRadarPanelProps {
 export function PortfolioRadarPanel({
   radar,
   hasHoldings,
+  loading = false,
   formatMoney,
   labels,
 }: PortfolioRadarPanelProps) {
+  if (loading) {
+    return (
+      <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 space-y-5 animate-pulse">
+        <div className="space-y-2 border-b border-white/5 pb-4">
+          <div className="h-5 w-44 rounded bg-white/10" />
+          <div className="h-3 w-72 rounded bg-white/5" />
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <div key={idx} className="rounded-xl border border-white/5 bg-white/[0.02] p-3 space-y-2">
+              <div className="flex justify-between">
+                <div className="h-4 w-32 rounded bg-white/10" />
+                <div className="h-4 w-20 rounded bg-white/10" />
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-white/10" />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (!hasHoldings || !radar.hasEtf) {
     return (
       <div className="bg-[var(--bg-card)] rounded-2xl border border-dashed border-white/10 p-10 text-center space-y-2">
