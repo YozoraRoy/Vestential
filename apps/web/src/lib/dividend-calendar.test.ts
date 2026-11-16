@@ -83,17 +83,28 @@ describe('Issue #120 dividend-calendar engine', () => {
     expect(noDivs.totalGross).toBe(0)
   })
 
-  it('2027 年尚無官方公告時，依 2026 同期推估預覽並標註 isEstimated', () => {
-    const res = buildDividendCalendar(
+  it('2026-12 與 2027 年尚無官方公告時，依近 3 年同月歷史紀錄均算預估', () => {
+    const res2026 = buildDividendCalendar(
+      [{ symbol: '00919', name: '群益台灣精選高息', shares: 10000, market: 'tw' }],
+      [
+        { symbol: '00919', ex_date: '2024-12-20', cash_dividend: 0.72 },
+        { symbol: '00919', ex_date: '2025-12-18', cash_dividend: 0.78 },
+      ],
+      { today: '2026-11-16', year: 2026 },
+    )
+    expect(res2026.isEstimatedYear).toBe(true)
+    expect(res2026.months[11]?.events[0]?.exDate).toBe('2026-12-18')
+    expect(res2026.months[11]?.events[0]?.cashDividendPerShare).toBe(0.75)
+    expect(res2026.months[11]?.events[0]?.estimateLabel).toBe('近2年同月均算')
+
+    const res2027 = buildDividendCalendar(
       [{ symbol: '0056', name: '元大高股息', shares: 10000, market: 'tw' }],
       [{ symbol: '0056', ex_date: '2026-02-05', cash_dividend: 1.07 }],
       { today: '2026-11-16', year: 2027 },
     )
-    expect(res.isEstimatedYear).toBe(true)
-    expect(res.estimatedFromYear).toBe(2026)
-    expect(res.eventCount).toBe(1)
-    expect(res.months[1]?.events[0]?.exDate).toBe('2027-02-05')
-    expect(res.months[1]?.events[0]?.isEstimated).toBe(true)
+    expect(res2027.isEstimatedYear).toBe(true)
+    expect(res2027.months[1]?.events[0]?.exDate).toBe('2027-02-05')
+    expect(res2027.months[1]?.events[0]?.isEstimated).toBe(true)
   })
 
   it('不配息 ETF（無現金股利紀錄）即使超過 25,000 股也不誤報健保預警', () => {

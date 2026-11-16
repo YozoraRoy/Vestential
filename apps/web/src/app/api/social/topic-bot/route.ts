@@ -41,7 +41,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { enabled?: boolean; dailyLimit?: number; keywords?: string[] } = {}
+  let body: { enabled?: boolean; dailyLimit?: number; keywords?: string[]; queueUrls?: string[] } = {}
   try {
     body = await req.json()
   } catch {
@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
     dryRun?: boolean
     maxReplies?: number
     ignoreToggle?: boolean
+    manualUrl?: string
     manualText?: string
     manualMediaId?: string
     manualAuthor?: string
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
     dryRun: body.dryRun ?? false,
     maxReplies: body.maxReplies ?? 1,
     ignoreToggle: body.ignoreToggle ?? false,
+    manualUrl: body.manualUrl,
     manualPost,
   })
   const state = await getTopicBotState()

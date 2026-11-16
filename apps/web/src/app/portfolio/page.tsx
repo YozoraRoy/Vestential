@@ -245,6 +245,7 @@ export default function PortfolioPage() {
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [addMode, setAddMode] = useState<'manual' | 'ocr'>('manual')
   const [listTab, setListTab] = useState<'positions' | 'risk'>('positions')
   // #30：風險總結 page 層 state（切持倉/風險頁籤不卸載清空）。
   // 有效定義：暫存日期＝今日（台灣日）且持倉快照 hash＝當前持倉；跨日／持倉變動即失效。
@@ -1526,6 +1527,217 @@ export default function PortfolioPage() {
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <button
+            type="button"
+            onClick={() => setAddMode('manual')}
+            className={`px-4 py-2 rounded-xl text-xs font-medium transition ${addMode === 'manual' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-white/10 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          >
+            {locale === 'en' ? 'Manual Entry & AI Trial' : '✍️ 單筆新增／AI 試算'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddMode('ocr')}
+            className={`px-4 py-2 rounded-xl text-xs font-medium transition ${addMode === 'ocr' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-white/10 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+          >
+            {locale === 'en' ? 'Batch Screenshot Import' : '📸 截圖批次匯入'}
+          </button>
+        </div>
+      {addMode === 'manual' ? (
+        <div className="mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{ui.formMarket}</span>
+            <div className="flex rounded-lg overflow-hidden border border-white/10">
+              {(['tw', 'us'] as Market[]).map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { setMarket(m); setSymbol(''); setSymbolName(''); setCurrentPrice('') }}
+                  className={`px-4 py-1.5 text-sm transition ${market === m ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                >
+                  {m === 'tw' ? ui.marketTw : ui.marketUs}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formSymbolLabel.replace('{example}', market === 'tw' ? ui.formSymbolExampleTw : ui.formSymbolExampleUs)}</label>
+            <div className="flex gap-2">
+              <input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder={market === 'tw' ? '2330' : 'AAPL'} className={inputCls} />
+              <button
+                type="button"
+                onClick={handleFetchQuote}
+                disabled={quoteLoading}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15 transition disabled:opacity-50"
+              >
+                {quoteLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {ui.formFetchPrice}
+              </button>
+            </div>
+            {symbolName && <p className="mt-1 text-xs text-[var(--accent)]">{symbolName}</p>}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formShares}</label>
+              <input type="number" min="0" step="1" value={shares} onChange={e => setShares(e.target.value)} placeholder="1000" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formCostPerShare.replace('{currency}', currency)}</label>
+              <input type="number" min="0" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="100" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formPricePerShare.replace('{currency}', currency)}</label>
+              <input type="number" min="0" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} placeholder="110" className={inputCls} />
+            </div>
+            {/* #44：累計股息輸入欄已移除（寫入一律 0；殖利率改由 TWSE 真源欄呈現）。 */}
+          </div>
+
+          <div>
+            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formStrategy}</label>
+            <select value={strategyId} onChange={e => setStrategyId(e.target.value)} className={inputCls}>
+              {STRATEGIES.map(s => (
+                <option key={s.id} value={s.id}>{s.nameZh}（{s.nameEn}）</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || analyzing}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-sm font-medium hover:bg-white/15 transition disabled:opacity-50"
+            >
+              <History className="w-4 h-4" />
+              {saving ? ui.formSaving : ui.formSavePnl}
+            </button>
+            <button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={analyzing || saving || authMode !== 'user'}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            >
+              <Sparkles className="w-4 h-4" />
+              {analyzing ? ui.formAiAnalyzing : ui.formAiAnalyze}
+            </button>
+          </div>
+
+          {analyzing && (
+            <div className="space-y-1">
+              {retryCountdown !== null && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                  <span className="text-xs font-medium text-amber-400">
+                    {ui.rateLimitRetrying.replace('{n}', String(retryCountdown))}
+                  </span>
+                </div>
+              )}
+              {progress.map((p, i) => (
+                <p key={i} className="text-xs text-[var(--text-secondary)]">
+                  {p.step}: {p.detail}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          {savedResult && (
+            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
+              <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-[var(--accent-green)]" />
+                {savedResult.symbolName || savedResult.symbol} — {ui.resultTitle}
+              </h2>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalCost}</p>
+                  <p className="font-medium">{formatMoney(savedResult.costBasis, savedResult.market)}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultMarketValue}</p>
+                  <p className="font-medium">{formatMoney(savedResult.marketValue, savedResult.market)}</p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultUnrealizedPnl}</p>
+                  <p className={`font-bold ${savedResult.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                    {formatMoney(savedResult.unrealizedPnl, savedResult.market)}{' '}
+                    <span className="text-xs">{formatPct(savedResult.unrealizedPnlPct)}</span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalReturn}</p>
+                  <p className={`font-bold ${savedResult.totalReturn >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                    {formatMoney(savedResult.totalReturn, savedResult.market)}{' '}
+                    <span className="text-xs">{formatPct(savedResult.totalReturnPct)}</span>
+                  </p>
+                </div>
+                {/* #44：成本殖利率欄已移除（totalReturn 改裸價差；殖利率改由 TWSE 真源欄呈現）。 */}
+                {/* #27：淨損益並列（保留裸損益，稅費明細三行＋公式註腳＋三語） */}
+                <NetPnlView
+                  market={savedResult.market}
+                  symbol={savedResult.symbol}
+                  shares={savedResult.shares}
+                  cost={savedResult.cost}
+                  currentPrice={savedResult.currentPrice}
+                  discount={feeDiscount}
+                  ui={ui}
+                  helpText={ui.helpNet}
+                />
+              </div>
+            </div>
+          )}
+
+          {aiResult && (
+            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-medium flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[var(--accent)]" />
+                  {ui.aiSuggestionTitle.replace('{strategy}', aiResult.strategy.nameZh)}
+                </h2>
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${RATING_STYLE[aiResult.advice.rating]?.text}`}
+                  style={{ backgroundColor: `${RATING_STYLE[aiResult.advice.rating]?.bg}22` }}>
+                  {aiResult.advice.rating}
+                </span>
+              </div>
+              <p className="text-sm mb-1">{ui.aiConfidence.replace('{pct}', (aiResult.advice.confidence * 100).toFixed(0))}</p>
+              {(aiResult.advice.fairValue != null || aiResult.advice.marginOfSafety != null || aiResult.advice.upsideDownsidePct != null) && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] mb-2">
+                  {aiResult.advice.fairValue != null && <span>{ui.aiFairValue.replace('{currency}', currency).replace('{value}', aiResult.advice.fairValue.toLocaleString('en-US', { maximumFractionDigits: 2 }))}</span>}
+                  {aiResult.advice.marginOfSafety != null && <span>{ui.aiMarginOfSafety.replace('{pct}', aiResult.advice.marginOfSafety.toFixed(2))}</span>}
+                  {aiResult.advice.upsideDownsidePct != null && <span>{ui.aiUpside.replace('{pct}', formatPct(aiResult.advice.upsideDownsidePct))}</span>}
+                </div>
+              )}
+              <p className="text-sm font-medium mb-2">{aiResult.advice.summary}</p>
+              <div className="mb-2">
+                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiKeyPoints}</p>
+                <ul className="space-y-0.5">
+                  {aiResult.advice.keyPoints.map((k, i) => (
+                    <li key={i} className="text-xs text-[var(--text-primary)]">• {k}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="mb-3">
+                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiRisks}</p>
+                <ul className="space-y-0.5">
+                  {aiResult.advice.risks.map((r, i) => (
+                    <li key={i} className="text-xs text-[var(--accent-red)]">• {r}</li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-sm bg-[var(--bg-secondary)] rounded-lg p-3 border border-white/5">{aiResult.advice.action}</p>
+              {aiResult.usedFallback && <p className="mt-2 text-[10px] text-[var(--text-secondary)]">{ui.aiUsedFallback}</p>}
+            </div>
+          )}
+        </div>
+      </div>
+
+        </div>
+      ) : (
+      <>
       {authMode === 'user' && (
       <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-6">
         <div className="flex items-center justify-between mb-2">
@@ -1808,6 +2020,8 @@ export default function PortfolioPage() {
         )}
       </div>
       )}
+      </>
+      )}
         </>
       )}
 
@@ -1850,6 +2064,60 @@ export default function PortfolioPage() {
             <p className="text-xs text-[var(--text-secondary)]">{ui.summaryTotalCost}</p>
             <p className="text-lg font-bold mt-1">{formatMoney(stats.totalCost, 'tw')}</p>
           </div>
+        </div>
+      )}
+
+      {!historyReady ? (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8 space-y-3 animate-pulse">
+          <div className="flex justify-between">
+            <div className="h-4 w-36 rounded bg-white/10" />
+            <div className="h-4 w-28 rounded bg-white/10" />
+          </div>
+          <div className="h-2 w-full rounded-full bg-white/10" />
+        </div>
+      ) : history.length > 0 && coreAssetStats.twCount > 0 && (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">{ui.coreAssetRatioTitle}</span>
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                  coreAssetStats.ratioPct >= 70
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : coreAssetStats.ratioPct >= 50
+                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                }`}
+              >
+                {coreAssetStats.ratioPct >= 70
+                  ? ui.coreAssetRatioHealthy
+                  : coreAssetStats.ratioPct >= 50
+                  ? ui.coreAssetRatioModerate
+                  : ui.coreAssetRatioRisky}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--text-secondary)]">
+              {ui.coreAssetRatioValue}：{formatMoney(coreAssetStats.coreMarketValue, 'tw')} / {formatMoney(coreAssetStats.totalMarketValue, 'tw')}
+              <span className="ml-2 font-mono font-bold text-[var(--text-primary)]">{coreAssetStats.ratioPct.toFixed(1)}%</span>
+            </div>
+          </div>
+
+          <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden mb-2">
+            <div
+              className={`h-full transition-all duration-500 ${
+                coreAssetStats.ratioPct >= 70
+                  ? 'bg-emerald-400'
+                  : coreAssetStats.ratioPct >= 50
+                  ? 'bg-blue-400'
+                  : 'bg-amber-400'
+              }`}
+              style={{ width: `${Math.min(100, Math.max(0, coreAssetStats.ratioPct))}%` }}
+            />
+          </div>
+
+          <p className="text-xs text-[var(--text-secondary)]">
+            {ui.coreAssetRatioHelp}（{coreAssetStats.coreCount} / {coreAssetStats.twCount} 檔標的符合核心資產）
+          </p>
         </div>
       )}
 
@@ -2405,250 +2673,6 @@ export default function PortfolioPage() {
           </div>
         )}
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{ui.formMarket}</span>
-            <div className="flex rounded-lg overflow-hidden border border-white/10">
-              {(['tw', 'us'] as Market[]).map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMarket(m); setSymbol(''); setSymbolName(''); setCurrentPrice('') }}
-                  className={`px-4 py-1.5 text-sm transition ${market === m ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
-                >
-                  {m === 'tw' ? ui.marketTw : ui.marketUs}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formSymbolLabel.replace('{example}', market === 'tw' ? ui.formSymbolExampleTw : ui.formSymbolExampleUs)}</label>
-            <div className="flex gap-2">
-              <input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder={market === 'tw' ? '2330' : 'AAPL'} className={inputCls} />
-              <button
-                type="button"
-                onClick={handleFetchQuote}
-                disabled={quoteLoading}
-                className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15 transition disabled:opacity-50"
-              >
-                {quoteLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                {ui.formFetchPrice}
-              </button>
-            </div>
-            {symbolName && <p className="mt-1 text-xs text-[var(--accent)]">{symbolName}</p>}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formShares}</label>
-              <input type="number" min="0" step="1" value={shares} onChange={e => setShares(e.target.value)} placeholder="1000" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formCostPerShare.replace('{currency}', currency)}</label>
-              <input type="number" min="0" step="0.01" value={cost} onChange={e => setCost(e.target.value)} placeholder="100" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formPricePerShare.replace('{currency}', currency)}</label>
-              <input type="number" min="0" step="0.01" value={currentPrice} onChange={e => setCurrentPrice(e.target.value)} placeholder="110" className={inputCls} />
-            </div>
-            {/* #44：累計股息輸入欄已移除（寫入一律 0；殖利率改由 TWSE 真源欄呈現）。 */}
-          </div>
-
-          <div>
-            <label className="block text-sm text-[var(--text-secondary)] mb-1">{ui.formStrategy}</label>
-            <select value={strategyId} onChange={e => setStrategyId(e.target.value)} className={inputCls}>
-              {STRATEGIES.map(s => (
-                <option key={s.id} value={s.id}>{s.nameZh}（{s.nameEn}）</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || analyzing}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-sm font-medium hover:bg-white/15 transition disabled:opacity-50"
-            >
-              <History className="w-4 h-4" />
-              {saving ? ui.formSaving : ui.formSavePnl}
-            </button>
-            <button
-              type="button"
-              onClick={handleAnalyze}
-              disabled={analyzing || saving || authMode !== 'user'}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
-            >
-              <Sparkles className="w-4 h-4" />
-              {analyzing ? ui.formAiAnalyzing : ui.formAiAnalyze}
-            </button>
-          </div>
-
-          {analyzing && (
-            <div className="space-y-1">
-              {retryCountdown !== null && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-                  <span className="text-xs font-medium text-amber-400">
-                    {ui.rateLimitRetrying.replace('{n}', String(retryCountdown))}
-                  </span>
-                </div>
-              )}
-              {progress.map((p, i) => (
-                <p key={i} className="text-xs text-[var(--text-secondary)]">
-                  {p.step}: {p.detail}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          {savedResult && (
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
-              <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[var(--accent-green)]" />
-                {savedResult.symbolName || savedResult.symbol} — {ui.resultTitle}
-              </h2>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalCost}</p>
-                  <p className="font-medium">{formatMoney(savedResult.costBasis, savedResult.market)}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultMarketValue}</p>
-                  <p className="font-medium">{formatMoney(savedResult.marketValue, savedResult.market)}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultUnrealizedPnl}</p>
-                  <p className={`font-bold ${savedResult.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
-                    {formatMoney(savedResult.unrealizedPnl, savedResult.market)}{' '}
-                    <span className="text-xs">{formatPct(savedResult.unrealizedPnlPct)}</span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-secondary)] text-xs">{ui.resultTotalReturn}</p>
-                  <p className={`font-bold ${savedResult.totalReturn >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
-                    {formatMoney(savedResult.totalReturn, savedResult.market)}{' '}
-                    <span className="text-xs">{formatPct(savedResult.totalReturnPct)}</span>
-                  </p>
-                </div>
-                {/* #44：成本殖利率欄已移除（totalReturn 改裸價差；殖利率改由 TWSE 真源欄呈現）。 */}
-                {/* #27：淨損益並列（保留裸損益，稅費明細三行＋公式註腳＋三語） */}
-                <NetPnlView
-                  market={savedResult.market}
-                  symbol={savedResult.symbol}
-                  shares={savedResult.shares}
-                  cost={savedResult.cost}
-                  currentPrice={savedResult.currentPrice}
-                  discount={feeDiscount}
-                  ui={ui}
-                  helpText={ui.helpNet}
-                />
-              </div>
-            </div>
-          )}
-
-          {aiResult && (
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-medium flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-[var(--accent)]" />
-                  {ui.aiSuggestionTitle.replace('{strategy}', aiResult.strategy.nameZh)}
-                </h2>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${RATING_STYLE[aiResult.advice.rating]?.text}`}
-                  style={{ backgroundColor: `${RATING_STYLE[aiResult.advice.rating]?.bg}22` }}>
-                  {aiResult.advice.rating}
-                </span>
-              </div>
-              <p className="text-sm mb-1">{ui.aiConfidence.replace('{pct}', (aiResult.advice.confidence * 100).toFixed(0))}</p>
-              {(aiResult.advice.fairValue != null || aiResult.advice.marginOfSafety != null || aiResult.advice.upsideDownsidePct != null) && (
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] mb-2">
-                  {aiResult.advice.fairValue != null && <span>{ui.aiFairValue.replace('{currency}', currency).replace('{value}', aiResult.advice.fairValue.toLocaleString('en-US', { maximumFractionDigits: 2 }))}</span>}
-                  {aiResult.advice.marginOfSafety != null && <span>{ui.aiMarginOfSafety.replace('{pct}', aiResult.advice.marginOfSafety.toFixed(2))}</span>}
-                  {aiResult.advice.upsideDownsidePct != null && <span>{ui.aiUpside.replace('{pct}', formatPct(aiResult.advice.upsideDownsidePct))}</span>}
-                </div>
-              )}
-              <p className="text-sm font-medium mb-2">{aiResult.advice.summary}</p>
-              <div className="mb-2">
-                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiKeyPoints}</p>
-                <ul className="space-y-0.5">
-                  {aiResult.advice.keyPoints.map((k, i) => (
-                    <li key={i} className="text-xs text-[var(--text-primary)]">• {k}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="mb-3">
-                <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.aiRisks}</p>
-                <ul className="space-y-0.5">
-                  {aiResult.advice.risks.map((r, i) => (
-                    <li key={i} className="text-xs text-[var(--accent-red)]">• {r}</li>
-                  ))}
-                </ul>
-              </div>
-              <p className="text-sm bg-[var(--bg-secondary)] rounded-lg p-3 border border-white/5">{aiResult.advice.action}</p>
-              {aiResult.usedFallback && <p className="mt-2 text-[10px] text-[var(--text-secondary)]">{ui.aiUsedFallback}</p>}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {!historyReady ? (
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8 space-y-3 animate-pulse">
-          <div className="flex justify-between">
-            <div className="h-4 w-36 rounded bg-white/10" />
-            <div className="h-4 w-28 rounded bg-white/10" />
-          </div>
-          <div className="h-2 w-full rounded-full bg-white/10" />
-        </div>
-      ) : history.length > 0 && coreAssetStats.twCount > 0 && (
-        <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold">{ui.coreAssetRatioTitle}</span>
-              <span
-                className={`px-2 py-0.5 rounded text-xs font-medium border ${
-                  coreAssetStats.ratioPct >= 70
-                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                    : coreAssetStats.ratioPct >= 50
-                    ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
-                    : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                }`}
-              >
-                {coreAssetStats.ratioPct >= 70
-                  ? ui.coreAssetRatioHealthy
-                  : coreAssetStats.ratioPct >= 50
-                  ? ui.coreAssetRatioModerate
-                  : ui.coreAssetRatioRisky}
-              </span>
-            </div>
-            <div className="text-xs text-[var(--text-secondary)]">
-              {ui.coreAssetRatioValue}：{formatMoney(coreAssetStats.coreMarketValue, 'tw')} / {formatMoney(coreAssetStats.totalMarketValue, 'tw')}
-              <span className="ml-2 font-mono font-bold text-[var(--text-primary)]">{coreAssetStats.ratioPct.toFixed(1)}%</span>
-            </div>
-          </div>
-
-          <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden mb-2">
-            <div
-              className={`h-full transition-all duration-500 ${
-                coreAssetStats.ratioPct >= 70
-                  ? 'bg-emerald-400'
-                  : coreAssetStats.ratioPct >= 50
-                  ? 'bg-blue-400'
-                  : 'bg-amber-400'
-              }`}
-              style={{ width: `${Math.min(100, Math.max(0, coreAssetStats.ratioPct))}%` }}
-            />
-          </div>
-
-          <p className="text-xs text-[var(--text-secondary)]">
-            {ui.coreAssetRatioHelp}（{coreAssetStats.coreCount} / {coreAssetStats.twCount} 檔標的符合核心資產）
-          </p>
-        </div>
-      )}
 
       {/* #26：紀錄編輯 modal（欄位預填市場/代號/股數/成本/現價/策略；#44 配息欄已移除） */}
       {editingItem && (

@@ -166,13 +166,13 @@ export function PortfolioDividendCalendar({
             <h2 className="text-lg font-bold text-[var(--text-primary)]">{t.title}</h2>
           </div>
           <p className="mt-1 text-xs text-[var(--text-secondary)]">{t.subtitle}</p>
-          {calendar.isEstimatedYear && calendar.estimatedFromYear ? (
+          {calendar.isEstimatedYear ? (
             <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300">
               {locale === 'en'
-                ? `Showing estimated preview based on ${calendar.estimatedFromYear} payouts (not yet officially announced)`
+                ? 'Includes estimates averaged from up to 3 years of same-month payouts for unannounced months'
                 : locale === 'ja'
-                  ? `${calendar.estimatedFromYear}年の実績に基づく予想プレビュー（公式発表前）`
-                  : `尚未有 ${calendar.year} 年正式公告，目前依 ${calendar.estimatedFromYear} 同月份實際配息推估預覽（實際以投信/公司公告為準）`}
+                  ? '未発表の月については過去最大3年間の同月実績平均による予想を含みます'
+                  : '尚未公告之月份（如今年 12 月及明年）已依近 3 年同月份歷史配息均算預估（實際以投信/公司公告為準）'}
             </p>
           ) : null}
         </div>
@@ -360,11 +360,11 @@ export function PortfolioDividendCalendar({
                               {t.payPending}
                             </span>
 
-                            {ev.isEstimated && ev.sourceYear ? (
+                            {ev.isEstimated ? (
                               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300">
                                 {locale === 'en'
-                                  ? `Est. from ${ev.sourceYear}`
-                                  : `依 ${ev.sourceYear} 推估`}
+                                  ? `Est. (${ev.sourceYear ?? '3Y avg'})`
+                                  : ev.estimateLabel || `依 ${ev.sourceYear} 推估`}
                               </span>
                             ) : null}
 

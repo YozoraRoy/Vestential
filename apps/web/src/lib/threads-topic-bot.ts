@@ -11,13 +11,14 @@ import { loadConfig } from '@stock/core'
 import { createSocialPost, dbQueryFirst, getAgentSetting, hasSocialPosted, setAgentSetting, updateSocialPost } from '@stock/database'
 import { attachLlmUsageRecorder } from './llm-usage'
 import { getSocialAccessToken } from './social-tokens'
-import { publishThreadsReply } from './threads-reply'
+import { publishThreadsReply, resolveThreadsPost } from './threads-reply'
 
 const THREADS_API = 'https://graph.threads.net/v1.0'
 
 export const TOPIC_BOT_ENABLED_KEY = 'social.topic_bot_enabled'
 export const TOPIC_BOT_DAILY_LIMIT_KEY = 'social.topic_bot_daily_limit'
 export const TOPIC_BOT_KEYWORDS_KEY = 'social.topic_bot_keywords'
+export const TOPIC_BOT_QUEUE_KEY = 'social.topic_bot_queue'
 export const TOPIC_BOT_PROMPT_KEY = 'social.topic_reply_prompt'
 export const TOPIC_BOT_LOGS_KEY = 'social.topic_bot_logs'
 
@@ -70,6 +71,7 @@ export interface TopicBotConfigState {
   enabled: boolean
   dailyLimit: number
   keywords: string[]
+  queueUrls: string[]
   todayCount: number
   llmMode: 'free-first' | 'paid-only'
   freeLabel: string | null
@@ -109,57 +111,73 @@ export function createTopicBotLLM(opts?: { maxTokens?: number }): {
   const { llm: paidLlm } = createQuickLLM(config, { maxTokens })
   const paidLabel = `${config.llmProvider}/${config.quickThinkModel}`
 
-  // 依序偵測免費層設定：專用免費 Key > Groq 免費 Key > Google 免費 Key > Fallback 若為 Groq 免費層
+  const freeClients: { client: LLMClient; label: string }[] = []
+
+  // 1. 顯式專用免費變數
   const explicitFreeKey = process.env.TOPIC_BOT_FREE_LLM_API_KEY?.trim()
-  const groqKey = process.env.GROQ_API_KEY?.trim() || (process.env.FALLBACK_LLM_API_KEY?.trim()?.startsWith('gsk_') ? process.env.FALLBACK_LLM_API_KEY.trim() : '')
-  const googleFreeKey = process.env.TOPIC_BOT_FREE_GOOGLE_API_KEY?.trim()
-
-  let freeClient: LLMClient | null = null
-  let freeLabel: string | null = null
-
   if (explicitFreeKey) {
     const provider = process.env.TOPIC_BOT_FREE_LLM_PROVIDER?.trim() || 'openai'
     const model = process.env.TOPIC_BOT_FREE_LLM_MODEL?.trim() || 'llama-3.3-70b-versatile'
     const baseUrl =
       process.env.TOPIC_BOT_FREE_LLM_BACKEND_URL?.trim() ||
       (explicitFreeKey.startsWith('gsk_') ? 'https://api.groq.com/openai/v1' : undefined)
-    freeClient = LLMFactory.create({
-      provider,
-      model,
-      apiKey: explicitFreeKey,
-      baseUrl,
-      temperature: 0.85,
-      maxTokens,
+    freeClients.push({
+      client: LLMFactory.create({ provider, model, apiKey: explicitFreeKey, baseUrl, temperature: 0.85, maxTokens }),
+      label: `${provider}/${model} (free)`,
     })
-    freeLabel = `${provider}/${model} (free)`
-  } else if (groqKey) {
-    const model = process.env.TOPIC_BOT_FREE_LLM_MODEL?.trim() || 'llama-3.3-70b-versatile'
-    freeClient = LLMFactory.create({
-      provider: 'openai',
-      model,
-      apiKey: groqKey,
-      baseUrl: 'https://api.groq.com/openai/v1',
-      temperature: 0.85,
-      maxTokens,
-    })
-    freeLabel = `groq/${model} (free)`
-  } else if (googleFreeKey) {
-    const model = process.env.TOPIC_BOT_FREE_LLM_MODEL?.trim() || 'gemini-2.5-flash'
-    freeClient = LLMFactory.create({
-      provider: 'google',
-      model,
-      apiKey: googleFreeKey,
-      temperature: 0.85,
-      maxTokens,
-    })
-    freeLabel = `google/${model} (free)`
   }
 
-  if (freeClient) {
+  // 2. 線上既有的 FALLBACK2（Groq 免費 Key #2，避開主系統優先使用的 #1）
+  const fb2Key = process.env.FALLBACK2_QUICK_LLM_API_KEY?.trim() || process.env.FALLBACK2_LLM_API_KEY?.trim()
+  if (fb2Key) {
+    const provider = process.env.FALLBACK2_LLM_PROVIDER?.trim() || 'openai'
+    const model = process.env.FALLBACK2_QUICK_THINK_MODEL?.trim() || 'qwen/qwen3.8-27b'
+    const baseUrl =
+      process.env.FALLBACK2_QUICK_LLM_BACKEND_URL?.trim() ||
+      process.env.FALLBACK2_LLM_BACKEND_URL?.trim() ||
+      (fb2Key.startsWith('gsk_') ? 'https://api.groq.com/openai/v1' : undefined)
+    freeClients.push({
+      client: LLMFactory.create({ provider, model, apiKey: fb2Key, baseUrl, temperature: 0.85, maxTokens }),
+      label: `groq2/${model} (free)`,
+    })
+  }
+
+  // 3. 線上既有的 FALLBACK（Groq 免費 Key #1）或 GROQ_API_KEY
+  const fb1Key =
+    process.env.GROQ_API_KEY?.trim() ||
+    process.env.FALLBACK_QUICK_LLM_API_KEY?.trim() ||
+    process.env.FALLBACK_LLM_API_KEY?.trim()
+  if (fb1Key && fb1Key !== fb2Key) {
+    const provider = process.env.GROQ_API_KEY?.trim() ? 'openai' : process.env.FALLBACK_LLM_PROVIDER?.trim() || 'openai'
+    const model = process.env.GROQ_API_KEY?.trim()
+      ? process.env.TOPIC_BOT_FREE_LLM_MODEL?.trim() || 'llama-3.3-70b-versatile'
+      : process.env.FALLBACK_QUICK_THINK_MODEL?.trim() || 'qwen/qwen3.8-27b'
+    const baseUrl =
+      process.env.FALLBACK_QUICK_LLM_BACKEND_URL?.trim() ||
+      process.env.FALLBACK_LLM_BACKEND_URL?.trim() ||
+      (fb1Key.startsWith('gsk_') ? 'https://api.groq.com/openai/v1' : undefined)
+    freeClients.push({
+      client: LLMFactory.create({ provider, model, apiKey: fb1Key, baseUrl, temperature: 0.85, maxTokens }),
+      label: `groq1/${model} (free)`,
+    })
+  }
+
+  // 4. 額外 Google 免費 Key
+  const googleFreeKey = process.env.TOPIC_BOT_FREE_GOOGLE_API_KEY?.trim()
+  if (googleFreeKey) {
+    const model = process.env.TOPIC_BOT_FREE_LLM_MODEL?.trim() || 'gemini-2.5-flash'
+    freeClients.push({
+      client: LLMFactory.create({ provider: 'google', model, apiKey: googleFreeKey, temperature: 0.85, maxTokens }),
+      label: `google/${model} (free)`,
+    })
+  }
+
+  if (freeClients.length > 0) {
+    const [firstFree, ...restFree] = freeClients
     return {
-      llm: new FallbackClient(freeClient, [paidLlm]),
+      llm: new FallbackClient(firstFree!.client, [...restFree.map((f) => f.client), paidLlm]),
       mode: 'free-first',
-      freeLabel,
+      freeLabel: freeClients.map((f) => f.label).join(' → '),
       paidLabel,
     }
   }
@@ -198,10 +216,11 @@ export function validateTopicReplyText(rawText: string): { ok: boolean; cleaned:
 
 /** 讀取第 2 小編目前設定與今日已發數量。 */
 export async function getTopicBotState(): Promise<TopicBotConfigState> {
-  const [rawEnabled, rawLimit, rawKeywords, rawLogs] = await Promise.all([
+  const [rawEnabled, rawLimit, rawKeywords, rawQueue, rawLogs] = await Promise.all([
     getAgentSetting(TOPIC_BOT_ENABLED_KEY).catch(() => null),
     getAgentSetting(TOPIC_BOT_DAILY_LIMIT_KEY).catch(() => null),
     getAgentSetting(TOPIC_BOT_KEYWORDS_KEY).catch(() => null),
+    getAgentSetting(TOPIC_BOT_QUEUE_KEY).catch(() => null),
     getAgentSetting(TOPIC_BOT_LOGS_KEY).catch(() => null),
   ])
 
@@ -214,6 +233,12 @@ export async function getTopicBotState(): Promise<TopicBotConfigState> {
         .map((s) => s.trim())
         .filter(Boolean)
     : DEFAULT_TOPIC_BOT_KEYWORDS
+  const queueUrls = rawQueue
+    ? rawQueue
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
 
   const todayCount = await countTodayTopicBotReplies()
   const { mode, freeLabel, paidLabel } = createTopicBotLLM()
@@ -223,6 +248,7 @@ export async function getTopicBotState(): Promise<TopicBotConfigState> {
     enabled,
     dailyLimit,
     keywords: keywords.length > 0 ? keywords : DEFAULT_TOPIC_BOT_KEYWORDS,
+    queueUrls,
     todayCount,
     llmMode: mode,
     freeLabel,
@@ -235,6 +261,7 @@ export async function saveTopicBotConfig(input: {
   enabled?: boolean
   dailyLimit?: number
   keywords?: string[]
+  queueUrls?: string[]
 }): Promise<TopicBotConfigState> {
   if (typeof input.enabled === 'boolean') {
     await setAgentSetting({
@@ -263,6 +290,15 @@ export async function saveTopicBotConfig(input: {
         label: '第 2 小編海巡關鍵字',
       })
     }
+  }
+  if (Array.isArray(input.queueUrls)) {
+    const cleanedUrls = Array.from(new Set(input.queueUrls.map((u) => u.trim()).filter(Boolean))).slice(0, 50)
+    await setAgentSetting({
+      key: TOPIC_BOT_QUEUE_KEY,
+      value: cleanedUrls.join('\n'),
+      category: 'social',
+      label: '第 2 小編免驗證話題佇列',
+    })
   }
   return getTopicBotState()
 }
@@ -406,15 +442,17 @@ export async function evaluateAndDraftTopicReply(
   return { suitable: false, reason: '擬稿失敗', replyText: '', llmMode: mode, modelUsed: modelHint }
 }
 
-/** 執行一輪第 2 小編全自動海巡（或 dryRun / 單篇測試）。 */
+/** 執行一輪第 2 小編全自動海巡（或 dryRun / 單篇網址與文字測試）。 */
 export async function runTopicBotCycle(options?: {
   dryRun?: boolean
   maxReplies?: number
   manualPost?: TopicBotPost
+  manualUrl?: string
   ignoreToggle?: boolean
 }): Promise<{
   ok: boolean
   skipped?: string
+  searchSelfOnly?: boolean
   permissionMissing?: boolean
   error?: string
   results: TopicBotLogEntry[]
@@ -430,11 +468,50 @@ export async function runTopicBotCycle(options?: {
     return { ok: true, skipped: `已達今日回覆上限 (${state.todayCount}/${state.dailyLimit})`, results: [] }
   }
 
+  const ownUsername = (process.env.THREADS_USERNAME || 'vestential').toLowerCase()
   let candidates: TopicBotPost[] = []
+  let consumedQueueUrl: string | null = null
+
   if (options?.manualPost) {
     candidates = [options.manualPost]
+  } else if (options?.manualUrl?.trim()) {
+    const info = await resolveThreadsPost(options.manualUrl.trim())
+    if (!info.mediaId && !dryRun) {
+      return { ok: false, error: '無法從該網址解析出 Threads mediaId，無法發布回覆。', results: [] }
+    }
+    candidates = [
+      {
+        id: info.mediaId || `url-${info.shortcode}`,
+        username: info.author || 'threads_user',
+        text: info.text,
+        permalink: info.permalink,
+      },
+    ]
+  } else if (state.queueUrls.length > 0) {
+    // 免 threads_keyword_search 方案：優先消化話題佇列中的公開貼文網址
+    for (const url of state.queueUrls) {
+      try {
+        const info = await resolveThreadsPost(url)
+        if (info.mediaId && info.text) {
+          candidates = [
+            {
+              id: info.mediaId,
+              username: info.author || 'threads_user',
+              text: info.text,
+              permalink: info.permalink,
+            },
+          ]
+          consumedQueueUrl = url
+          break
+        }
+      } catch {
+        // 單筆解析失敗則跳下一筆
+      }
+    }
+    if (candidates.length === 0) {
+      return { ok: false, error: '話題佇列中的網址皆無法解析出 mediaId / 內文', results: [] }
+    }
   } else {
-    // 依當前小時輪選 1~2 個關鍵字，避免單次打太多查詢
     const startIdx = new Date().getHours() % state.keywords.length
     const kw = state.keywords[startIdx] ?? DEFAULT_TOPIC_BOT_KEYWORDS[0]!
     const searchRes = await searchThreadsTopics(kw, 10)
@@ -447,19 +524,32 @@ export async function runTopicBotCycle(options?: {
       }
     }
     candidates = searchRes.posts
+    const nonOwnCount = candidates.filter((p) => p.username.toLowerCase() !== ownUsername).length
+    if (candidates.length > 0 && nonOwnCount === 0) {
+      return {
+        ok: true,
+        searchSelfOnly: true,
+        skipped: `Threads keyword_search 目前僅回傳自家 @${ownUsername} 貼文（需商家/進階權限）；請改用免驗證的「話題佇列 (URL Queue)」貼入想互動的貼文網址！`,
+        results: [],
+      }
+    }
   }
 
-  const ownUsername = (process.env.THREADS_USERNAME || 'vestential').toLowerCase()
   const results: TopicBotLogEntry[] = []
   let publishedCount = 0
 
   for (const post of candidates) {
     if (publishedCount >= maxReplies) break
     if (!dryRun && state.todayCount + publishedCount >= state.dailyLimit) break
-    if (post.username.toLowerCase() === ownUsername) continue
+    if (!options?.manualPost && !options?.manualUrl && post.username.toLowerCase() === ownUsername) continue
 
     const editionKey = `topic-reply:${post.id}`
-    if (!dryRun && (await hasSocialPosted('threads', editionKey))) continue
+    if (!dryRun && (await hasSocialPosted('threads', editionKey))) {
+      if (consumedQueueUrl) {
+        await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
+      }
+      continue
+    }
 
     const evalRes = await evaluateAndDraftTopicReply(post)
     const entry: TopicBotLogEntry = {
@@ -494,6 +584,9 @@ export async function runTopicBotCycle(options?: {
         entry.published = true
         entry.permalink = pub.permalink
         publishedCount += 1
+        if (consumedQueueUrl) {
+          await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
+        }
       } catch (err: any) {
         entry.error = err?.message || 'Threads 發布回覆失敗'
       }

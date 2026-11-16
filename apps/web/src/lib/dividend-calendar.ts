@@ -58,6 +58,8 @@ export interface DividendCalendarEvent {
   isEstimated?: boolean
   /** 推估來源年份 */
   sourceYear?: number
+  /** 推估說明（例如「近3年同月均算」） */
+  estimateLabel?: string
 }
 
 export interface DividendCalendarMonth {
@@ -235,14 +237,21 @@ export function buildDividendCalendar(
   }
 
   const seenEvent = new Set<string>()
-  const officialSymbols = new Set<string>()
+  const officialSymbolMonths = new Set<string>()
   let totalGross = 0
   let totalNhiFee = 0
   let totalNet = 0
   let eventCount = 0
   let hasEstimatedEvents = false
 
-  const pushEvent = (sym: string, exDate: string, cashDiv: number, isEstimated: boolean, sourceYear?: number) => {
+  const pushEvent = (
+    sym: string,
+    exDate: string,
+    cashDiv: number,
+    isEstimated: boolean,
+    sourceYear?: number,
+    estimateLabel?: string,
+  ) => {
     const holding = holdingMap.get(sym)
     if (!holding) return
     const dedupeKey = `${sym}:${exDate}`
@@ -272,7 +281,7 @@ export function buildDividendCalendar(
       exStatus: exDate <= today ? 'ex_passed' : 'upcoming',
       payDate: null,
       payStatus: 'pending_announcement',
-      ...(isEstimated ? { isEstimated: true, sourceYear } : {}),
+      ...(isEstimated ? { isEstimated: true, sourceYear, estimateLabel } : {}),
     }
 
     const bucket = months[month - 1]!
@@ -294,23 +303,49 @@ export function buildDividendCalendar(
     const cashDiv = Number(d.cash_dividend)
     if (!sym || !DATE_RE.test(exDate) || !exDate.startsWith(yearPrefix)) continue
     if (!Number.isFinite(cashDiv) || cashDiv <= 0) continue
-    officialSymbols.add(sym)
+    const monthNum = Number(exDate.slice(5, 7))
+    officialSymbolMonths.add(`${sym}:${monthNum}`)
     pushEvent(sym, exDate, cashDiv, false)
   }
 
-  // 方案 B：若檢視未來年度（如 2027）且該標的尚無正式公告，將去年（year - 1）同月除息事件平移推估預覽
+  // 近 3 年同月歷史均算預估：對當年尚未公告的未來月份（如 2026-12）或明年全年（2027-01..12），
+  // 回看 (year - 3) .. (year - 1) 同月份的歷史配息取平均值補齊
+  const currentMonth = Number(today.slice(5, 7))
   const prevYear = year - 1
-  if (allowEstimate && year > currentYear) {
-    const prevPrefix = `${prevYear}-`
-    for (const d of dividends ?? []) {
-      const sym = (d.symbol ?? '').trim().toUpperCase()
-      const exDate = (d.ex_date ?? '').trim()
-      const cashDiv = Number(d.cash_dividend)
-      if (!sym || officialSymbols.has(sym)) continue
-      if (!DATE_RE.test(exDate) || !exDate.startsWith(prevPrefix)) continue
-      if (!Number.isFinite(cashDiv) || cashDiv <= 0) continue
-      const mmdd = exDate.slice(5) === '02-29' ? '02-28' : exDate.slice(5)
-      pushEvent(sym, `${year}-${mmdd}`, cashDiv, true, prevYear)
+  if (allowEstimate && (year > currentYear || year === currentYear)) {
+    const minHistYear = year - 3
+    const maxHistYear = Math.min(currentYear, year - 1)
+
+    for (const sym of holdingMap.keys()) {
+      for (let m = 1; m <= 12; m++) {
+        // 已有正式公告的 (持股, 月份) 不重複推估
+        if (officialSymbolMonths.has(`${sym}:${m}`)) continue
+        // 當年已過去的月份不捏造歷史補估（僅推估尚未發生的當月及未來月份）
+        if (year === currentYear && m < currentMonth) continue
+
+        const mmStr = String(m).padStart(2, '0')
+        const samples: { exDate: string; cashDiv: number }[] = []
+        for (const d of dividends ?? []) {
+          const dSym = (d.symbol ?? '').trim().toUpperCase()
+          const dDate = (d.ex_date ?? '').trim()
+          const dDiv = Number(d.cash_dividend)
+          if (dSym !== sym || !DATE_RE.test(dDate) || !Number.isFinite(dDiv) || dDiv <= 0) continue
+          const dYear = Number(dDate.slice(0, 4))
+          const dMonth = Number(dDate.slice(5, 7))
+          if (dYear >= minHistYear && dYear <= maxHistYear && dMonth === m) {
+            samples.push({ exDate: dDate, cashDiv: dDiv })
+          }
+        }
+        if (samples.length === 0) continue
+
+        samples.sort((a, b) => (a.exDate < b.exDate ? 1 : -1))
+        const avgDiv = Math.round((samples.reduce((s, x) => s + x.cashDiv, 0) / samples.length) * 1000) / 1000
+        const latestSample = samples[0]!
+        const dd = latestSample.exDate.slice(8, 10) === '29' && m === 2 ? '28' : latestSample.exDate.slice(8, 10)
+        const latestSampleYear = Number(latestSample.exDate.slice(0, 4))
+        const label = samples.length >= 2 ? `近${samples.length}年同月均算` : `依 ${latestSampleYear} 推估`
+        pushEvent(sym, `${year}-${mmStr}-${dd}`, avgDiv, true, latestSampleYear, label)
+      }
     }
   }
 

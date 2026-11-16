@@ -60,6 +60,7 @@ vi.mock('./social-tokens', () => ({
 
 vi.mock('./threads-reply', () => ({
   publishThreadsReply: mocks.publishThreadsReply,
+  resolveThreadsPost: vi.fn(),
 }))
 
 import {
@@ -96,17 +97,22 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(validateTopicReplyText('值得注意的是，這個視頻質量真的很高。').ok).toBe(false)
   })
 
-  it('createTopicBotLLM 在設定免費 Key 時啟用 free-first 模式，未設定則為 paid-only', () => {
+  it('createTopicBotLLM 支援偵測 FALLBACK2 + FALLBACK 雙免費 Groq Key，未設定則為 paid-only', () => {
     delete process.env.TOPIC_BOT_FREE_LLM_API_KEY
     delete process.env.GROQ_API_KEY
     delete process.env.TOPIC_BOT_FREE_GOOGLE_API_KEY
     delete process.env.FALLBACK_LLM_API_KEY
+    delete process.env.FALLBACK_QUICK_LLM_API_KEY
+    delete process.env.FALLBACK2_LLM_API_KEY
+    delete process.env.FALLBACK2_QUICK_LLM_API_KEY
     expect(createTopicBotLLM().mode).toBe('paid-only')
 
-    process.env.GROQ_API_KEY = 'gsk_test_free_key'
+    process.env.FALLBACK2_QUICK_LLM_API_KEY = 'gsk_free_2'
+    process.env.FALLBACK_QUICK_LLM_API_KEY = 'gsk_free_1'
     const res = createTopicBotLLM()
     expect(res.mode).toBe('free-first')
-    expect(res.freeLabel).toContain('groq/')
+    expect(res.freeLabel).toContain('groq2/')
+    expect(res.freeLabel).toContain('groq1/')
   })
 
   it('evaluateAndDraftTopicReply 在貼文不適合時跳過擬稿', async () => {
