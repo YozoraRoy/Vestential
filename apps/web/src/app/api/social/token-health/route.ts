@@ -86,10 +86,20 @@ async function checkThreads(): Promise<TokenCheck> {
     }
   }
   try {
-    const res = await fetch(
-      `https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(token)}`,
-      { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10_000) },
-    )
+    let res: Response | null = null
+    let lastErr: unknown = null
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        res = await fetch(
+          `https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(token)}`,
+          { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000) },
+        )
+        break
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    if (!res) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'Threads API timeout'))
     const json = await res.json()
     if (!res.ok || !json?.id) {
       return {

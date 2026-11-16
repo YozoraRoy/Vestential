@@ -8,13 +8,14 @@ import {
 } from './social-prompts'
 
 describe('AI Control Center #23 social-prompts helpers', () => {
-  it('包含 4 個社群小編 Prompt 映射且鍵值唯一', () => {
-    expect(SOCIAL_PROMPT_DEFS).toHaveLength(4)
+  it('包含 5 個社群小編 Prompt 映射且鍵值唯一', () => {
+    expect(SOCIAL_PROMPT_DEFS).toHaveLength(5)
     const ids = new Set(SOCIAL_PROMPT_DEFS.map((d) => d.id))
     const keys = new Set(SOCIAL_PROMPT_DEFS.map((d) => d.settingKey))
-    expect(ids.size).toBe(4)
-    expect(keys.size).toBe(4)
+    expect(ids.size).toBe(5)
+    expect(keys.size).toBe(5)
     expect(findSocialPromptDef('first-reply')?.settingKey).toBe('social.first_reply_prompt')
+    expect(findSocialPromptDef('topic-reply')?.settingKey).toBe('social.topic_reply_prompt')
     expect(findSocialPromptDef('unknown')).toBeUndefined()
   })
 

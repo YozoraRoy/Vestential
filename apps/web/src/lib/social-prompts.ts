@@ -4,13 +4,13 @@
  * - 歷史版本存於 `social.prompt_history.<id>`（JSON 陣列，保留最近 10 筆）。
  */
 
-export type SocialPromptId = 'news-summary' | 'tech-meme' | 'first-reply' | 'platform-styles'
+export type SocialPromptId = 'news-summary' | 'tech-meme' | 'first-reply' | 'platform-styles' | 'topic-reply'
 
 export interface SocialPromptDef {
   id: SocialPromptId
   settingKey: string
   historyKey: string
-  category: 'summary' | 'meme' | 'first-reply' | 'style'
+  category: 'summary' | 'meme' | 'first-reply' | 'style' | 'topic-reply'
   label: string
 }
 
@@ -51,6 +51,13 @@ export const SOCIAL_PROMPT_DEFS: readonly SocialPromptDef[] = [
     historyKey: 'social.prompt_history.platform-styles',
     category: 'style',
     label: '社群平台風格排版 Prompt（Threads）',
+  },
+  {
+    id: 'topic-reply',
+    settingKey: 'social.topic_reply_prompt',
+    historyKey: 'social.prompt_history.topic-reply',
+    category: 'topic-reply',
+    label: '第 2 小編：海巡說人話回覆 Prompt',
   },
 ] as const
 

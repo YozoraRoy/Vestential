@@ -4,6 +4,7 @@ import { getCurrentUserFromReq, isAdminUser } from '@/lib/auth'
 import { authorizeSync } from '@/lib/sync-auth'
 import { DEFAULT_SOCIAL_PROMPT, DEFAULT_MEME_PROMPT } from '@/lib/social'
 import { DEFAULT_FIRST_REPLY_PROMPT } from '@/lib/social-first-reply'
+import { DEFAULT_TOPIC_REPLY_PROMPT } from '@/lib/threads-topic-bot'
 import { SUMMARY_SYSTEM_PROMPT } from '@/lib/market-focus'
 import {
   findSocialPromptDef,
@@ -21,6 +22,7 @@ const BUILTIN_MAP: Record<SocialPromptId, string> = {
   'tech-meme': DEFAULT_MEME_PROMPT,
   'first-reply': DEFAULT_FIRST_REPLY_PROMPT,
   'platform-styles': DEFAULT_SOCIAL_PROMPT,
+  'topic-reply': DEFAULT_TOPIC_REPLY_PROMPT,
 }
 
 async function isAuthorized(req: NextRequest): Promise<{ ok: boolean; actor: string }> {

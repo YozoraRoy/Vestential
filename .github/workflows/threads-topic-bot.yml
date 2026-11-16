@@ -1,0 +1,36 @@
+name: Threads Topic Bot (2nd Editor Auto-Reply)
+
+on:
+  schedule:
+    # 台北時間 10:30, 14:30, 19:30, 22:30 (UTC 02:30, 06:30, 11:30, 14:30)
+    - cron: '30 2,6,11,14 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '試跑預覽（不實際留言）'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  run-topic-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 觸發 Vestential 第 2 小編全自動海巡
+        env:
+          SYNC_TOKEN: ${{ secrets.VESTENTIAL_SYNC_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          BODY=$(printf '{"dryRun":%s,"maxReplies":1}' "$DRY_RUN")
+          RES=$(curl -sS -w "\n%{http_code}" --max-time 60 \
+            -X POST "https://stock-platform-roy.azurewebsites.net/api/social/topic-bot" \
+            -H "Authorization: Bearer ${SYNC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          CODE=$(echo "$RES" | tail -n1)
+          JSON=$(echo "$RES" | sed '$d')
+          echo "HTTP $CODE: $JSON"
+          if [ "$CODE" -ge 400 ]; then
+            exit 1
+          fi
