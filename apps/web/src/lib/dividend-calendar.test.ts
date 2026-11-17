@@ -220,4 +220,45 @@ describe('Issue #120 dividend-calendar engine', () => {
     // 僅 0050 計入可抵減稅額
     expect(res.taxCredit).toBe(Math.round(Math.round(ev0050.grossAmount * 0.82) * 0.085))
   })
+
+  it('estimateYears=1 / 2 / 3 嚴格依選定年數區間取樣，且不跨區間回補', () => {
+    const holdings = [{ symbol: '0056', name: '元大高股息', shares: 1000, market: 'tw' }]
+    const dividends = [
+      // 1月配息：2024=0.70、2025=1.07、2026=0.866
+      { symbol: '0056', ex_date: '2024-01-17', cash_dividend: 0.7 },
+      { symbol: '0056', ex_date: '2025-01-17', cash_dividend: 1.07 },
+      { symbol: '0056', ex_date: '2026-01-22', cash_dividend: 0.866 },
+      // 4月配息：僅 2025 年有（2026 年 4 月無配息）
+      { symbol: '0056', ex_date: '2025-04-23', cash_dividend: 1.0 },
+    ]
+
+    // estimateYears=1：2027年只看2026，1月為0.866，4月無配息故嚴格不顯示
+    const y1 = buildDividendCalendar(holdings, dividends, {
+      today: '2026-11-17',
+      year: 2027,
+      groupBy: 'ex',
+      estimateYears: 1,
+    })
+    expect(y1.months[0]?.events[0]?.cashDividendPerShare).toBe(0.866)
+    expect(y1.months[3]?.events).toHaveLength(0)
+
+    // estimateYears=2：看2025~2026，1月為 (1.07+0.866)/2 = 0.968，4月為 1.0
+    const y2 = buildDividendCalendar(holdings, dividends, {
+      today: '2026-11-17',
+      year: 2027,
+      groupBy: 'ex',
+      estimateYears: 2,
+    })
+    expect(y2.months[0]?.events[0]?.cashDividendPerShare).toBe(0.968)
+    expect(y2.months[3]?.events[0]?.cashDividendPerShare).toBe(1.0)
+
+    // estimateYears=3：看2024~2026，1月為 (0.7+1.07+0.866)/3 = 0.879
+    const y3 = buildDividendCalendar(holdings, dividends, {
+      today: '2026-11-17',
+      year: 2027,
+      groupBy: 'ex',
+      estimateYears: 3,
+    })
+    expect(y3.months[0]?.events[0]?.cashDividendPerShare).toBe(0.879)
+  })
 })

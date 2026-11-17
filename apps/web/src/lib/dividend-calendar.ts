@@ -232,10 +232,19 @@ function diffCalendarDays(fromIso: string, toIso: string): number | null {
   return diff >= 0 && diff <= 180 ? diff : null
 }
 
+export type EstimateLookbackYears = 1 | 2 | 3
+
 export function buildDividendCalendar(
   holdings: readonly CalendarHoldingInput[],
   dividends: readonly CalendarDividendInput[],
-  options?: { today?: string; year?: number; allowEstimate?: boolean; groupBy?: 'pay' | 'ex'; minShares?: number },
+  options?: {
+    today?: string
+    year?: number
+    allowEstimate?: boolean
+    groupBy?: 'pay' | 'ex'
+    minShares?: number
+    estimateYears?: EstimateLookbackYears
+  },
 ): DividendCalendarResult {
   const today = options?.today && DATE_RE.test(options.today)
     ? options.today
@@ -245,6 +254,10 @@ export function buildDividendCalendar(
   const allowEstimate = options?.allowEstimate !== false
   const groupBy = options?.groupBy ?? 'ex'
   const minShares = options?.minShares && options.minShares > 0 ? options.minShares : 0
+  const estimateYears: EstimateLookbackYears =
+    options?.estimateYears === 1 || options?.estimateYears === 2 || options?.estimateYears === 3
+      ? options.estimateYears
+      : 3
   const yearPrefix = `${year}-`
 
   // 聚合台股持股（同代號多筆合併股數；排除 shares <= 0 或美股）
@@ -449,15 +462,15 @@ export function buildDividendCalendar(
     pushEvent(sym, exDate, cashDiv, d.pay_date, false)
   }
 
-  // 近 3 年同月歷史均算預估：對當年尚未公告的未來月份（如 2026-12）或明年全年（2027-01..12），
-  // 回看過去 3 年同月份的歷史配息取平均值補齊
+  // 近 N 年同月歷史均算預估（1 / 2 / 3 年）：對當年尚未公告的未來月份（如 2026-12）或明年全年，
+  // 嚴格回看選定年數區間 [maxHistYear - estimateYears + 1, maxHistYear] 同月份歷史配息取平均值補齊
   const currentMonth = Number(today.slice(5, 7))
   const prevYear = year - 1
   if (allowEstimate && (year > currentYear || year === currentYear)) {
     const scanYears = groupBy === 'pay' && year > currentYear ? [year - 1, year] : [year]
     for (const targetExYear of scanYears) {
-      const minHistYear = targetExYear - 3
       const maxHistYear = Math.min(currentYear, targetExYear - 1)
+      const minHistYear = maxHistYear - estimateYears + 1
 
       for (const sym of holdingMap.keys()) {
         for (let m = 1; m <= 12; m++) {

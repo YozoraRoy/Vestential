@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { CalendarDays, Info, ShieldAlert } from 'lucide-react'
 import { useI18n } from '@/i18n/LanguageProvider'
@@ -9,7 +9,10 @@ import {
   buildDividendCalendar,
   type CalendarDividendInput,
   type CalendarHoldingInput,
+  type EstimateLookbackYears,
 } from '@/lib/dividend-calendar'
+
+const ESTIMATE_YEARS_STORAGE_KEY = 'vestential.portfolio.estimateYears'
 
 interface PortfolioDividendCalendarProps {
   holdings: CalendarHoldingInput[]
@@ -178,6 +181,23 @@ export function PortfolioDividendCalendar({
   const [taxMode, setTaxMode] = useState<'post' | 'pre'>('post')
   const [groupBy, setGroupBy] = useState<'pay' | 'ex'>('pay')
   const [excludeOddLots, setExcludeOddLots] = useState<boolean>(true)
+  const [estimateYears, setEstimateYears] = useState<EstimateLookbackYears>(3)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ESTIMATE_YEARS_STORAGE_KEY)
+      if (saved === '1' || saved === '2' || saved === '3') {
+        setEstimateYears(Number(saved) as EstimateLookbackYears)
+      }
+    } catch {}
+  }, [])
+
+  const handleSelectEstimateYears = (next: EstimateLookbackYears) => {
+    setEstimateYears(next)
+    try {
+      localStorage.setItem(ESTIMATE_YEARS_STORAGE_KEY, String(next))
+    } catch {}
+  }
 
   const yearOptions = useMemo(() => [currentYear + 1, currentYear, currentYear - 1], [currentYear])
 
@@ -188,8 +208,9 @@ export function PortfolioDividendCalendar({
         year: selectedYear,
         groupBy,
         minShares: excludeOddLots ? 1000 : 0,
+        estimateYears,
       }),
-    [holdings, dividends, today, selectedYear, groupBy, excludeOddLots],
+    [holdings, dividends, today, selectedYear, groupBy, excludeOddLots, estimateYears],
   )
 
   return (
@@ -205,10 +226,16 @@ export function PortfolioDividendCalendar({
           {calendar.isEstimatedYear ? (
             <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300">
               {locale === 'en'
-                ? 'Includes estimates averaged from up to 3 years of same-month payouts for unannounced months'
+                ? estimateYears === 1
+                  ? 'Includes estimates from last 1 year of same-month payouts for unannounced months'
+                  : `Includes estimates averaged from up to ${estimateYears} years of same-month payouts for unannounced months`
                 : locale === 'ja'
-                  ? '未発表の月については過去最大3年間の同月実績平均による予想を含みます'
-                  : '尚未公告之月份（如今年 12 月及明年）已依近 3 年同月份歷史配息均算預估（實際以投信/公司公告為準）'}
+                  ? estimateYears === 1
+                    ? '未発表の月については直近1年間の同月実績による予想を含みます'
+                    : `未発表の月については過去最大${estimateYears}年間の同月実績平均による予想を含みます`
+                  : estimateYears === 1
+                    ? '尚未公告之月份（如今年 12 月及明年）已依近 1 年同月份實際配息推估（實際以投信/公司公告為準）'
+                    : `尚未公告之月份（如今年 12 月及明年）已依近 ${estimateYears} 年同月份歷史配息均算預估（實際以投信/公司公告為準）`}
             </p>
           ) : null}
           {calendar.excludedHoldings.length > 0 ? (
@@ -236,6 +263,25 @@ export function PortfolioDividendCalendar({
               </option>
             ))}
           </select>
+
+          <div
+            role="group"
+            aria-label="Estimate lookback years"
+            className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5 text-xs"
+          >
+            {([1, 2, 3] as const).map((yr) => (
+              <button
+                key={yr}
+                type="button"
+                onClick={() => handleSelectEstimateYears(yr)}
+                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                  estimateYears === yr ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'
+                }`}
+              >
+                {locale === 'en' ? `${yr}Y` : locale === 'ja' ? `直近${yr}年` : `按近${yr}年`}
+              </button>
+            ))}
+          </div>
 
           <div
             role="group"
