@@ -183,4 +183,41 @@ describe('Issue #120 dividend-calendar engine', () => {
     expect(res.totalInvestedCost).toBe(42_000)
     expect(res.effectiveCostYieldPct).toBe(Math.round((1200 / 42_000) * 10000) / 100)
   })
+
+  it('推估 2027 配息時自動還原 0050 1拆4分割、將 00687B 債券 54C 歸零，且推估發放日遇週末順延至週一', () => {
+    const res = buildDividendCalendar(
+      [
+        { symbol: '0050', name: '元大台灣50', shares: 18_000, market: 'tw', costBasis: 1_000_000 },
+        { symbol: '00687B', name: '國泰20年美債', shares: 10_000, market: 'tw', costBasis: 300_000 },
+      ],
+      [
+        // 0050 1月歷史配息：2024=3.0 (÷4=0.75), 2025=2.7 (÷4=0.675), 2026=1.0 (分割後) → 均算 0.808
+        // 2026-01-22 + 25天 = 2026-02-16；2027-01-22 + 22天(或25天) 檢查若落在週末則自動順延週一
+        { symbol: '0050', ex_date: '2024-01-17', pay_date: '2024-02-15', cash_dividend: 3.0 }, // 間隔 29天
+        { symbol: '0050', ex_date: '2025-01-17', pay_date: '2025-02-17', cash_dividend: 2.7 }, // 間隔 31天
+        { symbol: '0050', ex_date: '2026-01-22', pay_date: '2026-02-11', cash_dividend: 1.0 }, // 間隔 20天 → 平均27天 → 2027-01-22+27=2027-02-18(週四)
+        // 00687B 1月配息 +25天 = 2027-02-13（週六）→ 應自動順延至 2027-02-15（週一）
+        { symbol: '00687B', ex_date: '2026-01-19', cash_dividend: 0.35 },
+      ],
+      { today: '2026-11-17', year: 2027, groupBy: 'pay', allowEstimate: true, minShares: 1000 },
+    )
+
+    const febEvents = res.months[1]!.events
+    const ev0050 = febEvents.find((e) => e.symbol === '0050')!
+    const ev687b = febEvents.find((e) => e.symbol === '00687B')!
+
+    // (0.75 + 0.675 + 1.0) / 3 = 0.80833 -> 0.808，18,000 * 0.808 = 14,544（遠低於舊 bug 的 40,194，且不觸發二代健保）
+    expect(ev0050.cashDividendPerShare).toBe(0.808)
+    expect(ev0050.grossAmount).toBe(Math.round(18_000 * 0.808))
+    expect(ev0050.nhiFee).toBe(0)
+
+    // 00687B 54C = 0%，可抵減稅額不含 00687B
+    expect(ev687b.dividend54cRatio).toBe(0)
+    expect(ev687b.taxable54cAmount).toBe(0)
+    // 2027-01-19 + 25 天 = 2027-02-13（週六）→ 順延至週一 2027-02-15
+    expect(ev687b.payDate).toBe('2027-02-15')
+
+    // 僅 0050 計入可抵減稅額
+    expect(res.taxCredit).toBe(Math.round(Math.round(ev0050.grossAmount * 0.82) * 0.085))
+  })
 })

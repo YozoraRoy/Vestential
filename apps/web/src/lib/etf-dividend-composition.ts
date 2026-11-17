@@ -146,11 +146,39 @@ export function getTaxable54cRatio(symbol: string): { ratio: number; isEtf: bool
   return { ratio: 1, isEtf: false }
 }
 
-/** 取得任一 ETF 的配息組成；若非收錄核心則回傳台股 ETF 通用基準 */
+/** 常見海外股票 ETF（配息屬海外所得 71/73/76，非 54C 國內股利所得） */
+const OVERSEAS_EQUITY_ETF_SYMBOLS = new Set([
+  '00646',
+  '00662',
+  '00757',
+  '00830',
+  '00885',
+  '00893',
+  '00895',
+  '00916',
+  '00926',
+  '00971',
+  '009800',
+  '009801',
+])
+
+const BOND_ETF_SYMBOL_RE = /^00\d{3}B$/
+
+/** 取得任一 ETF 的配息組成；債券/海外 ETF 54C=0%，未收錄台股 ETF 回傳通用基準 */
 export function getEtfDividendComposition(symbol: string): EtfDividendComposition {
   const clean = symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
   if (CORE_ETF_DIVIDEND_COMPOSITIONS[clean]) {
     return CORE_ETF_DIVIDEND_COMPOSITIONS[clean]
+  }
+  if (BOND_ETF_SYMBOL_RE.test(clean) || OVERSEAS_EQUITY_ETF_SYMBOLS.has(clean)) {
+    return {
+      symbol: clean,
+      name: clean,
+      dividend54cRatio: 0.0,
+      equalizationRatio: 0.0,
+      capitalGainRatio: 0.0,
+      asOfPeriod: '債券/海外所得型（54C=0%，免扣健保）',
+    }
   }
   return {
     symbol: clean,
@@ -158,7 +186,7 @@ export function getEtfDividendComposition(symbol: string): EtfDividendCompositio
     dividend54cRatio: 0.55,
     equalizationRatio: 0.15,
     capitalGainRatio: 0.30,
-    asOfPeriod: '通用估算基準',
+    asOfPeriod: '台股ETF通用估算基準',
   }
 }
 

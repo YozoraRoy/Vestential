@@ -28,6 +28,15 @@ describe('ETF 配息組成與二代健保安全張數 (Issue #132)', () => {
     expect(safety.holdingEvaluation?.estimated54cAmount).toBe(28875)
     expect(safety.holdingEvaluation?.estimatedTax).toBe(609)
   })
+
+  it('債券 ETF (00687B) 與海外 ETF (00830) 54C 應為 0% 不誤扣健保', () => {
+    expect(getEtfDividendComposition('00687B').dividend54cRatio).toBe(0)
+    expect(getEtfDividendComposition('00937B').dividend54cRatio).toBe(0)
+    expect(getEtfDividendComposition('00830').dividend54cRatio).toBe(0)
+    const safety = computeHealthTaxSafety('00687B', 0.35, 100_000)
+    expect(safety.safeMaxLots).toBeGreaterThanOrEqual(999999)
+    expect(safety.holdingEvaluation?.isSubjectToTax).toBe(false)
+  })
 })
 
 describe('穿透式成分股重疊度雷達 (Issue #132)', () => {

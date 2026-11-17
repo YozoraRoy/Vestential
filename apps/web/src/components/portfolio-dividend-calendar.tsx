@@ -61,7 +61,7 @@ const COPY: Record<
     preTax: '稅前金額',
     postTax: '稅後實拿',
     totalInvestedCost: '實際投入產生股利總金額',
-    costYield: '成本殖利率',
+    costYield: '領息成本殖利率',
     symbolsCountLabel: '檔領息標的',
     filterWholeLot: '僅 ≥ 1,000 股',
     filterAllShares: '含零股',
@@ -72,8 +72,8 @@ const COPY: Record<
     totalNet: '預估實拿現金流（稅後）',
     taxCredit: '可抵減稅額（單獨列示）',
     taxCreditHint: '合併計稅 8.5%，每戶上限 NT$80,000（不混入實拿）',
-    nhiHint: '單檔單次給付 ≥ NT$20,000 扣繳 2.11%',
-    netYield: '實質稅後殖利率',
+    nhiHint: '單檔單次 54C ≥ NT$20,000 扣繳 2.11%',
+    netYield: '納入持股現值殖利率',
     emptyHoldings: '目前尚無台股持股紀錄，請先於「持股總覽」新增持股即可自動試算股利現金流。',
     emptyEvents: '所選年度尚無對應持股的除息紀錄，不顯示 0 元假事件。',
     exPassed: '已除息',
@@ -85,9 +85,9 @@ const COPY: Record<
     exDateLabel: '除息日',
     monthSuffix: '月',
     disclaimerTitle: '試算口徑與免責聲明',
-    disclaimer1: '1. 發放日未由公司正式公告前一律標示「待公告」，實際入帳日與金額以各公司公告及集保入帳為準。',
-    disclaimer2: '2. 二代健保（≥ NT$20,000 扣 2.11%）先以「單檔單次給付」試算；可抵減稅額（8.5%、上限 80,000 元）僅供合併計稅情境參考，不構成稅務或投資建議。',
-    disclaimer3: '3. 稅制參數生效年度：2026 年；資料來源：TWSE 除息快取（twse_dividends）。',
+    disclaimer1: '1. 未來推估配息已還原已知股票分割（如 0050 2025/06 1拆4）；推估發放日遇週六／週日將順延至次一營業日，實際日期與金額以投信及公司公告為準。',
+    disclaimer2: '2. 二代健保（2.11%）僅針對國內 54C 股利所得單次達 NT$20,000 計扣；可抵減稅額（8.5%、上限 80,000 元）僅供合併計稅參考（高所得另有 28% 分開計稅可選），不計入債券／海外 ETF（海外所得全戶滿 100 萬計入基本所得額，免稅額依現行 750 萬規範）。',
+    disclaimer3: '3. 試算暫依現行 2026 年公布稅制參數；資料來源：TWSE／FinMind 除息與配息明細。',
   },
   en: {
     title: '12-Month Dividend Cashflow Calendar',
@@ -452,9 +452,16 @@ export function PortfolioDividendCalendar({
                                 {ev.shares.toLocaleString('en-US')} {t.sharesUnit}
                               </div>
                             </div>
-                            <span className="shrink-0 font-bold tabular-nums text-[var(--text-primary)]">
-                              {fmtNtd(displayAmount)}
-                            </span>
+                            <div className="shrink-0 text-right">
+                              <span className="font-bold tabular-nums text-[var(--text-primary)]">
+                                {fmtNtd(displayAmount)}
+                              </span>
+                              {taxMode === 'post' && ev.nhiFee > 0 ? (
+                                <div className="text-[10px] tabular-nums text-[var(--text-muted)]">
+                                  {locale === 'en' ? 'Pre-tax' : '稅前'} {fmtNtd(ev.grossAmount)}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
 
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">

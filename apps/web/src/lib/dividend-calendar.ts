@@ -190,10 +190,38 @@ export function computeDividendTaxCredit(totalGrossDividends: number): number {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+/** 股票分割還原對照表：若歷史除息日早於 splitDate，將當時每股配息除以 ratio 還原為分割後口徑 */
+export const STOCK_SPLIT_ADJUSTMENTS: Record<string, Array<{ splitDate: string; ratio: number }>> = {
+  '0050': [{ splitDate: '2025-06-18', ratio: 4 }],
+}
+
+export function adjustDividendForSplits(symbol: string, exDate: string, cashDividend: number): number {
+  const splits = STOCK_SPLIT_ADJUSTMENTS[symbol.trim().toUpperCase()]
+  if (!splits || splits.length === 0) return cashDividend
+  let factor = 1
+  for (const s of splits) {
+    if (exDate < s.splitDate && s.ratio > 0) {
+      factor *= s.ratio
+    }
+  }
+  if (factor === 1) return cashDividend
+  return Math.round((cashDividend / factor) * 10000) / 10000
+}
+
 function addCalendarDays(isoDate: string, days: number): string {
   const ts = Date.parse(`${isoDate}T00:00:00Z`)
   if (!Number.isFinite(ts)) return isoDate
   return new Date(ts + days * 86_400_000).toISOString().slice(0, 10)
+}
+
+/** 預估發放日若遇週六（+2）或週日（+1），自動順延至次一週一營業日 */
+function shiftWeekendToMonday(isoDate: string): string {
+  const ts = Date.parse(`${isoDate}T00:00:00Z`)
+  if (!Number.isFinite(ts)) return isoDate
+  const day = new Date(ts).getUTCDay()
+  if (day === 6) return addCalendarDays(isoDate, 2)
+  if (day === 0) return addCalendarDays(isoDate, 1)
+  return isoDate
 }
 
 function diffCalendarDays(fromIso: string, toIso: string): number | null {
@@ -326,7 +354,7 @@ export function buildDividendCalendar(
   const estimatePayDate = (sym: string, exDate: string): string => {
     const stat = lagSumBySym.get(sym)
     const lag = stat && stat.count > 0 ? Math.round(stat.sum / stat.count) : DEFAULT_PAY_LAG_DAYS
-    return addCalendarDays(exDate, lag)
+    return shiftWeekendToMonday(addCalendarDays(exDate, lag))
   }
 
   const pushEvent = (
@@ -447,7 +475,7 @@ export function buildDividendCalendar(
             const dYear = Number(dDate.slice(0, 4))
             const dMonth = Number(dDate.slice(5, 7))
             if (dYear >= minHistYear && dYear <= maxHistYear && dMonth === m) {
-              samples.push({ exDate: dDate, cashDiv: dDiv })
+              samples.push({ exDate: dDate, cashDiv: adjustDividendForSplits(sym, dDate, dDiv) })
             }
           }
           if (samples.length === 0) continue
