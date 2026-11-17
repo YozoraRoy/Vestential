@@ -177,6 +177,13 @@ export default async function Home() {
       {/* 🚀 Feature Quick Bar */}
       <div className="mb-10 flex flex-wrap items-center justify-center gap-3">
         <Link
+          href={localizePath(locale, '/cashflow-plan')}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-emerald-500/20 to-blue-500/20 hover:from-emerald-500/30 hover:to-blue-500/30 border border-emerald-400/40 text-xs font-semibold text-emerald-200 transition shadow-sm"
+        >
+          <span>💰 月領現金流 Plan（2~10萬自由配置）</span>
+          <span className="text-[10px] text-emerald-300/80">→</span>
+        </Link>
+        <Link
           href={localizePath(locale, '/ex-dividend')}
           className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs font-medium text-emerald-300 transition shadow-sm"
         >

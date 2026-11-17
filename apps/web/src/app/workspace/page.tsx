@@ -102,6 +102,16 @@ export default async function WorkspacePage() {
           desc: w.portfolioDesc,
           accent: 'green',
         },
+        {
+          href: '/cashflow-plan',
+          icon: Coins,
+          title: locale === 'en' ? 'Monthly Dividend Plan' : locale === 'ja' ? '月次配当プラン' : '股利現金流配置 Plan',
+          desc:
+            locale === 'en'
+              ? 'Simulate 20k-100k NTD monthly post-tax dividend cashflow portfolios with custom ETF weights.'
+              : '自由試算月領 2~10 萬稅後現金流（預設 4 萬），含風格範本、54C 健保精算與 12 個月發放分佈。',
+          accent: 'green',
+        },
       ],
     },
     {
