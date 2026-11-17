@@ -7,11 +7,14 @@
  * - 實拿現金流＝稅前現金股利－二代健保補充保費（可抵減稅額單獨列示，不混入實拿）
  */
 
+import { getTaxable54cRatio } from './etf-dividend-composition'
+
 export const TAX_RULES_EFFECTIVE_YEAR = 2026
 export const NHI_SUPPLEMENT_THRESHOLD = 20_000
 export const NHI_SUPPLEMENT_RATE = 0.0211
 export const DIVIDEND_TAX_CREDIT_RATE = 0.085
 export const DIVIDEND_TAX_CREDIT_CAP = 80_000
+export const DEFAULT_PAY_LAG_DAYS = 25
 
 export interface CalendarHoldingInput {
   symbol: string
@@ -28,13 +31,15 @@ export interface CalendarDividendInput {
   ex_date: string
   cash_dividend: number
   prev_close?: number | null
+  /** 現金股利發放日 'YYYY-MM-DD' */
+  pay_date?: string | null
 }
 
 export interface DividendCalendarEvent {
   symbol: string
   name: string | null
   exDate: string
-  /** YYYY-MM */
+  /** YYYY-MM（依 groupBy 決定為發放月或除息月） */
   monthKey: string
   /** 1..12 */
   month: number
@@ -42,7 +47,11 @@ export interface DividendCalendarEvent {
   cashDividendPerShare: number
   /** 稅前現金股利（元，四捨五入至整數） */
   grossAmount: number
-  /** 二代健保補充保費（元；單筆 >= 20,000 元扣 2.11%） */
+  /** 54C 股利所得佔比（0~1；個股為 1，ETF 依常態比例） */
+  dividend54cRatio: number
+  /** 預估 54C 應稅股利金額（元） */
+  taxable54cAmount: number
+  /** 二代健保補充保費（元；僅針對 54C 應稅額 >= 20,000 元扣 2.11%） */
   nhiFee: number
   /** 是否達二代健保起扣門檻 */
   nhiTriggered: boolean
@@ -50,11 +59,13 @@ export interface DividendCalendarEvent {
   netAmount: number
   /** 除息狀態：已除息 | 待除息 */
   exStatus: 'ex_passed' | 'upcoming'
-  /** 發放日（Phase 1 不捏造日期，固定 null） */
+  /** 發放日 'YYYY-MM-DD'（真實公告或依歷史間隔推估） */
   payDate: string | null
-  /** 發放日狀態：待公告 */
-  payStatus: 'pending_announcement'
-  /** 是否為去年同期推估（非正式公告） */
+  /** 發放日狀態：已領息 | 待發放 | 待公告 */
+  payStatus: 'paid' | 'scheduled' | 'pending_announcement'
+  /** 發放日是否為參考去年／歷史間隔推估 */
+  payEstimated?: boolean
+  /** 是否為去年同期推估（非正式除息公告） */
   isEstimated?: boolean
   /** 推估來源年份 */
   sourceYear?: number
@@ -165,10 +176,24 @@ export function computeDividendTaxCredit(totalGrossDividends: number): number {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+function addCalendarDays(isoDate: string, days: number): string {
+  const ts = Date.parse(`${isoDate}T00:00:00Z`)
+  if (!Number.isFinite(ts)) return isoDate
+  return new Date(ts + days * 86_400_000).toISOString().slice(0, 10)
+}
+
+function diffCalendarDays(fromIso: string, toIso: string): number | null {
+  const a = Date.parse(`${fromIso}T00:00:00Z`)
+  const b = Date.parse(`${toIso}T00:00:00Z`)
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null
+  const diff = Math.round((b - a) / 86_400_000)
+  return diff >= 0 && diff <= 180 ? diff : null
+}
+
 export function buildDividendCalendar(
   holdings: readonly CalendarHoldingInput[],
   dividends: readonly CalendarDividendInput[],
-  options?: { today?: string; year?: number; allowEstimate?: boolean },
+  options?: { today?: string; year?: number; allowEstimate?: boolean; groupBy?: 'pay' | 'ex' },
 ): DividendCalendarResult {
   const today = options?.today && DATE_RE.test(options.today)
     ? options.today
@@ -176,6 +201,7 @@ export function buildDividendCalendar(
   const currentYear = Number(today.slice(0, 4))
   const year = options?.year ?? currentYear
   const allowEstimate = options?.allowEstimate !== false
+  const groupBy = options?.groupBy ?? 'ex'
   const yearPrefix = `${year}-`
 
   // 聚合台股持股（同代號多筆合併股數；排除 shares <= 0 或美股）
@@ -239,15 +265,38 @@ export function buildDividendCalendar(
   const seenEvent = new Set<string>()
   const officialSymbolMonths = new Set<string>()
   let totalGross = 0
+  let totalTaxable54c = 0
   let totalNhiFee = 0
   let totalNet = 0
   let eventCount = 0
   let hasEstimatedEvents = false
 
+  // 統計各標的歷史「除息日 → 發放日」平均間隔天數，供未來未公告發放日推估使用
+  const lagSumBySym = new Map<string, { sum: number; count: number }>()
+  for (const d of dividends ?? []) {
+    const sym = (d.symbol ?? '').trim().toUpperCase()
+    const ex = (d.ex_date ?? '').trim()
+    const pay = (d.pay_date ?? '').trim()
+    if (!sym || !DATE_RE.test(ex) || !DATE_RE.test(pay)) continue
+    const diff = diffCalendarDays(ex, pay)
+    if (diff == null) continue
+    const prev = lagSumBySym.get(sym) ?? { sum: 0, count: 0 }
+    prev.sum += diff
+    prev.count += 1
+    lagSumBySym.set(sym, prev)
+  }
+
+  const estimatePayDate = (sym: string, exDate: string): string => {
+    const stat = lagSumBySym.get(sym)
+    const lag = stat && stat.count > 0 ? Math.round(stat.sum / stat.count) : DEFAULT_PAY_LAG_DAYS
+    return addCalendarDays(exDate, lag)
+  }
+
   const pushEvent = (
     sym: string,
     exDate: string,
     cashDiv: number,
+    rawPayDate: string | null | undefined,
     isEstimated: boolean,
     sourceYear?: number,
     estimateLabel?: string,
@@ -256,31 +305,53 @@ export function buildDividendCalendar(
     if (!holding) return
     const dedupeKey = `${sym}:${exDate}`
     if (seenEvent.has(dedupeKey)) return
+
+    const hasRealPayDate = Boolean(rawPayDate && DATE_RE.test(rawPayDate.trim()))
+    const resolvedPayDate = hasRealPayDate
+      ? rawPayDate!.trim()
+      : groupBy === 'pay' || isEstimated
+        ? estimatePayDate(sym, exDate)
+        : null
+
+    const targetDate = groupBy === 'pay' ? resolvedPayDate ?? exDate : exDate
+    if (!targetDate.startsWith(yearPrefix)) return
+
     seenEvent.add(dedupeKey)
 
     const grossAmount = Math.round(holding.shares * cashDiv)
     if (grossAmount <= 0) return
 
-    const nhiFee = computeNhiSupplementFee(grossAmount)
+    const { ratio: dividend54cRatio } = getTaxable54cRatio(sym)
+    const taxable54cAmount = Math.round(grossAmount * dividend54cRatio)
+    const nhiFee = computeNhiSupplementFee(taxable54cAmount)
     const netAmount = grossAmount - nhiFee
-    const month = Number(exDate.slice(5, 7))
+    const month = Number(targetDate.slice(5, 7))
     if (month < 1 || month > 12) return
+
+    const payStatus: DividendCalendarEvent['payStatus'] = resolvedPayDate
+      ? resolvedPayDate <= today && !isEstimated
+        ? 'paid'
+        : 'scheduled'
+      : 'pending_announcement'
 
     const event: DividendCalendarEvent = {
       symbol: sym,
       name: holding.name,
       exDate,
-      monthKey: exDate.slice(0, 7),
+      monthKey: targetDate.slice(0, 7),
       month,
       shares: holding.shares,
       cashDividendPerShare: cashDiv,
       grossAmount,
+      dividend54cRatio,
+      taxable54cAmount,
       nhiFee,
-      nhiTriggered: grossAmount >= NHI_SUPPLEMENT_THRESHOLD,
+      nhiTriggered: taxable54cAmount >= NHI_SUPPLEMENT_THRESHOLD,
       netAmount,
-      exStatus: exDate <= today ? 'ex_passed' : 'upcoming',
-      payDate: null,
-      payStatus: 'pending_announcement',
+      exStatus: exDate <= today && !isEstimated ? 'ex_passed' : 'upcoming',
+      payDate: resolvedPayDate,
+      payStatus,
+      ...(resolvedPayDate && !hasRealPayDate ? { payEstimated: true } : {}),
       ...(isEstimated ? { isEstimated: true, sourceYear, estimateLabel } : {}),
     }
 
@@ -291,6 +362,7 @@ export function buildDividendCalendar(
     bucket.totalNet += netAmount
 
     totalGross += grossAmount
+    totalTaxable54c += taxable54cAmount
     totalNhiFee += nhiFee
     totalNet += netAmount
     eventCount++
@@ -301,56 +373,65 @@ export function buildDividendCalendar(
     const sym = (d.symbol ?? '').trim().toUpperCase()
     const exDate = (d.ex_date ?? '').trim()
     const cashDiv = Number(d.cash_dividend)
-    if (!sym || !DATE_RE.test(exDate) || !exDate.startsWith(yearPrefix)) continue
+    if (!sym || !DATE_RE.test(exDate)) continue
     if (!Number.isFinite(cashDiv) || cashDiv <= 0) continue
+    const exYear = Number(exDate.slice(0, 4))
+    if (groupBy === 'ex' && exYear !== year) continue
+    if (groupBy === 'pay' && exYear !== year && exYear !== year - 1) continue
     const monthNum = Number(exDate.slice(5, 7))
-    officialSymbolMonths.add(`${sym}:${monthNum}`)
-    pushEvent(sym, exDate, cashDiv, false)
+    officialSymbolMonths.add(`${sym}:${exYear}:${monthNum}`)
+    pushEvent(sym, exDate, cashDiv, d.pay_date, false)
   }
 
   // 近 3 年同月歷史均算預估：對當年尚未公告的未來月份（如 2026-12）或明年全年（2027-01..12），
-  // 回看 (year - 3) .. (year - 1) 同月份的歷史配息取平均值補齊
+  // 回看過去 3 年同月份的歷史配息取平均值補齊
   const currentMonth = Number(today.slice(5, 7))
   const prevYear = year - 1
   if (allowEstimate && (year > currentYear || year === currentYear)) {
-    const minHistYear = year - 3
-    const maxHistYear = Math.min(currentYear, year - 1)
+    const scanYears = groupBy === 'pay' && year > currentYear ? [year - 1, year] : [year]
+    for (const targetExYear of scanYears) {
+      const minHistYear = targetExYear - 3
+      const maxHistYear = Math.min(currentYear, targetExYear - 1)
 
-    for (const sym of holdingMap.keys()) {
-      for (let m = 1; m <= 12; m++) {
-        // 已有正式公告的 (持股, 月份) 不重複推估
-        if (officialSymbolMonths.has(`${sym}:${m}`)) continue
-        // 當年已過去的月份不捏造歷史補估（僅推估尚未發生的當月及未來月份）
-        if (year === currentYear && m < currentMonth) continue
+      for (const sym of holdingMap.keys()) {
+        for (let m = 1; m <= 12; m++) {
+          if (officialSymbolMonths.has(`${sym}:${targetExYear}:${m}`)) continue
+          if (targetExYear === currentYear && m < currentMonth) continue
+          if (targetExYear < currentYear) continue
 
-        const mmStr = String(m).padStart(2, '0')
-        const samples: { exDate: string; cashDiv: number }[] = []
-        for (const d of dividends ?? []) {
-          const dSym = (d.symbol ?? '').trim().toUpperCase()
-          const dDate = (d.ex_date ?? '').trim()
-          const dDiv = Number(d.cash_dividend)
-          if (dSym !== sym || !DATE_RE.test(dDate) || !Number.isFinite(dDiv) || dDiv <= 0) continue
-          const dYear = Number(dDate.slice(0, 4))
-          const dMonth = Number(dDate.slice(5, 7))
-          if (dYear >= minHistYear && dYear <= maxHistYear && dMonth === m) {
-            samples.push({ exDate: dDate, cashDiv: dDiv })
+          const mmStr = String(m).padStart(2, '0')
+          const samples: { exDate: string; cashDiv: number }[] = []
+          for (const d of dividends ?? []) {
+            const dSym = (d.symbol ?? '').trim().toUpperCase()
+            const dDate = (d.ex_date ?? '').trim()
+            const dDiv = Number(d.cash_dividend)
+            if (dSym !== sym || !DATE_RE.test(dDate) || !Number.isFinite(dDiv) || dDiv <= 0) continue
+            const dYear = Number(dDate.slice(0, 4))
+            const dMonth = Number(dDate.slice(5, 7))
+            if (dYear >= minHistYear && dYear <= maxHistYear && dMonth === m) {
+              samples.push({ exDate: dDate, cashDiv: dDiv })
+            }
           }
-        }
-        if (samples.length === 0) continue
+          if (samples.length === 0) continue
 
-        samples.sort((a, b) => (a.exDate < b.exDate ? 1 : -1))
-        const avgDiv = Math.round((samples.reduce((s, x) => s + x.cashDiv, 0) / samples.length) * 1000) / 1000
-        const latestSample = samples[0]!
-        const dd = latestSample.exDate.slice(8, 10) === '29' && m === 2 ? '28' : latestSample.exDate.slice(8, 10)
-        const latestSampleYear = Number(latestSample.exDate.slice(0, 4))
-        const label = samples.length >= 2 ? `近${samples.length}年同月均算` : `依 ${latestSampleYear} 推估`
-        pushEvent(sym, `${year}-${mmStr}-${dd}`, avgDiv, true, latestSampleYear, label)
+          samples.sort((a, b) => (a.exDate < b.exDate ? 1 : -1))
+          const avgDiv = Math.round((samples.reduce((s, x) => s + x.cashDiv, 0) / samples.length) * 1000) / 1000
+          const latestSample = samples[0]!
+          const dd = latestSample.exDate.slice(8, 10) === '29' && m === 2 ? '28' : latestSample.exDate.slice(8, 10)
+          const latestSampleYear = Number(latestSample.exDate.slice(0, 4))
+          const label = samples.length >= 2 ? `近${samples.length}年同月均算` : `依 ${latestSampleYear} 推估`
+          pushEvent(sym, `${targetExYear}-${mmStr}-${dd}`, avgDiv, null, true, latestSampleYear, label)
+        }
       }
     }
   }
 
   for (const m of months) {
-    m.events.sort((a, b) => (a.exDate < b.exDate ? -1 : a.exDate > b.exDate ? 1 : a.symbol.localeCompare(b.symbol)))
+    m.events.sort((a, b) => {
+      const da = groupBy === 'pay' ? a.payDate ?? a.exDate : a.exDate
+      const db = groupBy === 'pay' ? b.payDate ?? b.exDate : b.exDate
+      return da < db ? -1 : da > db ? 1 : a.symbol.localeCompare(b.symbol)
+    })
   }
 
   const totalBasis = [...holdingMap.values()].reduce((sum, h) => sum + h.basis, 0)
@@ -370,7 +451,7 @@ export function buildDividendCalendar(
     totalGross,
     totalNhiFee,
     totalNet,
-    taxCredit: computeDividendTaxCredit(totalGross),
+    taxCredit: computeDividendTaxCredit(totalTaxable54c),
     effectiveNetYieldPct,
     months,
   }

@@ -622,6 +622,7 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
         ex_date TEXT NOT NULL,
         cash_dividend REAL NOT NULL,
         prev_close REAL,
+        pay_date TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         UNIQUE (symbol, ex_date)
       );
@@ -704,6 +705,13 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
 
 
     `)
+
+    try {
+      const cols = _db.prepare('PRAGMA table_info(twse_dividends)').all() as { name: string }[]
+      if (!cols.some((c) => c.name === 'pay_date')) {
+        _db.exec('ALTER TABLE twse_dividends ADD COLUMN pay_date TEXT')
+      }
+    } catch {}
 
     return _db
   } catch (err) {
@@ -1427,12 +1435,15 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
           ex_date       NVARCHAR(20) NOT NULL,
           cash_dividend FLOAT NOT NULL,
           prev_close    FLOAT NULL,
+          pay_date      NVARCHAR(20) NULL,
           created_at    DATETIME2 DEFAULT GETDATE(),
           CONSTRAINT uq_twse_dividends UNIQUE (symbol, ex_date)
         );
         CREATE INDEX idx_twse_dividends_ex_date ON twse_dividends(ex_date);
         CREATE INDEX idx_twse_dividends_symbol ON twse_dividends(symbol);
       END
+      IF COL_LENGTH('twse_dividends', 'pay_date') IS NULL
+        ALTER TABLE twse_dividends ADD pay_date NVARCHAR(20) NULL;
     `)
     // Issue #101：既有 twse_dividends 補 prev_close（冪等；migration 032 亦 covering）。
     await _pool.request().query(`
@@ -3582,6 +3593,8 @@ export interface TwseDividendRow {
    * TWT48U 每日預告（未來事件）與查無精確值的權／權息列為 null（UI 顯示「—」）。
    */
   prev_close?: number | null
+  /** 現金股利發放日 'YYYY-MM-DD'（由 FinMind 回填，未公告為 null）。 */
+  pay_date?: string | null
   created_at?: string
 }
 
@@ -3591,9 +3604,11 @@ export interface TwseDividendInput {
   cash_dividend: number
   /** Issue #101：除息日昨收；null／未帶＝不覆寫既有值（見 upsertTwseDividends）。 */
   prev_close?: number | null
+  /** 現金股利發放日 'YYYY-MM-DD'；null／未帶＝不覆寫既有值。 */
+  pay_date?: string | null
 }
 
-const TWSE_DIVIDEND_COLUMNS = 'id, symbol, ex_date, cash_dividend, prev_close, created_at'
+const TWSE_DIVIDEND_COLUMNS = 'id, symbol, ex_date, cash_dividend, prev_close, pay_date, created_at'
 
 function normalizeTwseDividendInput(r: TwseDividendInput): TwseDividendInput | null {
   const symbol = (r.symbol ?? '').trim().toUpperCase()
@@ -3604,7 +3619,9 @@ function normalizeTwseDividendInput(r: TwseDividendInput): TwseDividendInput | n
   // #101：prev_close 非法（非正數／非有限）一律視為 null（＝無值，不寫 0）。
   const pc = r.prev_close == null ? null : Number(r.prev_close)
   const prevClose = pc != null && Number.isFinite(pc) && pc > 0 ? pc : null
-  return { symbol, ex_date: exDate, cash_dividend: cash, prev_close: prevClose }
+  const pd = (r.pay_date ?? '').trim()
+  const payDate = /^\d{4}-\d{2}-\d{2}$/.test(pd) ? pd : null
+  return { symbol, ex_date: exDate, cash_dividend: cash, prev_close: prevClose, pay_date: payDate }
 }
 
 /**
@@ -3629,11 +3646,12 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
             .input('exDate', sql.NVarChar(20), r.ex_date)
             .input('cash', sql.Float, r.cash_dividend)
             .input('prevClose', sql.Float, r.prev_close ?? null)
+            .input('payDate', sql.NVarChar(20), r.pay_date ?? null)
             .query(`
               IF EXISTS (SELECT 1 FROM twse_dividends WHERE symbol = @symbol AND ex_date = @exDate)
-                UPDATE twse_dividends SET cash_dividend = CASE WHEN @cash > 0 THEN @cash ELSE cash_dividend END, prev_close = COALESCE(@prevClose, prev_close) WHERE symbol = @symbol AND ex_date = @exDate
+                UPDATE twse_dividends SET cash_dividend = CASE WHEN @cash > 0 THEN @cash ELSE cash_dividend END, prev_close = COALESCE(@prevClose, prev_close), pay_date = COALESCE(@payDate, pay_date) WHERE symbol = @symbol AND ex_date = @exDate
               ELSE
-                INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close) VALUES (@symbol, @exDate, @cash, @prevClose)
+                INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close, pay_date) VALUES (@symbol, @exDate, @cash, @prevClose, @payDate)
             `)
           written++
         } catch (e) {
@@ -3647,14 +3665,15 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
     if (db) {
       try {
         const stmt = db.prepare(`
-          INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO twse_dividends (symbol, ex_date, cash_dividend, prev_close, pay_date)
+          VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(symbol, ex_date) DO UPDATE SET
             cash_dividend = CASE WHEN excluded.cash_dividend > 0 THEN excluded.cash_dividend ELSE twse_dividends.cash_dividend END,
-            prev_close = COALESCE(excluded.prev_close, twse_dividends.prev_close)
+            prev_close = COALESCE(excluded.prev_close, twse_dividends.prev_close),
+            pay_date = COALESCE(excluded.pay_date, twse_dividends.pay_date)
         `)
         const tx = db.transaction((list: TwseDividendInput[]) => {
-          for (const r of list) stmt.run(r.symbol, r.ex_date, r.cash_dividend, r.prev_close ?? null)
+          for (const r of list) stmt.run(r.symbol, r.ex_date, r.cash_dividend, r.prev_close ?? null, r.pay_date ?? null)
         })
         tx(clean)
         return clean.length
@@ -3673,6 +3692,7 @@ export async function upsertTwseDividends(rows: TwseDividendInput[]): Promise<nu
         ...prev,
         cash_dividend: r.cash_dividend > 0 ? r.cash_dividend : prev.cash_dividend,
         prev_close: r.prev_close ?? prev.prev_close ?? null,
+        pay_date: r.pay_date ?? prev.pay_date ?? null,
       }
     } else twseDividendMemoryStore.push({ id: twseDividendMemoryStore.length + 1, ...r })
   }

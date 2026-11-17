@@ -98,6 +98,52 @@ export const CORE_ETF_DIVIDEND_COMPOSITIONS: Record<string, EtfDividendCompositi
     capitalGainRatio: 1.00,
     asOfPeriod: '海外股票型（不計健保）',
   },
+  '00891': {
+    symbol: '00891',
+    name: '中信關鍵半導體',
+    dividend54cRatio: 0.20,
+    equalizationRatio: 0.25,
+    capitalGainRatio: 0.55,
+    asOfPeriod: '2024~2026 常態平均',
+  },
+  '00992A': {
+    symbol: '00992A',
+    name: '群益科技高息成長',
+    dividend54cRatio: 0.00,
+    equalizationRatio: 0.20,
+    capitalGainRatio: 0.80,
+    asOfPeriod: '2026 公告 54C=0%',
+  },
+  '00918': {
+    symbol: '00918',
+    name: '大華優利高填息30',
+    dividend54cRatio: 0.25,
+    equalizationRatio: 0.30,
+    capitalGainRatio: 0.45,
+    asOfPeriod: '2024~2026 常態平均',
+  },
+  '00915': {
+    symbol: '00915',
+    name: '凱基優選高股息30',
+    dividend54cRatio: 0.20,
+    equalizationRatio: 0.25,
+    capitalGainRatio: 0.55,
+    asOfPeriod: '2024~2026 常態平均',
+  },
+}
+
+/** 回傳標的之 54C 應稅股利所得佔比（台股個股為 1.0；ETF 依歷史常態佔比）。 */
+export function getTaxable54cRatio(symbol: string): { ratio: number; isEtf: boolean; note?: string } {
+  const clean = symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+  if (CORE_ETF_DIVIDEND_COMPOSITIONS[clean]) {
+    const c = CORE_ETF_DIVIDEND_COMPOSITIONS[clean]!
+    return { ratio: c.dividend54cRatio, isEtf: true, note: c.asOfPeriod }
+  }
+  if (clean.startsWith('00')) {
+    const fallback = getEtfDividendComposition(clean)
+    return { ratio: fallback.dividend54cRatio, isEtf: true, note: fallback.asOfPeriod }
+  }
+  return { ratio: 1, isEtf: false }
 }
 
 /** 取得任一 ETF 的配息組成；若非收錄核心則回傳台股 ETF 通用基準 */

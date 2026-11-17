@@ -148,12 +148,13 @@ export function PortfolioDividendCalendar({
   const currentYear = Number(today.slice(0, 4))
   const [selectedYear, setSelectedYear] = useState<number>(currentYear)
   const [taxMode, setTaxMode] = useState<'post' | 'pre'>('post')
+  const [groupBy, setGroupBy] = useState<'pay' | 'ex'>('pay')
 
   const yearOptions = useMemo(() => [currentYear + 1, currentYear, currentYear - 1], [currentYear])
 
   const calendar = useMemo(
-    () => buildDividendCalendar(holdings, dividends, { today, year: selectedYear }),
-    [holdings, dividends, today, selectedYear],
+    () => buildDividendCalendar(holdings, dividends, { today, year: selectedYear, groupBy }),
+    [holdings, dividends, today, selectedYear, groupBy],
   )
 
   return (
@@ -190,6 +191,31 @@ export function PortfolioDividendCalendar({
               </option>
             ))}
           </select>
+
+          <div
+            role="group"
+            aria-label="Group by month"
+            className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              onClick={() => setGroupBy('pay')}
+              className={`rounded-md px-2.5 py-1 font-medium transition ${
+                groupBy === 'pay' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {locale === 'en' ? 'By Pay Month' : '依實際領錢月'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setGroupBy('ex')}
+              className={`rounded-md px-2.5 py-1 font-medium transition ${
+                groupBy === 'ex' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {locale === 'en' ? 'By Ex-Date' : '依除息月'}
+            </button>
+          </div>
 
           <div
             role="group"
@@ -336,6 +362,9 @@ export function PortfolioDividendCalendar({
                                 {ev.symbol} {ev.name ?? ''}
                               </Link>
                               <div className="mt-0.5 text-[11px] tabular-nums text-[var(--text-muted)]">
+                                {ev.payDate
+                                  ? `${locale === 'en' ? 'Pay' : '發放日'}: ${ev.payDate} · `
+                                  : ''}
                                 {t.exDateLabel}: {ev.exDate} · {t.perShare} {ev.cashDividendPerShare} ·{' '}
                                 {ev.shares.toLocaleString('en-US')} {t.sharesUnit}
                               </div>
@@ -356,9 +385,35 @@ export function PortfolioDividendCalendar({
                               {ev.exStatus === 'ex_passed' ? t.exPassed : t.upcoming}
                             </span>
 
-                            <span className="rounded-full bg-[var(--bg-card)] px-2 py-0.5 text-[10px] text-[var(--text-muted)]">
-                              {t.payPending}
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                ev.payStatus === 'paid'
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : ev.payStatus === 'scheduled'
+                                    ? 'bg-sky-500/15 text-sky-300'
+                                    : 'bg-[var(--bg-card)] text-[var(--text-muted)]'
+                              }`}
+                            >
+                              {ev.payStatus === 'paid'
+                                ? locale === 'en'
+                                  ? 'Paid'
+                                  : '已領息'
+                                : ev.payStatus === 'scheduled'
+                                  ? ev.payEstimated
+                                    ? locale === 'en'
+                                      ? 'Est. Pay Date'
+                                      : '預估發放日'
+                                    : locale === 'en'
+                                      ? 'Scheduled Pay'
+                                      : '待發放'
+                                  : t.payPending}
                             </span>
+
+                            {ev.dividend54cRatio < 1 ? (
+                              <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-[var(--text-secondary)]">
+                                54C {Math.round(ev.dividend54cRatio * 100)}%
+                              </span>
+                            ) : null}
 
                             {ev.isEstimated ? (
                               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300">
