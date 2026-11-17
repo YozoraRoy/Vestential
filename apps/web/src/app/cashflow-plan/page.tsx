@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Coins, Info, Minus, Plus, RotateCcw, Search, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
+import { Coins, Download, Info, Minus, Plus, RotateCcw, Search, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
+import { buildCashflowPlanExportHtml } from '@/lib/cashflow-plan-export'
 import {
   CASHFLOW_STYLE_TEMPLATES,
   CASHFLOW_TARGET_PRESETS,
@@ -168,6 +169,22 @@ export default function CashflowPlanPage() {
     } catch {}
   }
 
+  const handleExportHtml = () => {
+    if (loading || allocations.length === 0) return
+    const styleName = CASHFLOW_STYLE_TEMPLATES.find((t) => t.id === styleId)?.name ?? '自訂配置'
+    const html = buildCashflowPlanExportHtml({ evaluation, styleName })
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const ymd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' }).replaceAll('-', '')
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `vestential-cashflow-plan-${ymd}.html`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   const updateLots = (symbol: string, nextLots: number) => {
     const clamped = Math.max(0, Math.min(9999, Math.round(nextLots)))
     setAllocations((prev) => prev.map((a) => (a.asset.symbol === symbol ? { ...a, lots: clamped } : a)))
@@ -224,14 +241,25 @@ export default function CashflowPlanPage() {
             依 54C 精算二代健保
           </span>
         </div>
-        <button
-          type="button"
-          onClick={handleReset}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)] transition"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          重設預設（月領 4 萬）
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportHtml}
+            disabled={loading || allocations.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40 disabled:pointer-events-none transition"
+          >
+            <Download className="w-3.5 h-3.5" />
+            匯出 HTML 報告
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[var(--text-secondary)] hover:bg-white/10 hover:text-[var(--text-primary)] transition"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            重設預設（月領 4 萬）
+          </button>
+        </div>
       </div>
 
       <h1 className="text-3xl font-bold mb-2">股利現金流自由配置 Plan</h1>
