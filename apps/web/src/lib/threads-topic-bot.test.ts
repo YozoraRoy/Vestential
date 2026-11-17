@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   updateSocialPost: vi.fn(),
   dbQueryFirst: vi.fn(),
   publishThreadsReply: vi.fn(),
+  graphPost: vi.fn(),
+  waitForContainer: vi.fn(),
   getSocialAccessToken: vi.fn(),
 }))
 
@@ -58,6 +60,11 @@ vi.mock('./social-tokens', () => ({
   getSocialAccessToken: mocks.getSocialAccessToken,
 }))
 
+vi.mock('./social-publish', () => ({
+  graphPost: mocks.graphPost,
+  waitForContainer: mocks.waitForContainer,
+}))
+
 vi.mock('./threads-reply', () => ({
   publishThreadsReply: mocks.publishThreadsReply,
   resolveThreadsPost: vi.fn(),
@@ -66,6 +73,7 @@ vi.mock('./threads-reply', () => ({
 import {
   createTopicBotLLM,
   evaluateAndDraftTopicReply,
+  parseRssTopicItems,
   runTopicBotCycle,
   validateTopicReplyText,
 } from './threads-topic-bot'
@@ -168,5 +176,48 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(run.results).toHaveLength(1)
     expect(run.results[0]?.published).toBe(true)
     expect(mocks.publishThreadsReply).toHaveBeenCalledWith('存股存到最後，發現自己其實是在存心酸跟耐心。', '2001')
+  })
+
+  it('parseRssTopicItems 可正確解析 CDATA 與 HTML entity 並產生穩定去重 ID', () => {
+    const xml = `<rss><channel>
+      <item><title><![CDATA[台積電早盤創高 &amp; 散戶喊不敢追]]></title><link>https://tw.stock.yahoo.com/news/1</link></item>
+      <item><title>太短</title><link>https://tw.stock.yahoo.com/news/2</link></item>
+    </channel></rss>`
+    const items = parseRssTopicItems(xml, 'Yahoo股市', 5)
+    expect(items).toHaveLength(1)
+    expect(items[0]?.id).toMatch(/^rss-[0-9a-f]{12}$/)
+    expect(items[0]?.text).toBe('台積電早盤創高 & 散戶喊不敢追')
+    expect(items[0]?.postType).toBe('rss-post')
+  })
+
+  it('方案 2：無佇列網址時自動抓取 RSS 並以 @vestential 發布獨立短串文', async () => {
+    process.env.THREADS_USER_ID = 'th_user_1'
+    mocks.getSocialAccessToken.mockResolvedValue({ token: 'THAA_TOKEN', source: 'db' })
+    mocks.graphPost
+      .mockResolvedValueOnce({ id: 'container_1' })
+      .mockResolvedValueOnce({ id: 'pub_999' })
+    mocks.waitForContainer.mockResolvedValue(undefined)
+    mocks.getAgentSetting.mockImplementation(async (k: string) => (k === 'social.topic_bot_enabled' ? 'on' : null))
+    mocks.generate
+      .mockResolvedValueOnce('{"suitable": true, "reason": "台股話題"}')
+      .mockResolvedValueOnce('每次猶豫要不要上車，股價就開走了。')
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        '<rss><channel><item><title>台積電早盤再創波段新高，成交量放大</title><link>https://tw.stock.yahoo.com/news/9</link></item></channel></rss>',
+    } as any)
+
+    const run = await runTopicBotCycle({ dryRun: false })
+    fetchSpy.mockRestore()
+
+    expect(run.ok).toBe(true)
+    expect(run.results).toHaveLength(1)
+    expect(run.results[0]?.postType).toBe('rss-post')
+    expect(run.results[0]?.published).toBe(true)
+    expect(mocks.graphPost).toHaveBeenCalledWith(
+      expect.stringContaining('/th_user_1/threads'),
+      expect.objectContaining({ media_type: 'TEXT', text: '每次猶豫要不要上車，股價就開走了。' }),
+    )
   })
 })

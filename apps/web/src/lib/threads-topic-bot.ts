@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   FallbackClient,
   LLMFactory,
@@ -10,10 +11,16 @@ import {
 import { loadConfig } from '@stock/core'
 import { createSocialPost, dbQueryFirst, getAgentSetting, hasSocialPosted, setAgentSetting, updateSocialPost } from '@stock/database'
 import { attachLlmUsageRecorder } from './llm-usage'
+import { graphPost, waitForContainer } from './social-publish'
 import { getSocialAccessToken } from './social-tokens'
 import { publishThreadsReply, resolveThreadsPost } from './threads-reply'
 
 const THREADS_API = 'https://graph.threads.net/v1.0'
+const RSS_TOPIC_FEEDS = [
+  { name: 'Yahoo股市', url: 'https://tw.stock.yahoo.com/rss?category=tw-market' },
+  { name: 'Yahoo財經', url: 'https://tw.news.yahoo.com/rss/finance' },
+  { name: '經濟日報', url: 'https://money.udn.com/rssfeed/news/1001/5588' },
+] as const
 
 export const TOPIC_BOT_ENABLED_KEY = 'social.topic_bot_enabled'
 export const TOPIC_BOT_DAILY_LIMIT_KEY = 'social.topic_bot_daily_limit'
@@ -49,6 +56,7 @@ export interface TopicBotPost {
   permalink: string
   timestamp?: string
   keyword?: string
+  postType?: 'reply' | 'rss-post'
 }
 
 export interface TopicBotLogEntry {
@@ -62,6 +70,7 @@ export interface TopicBotLogEntry {
   reason: string
   published: boolean
   dryRun: boolean
+  postType?: 'reply' | 'rss-post'
   llmMode: 'free-first' | 'paid-only'
   modelUsed: string
   error?: string
@@ -330,12 +339,92 @@ async function countTodayTopicBotReplies(): Promise<number> {
   const row = await dbQueryFirst<{ n: number }>(
     `SELECT COUNT(*) AS n FROM social_posts
      WHERE platform = 'threads'
-       AND edition_key LIKE 'topic-reply:%'
+       AND (edition_key LIKE 'topic-reply:%' OR edition_key LIKE 'topic-rss:%')
        AND status = 'published'
        AND COALESCE(published_at, created_at) >= @since`,
     { since: todayWall },
   ).catch(() => undefined)
   return row?.n ?? 0
+}
+
+function decodeXmlText(raw: string): string {
+  return raw
+    .replace(/^<!\[CDATA\[([\s\S]*?)\]\]>$/, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/<[^>]*>/g, '')
+    .trim()
+}
+
+/** 解析公開 RSS XML 取得新聞標題與連結，並產生穩定去重雜湊 ID。 */
+export function parseRssTopicItems(xml: string, sourceName: string, limit = 8): TopicBotPost[] {
+  const items: TopicBotPost[] = []
+  const matches = xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)
+  for (const m of matches) {
+    if (items.length >= limit) break
+    const block = m[1] ?? ''
+    const titleRaw = block.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? ''
+    const linkRaw = block.match(/<link\b[^>]*>([\s\S]*?)<\/link>/i)?.[1] ?? ''
+    const title = decodeXmlText(titleRaw)
+    const link = decodeXmlText(linkRaw)
+    if (title.length < 10) continue
+    const hash = createHash('sha1').update(title).digest('hex').slice(0, 12)
+    items.push({
+      id: `rss-${hash}`,
+      username: sourceName,
+      text: sanitizeDataField(title, 500),
+      permalink: link || 'https://tw.stock.yahoo.com/',
+      postType: 'rss-post',
+    })
+  }
+  return items
+}
+
+/** 方案 2：免驗證抓取公開台灣財經／市場熱門話題 RSS。 */
+export async function fetchHotTopicsFromRss(limitPerFeed = 5): Promise<TopicBotPost[]> {
+  const collected: TopicBotPost[] = []
+  for (const feed of RSS_TOPIC_FEEDS) {
+    try {
+      const res = await fetch(feed.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VestentialTopicBot/1.0)' },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) continue
+      const xml = await res.text()
+      collected.push(...parseRssTopicItems(xml, feed.name, limitPerFeed))
+    } catch {
+      // 單一 RSS 失敗時換下一個來源
+    }
+  }
+  return collected
+}
+
+/** 以 @vestential 發布獨立純文字 Threads 串文（方案 2）。 */
+export async function publishThreadsTextPost(text: string): Promise<{ mediaId: string; permalink: string }> {
+  const { token } = await getSocialAccessToken('threads')
+  const userId = process.env.THREADS_USER_ID
+  if (!token) throw new Error('THREADS_ACCESS_TOKEN 未設定')
+  if (!userId) throw new Error('THREADS_USER_ID 未設定')
+
+  const created = await graphPost(`${THREADS_API}/${userId}/threads`, {
+    access_token: token,
+    media_type: 'TEXT',
+    text,
+  })
+  const containerId = String(created.id ?? '')
+  if (!containerId) throw new Error('Threads 串文容器建立失敗')
+
+  await waitForContainer(userId, containerId, token, 'threads')
+
+  const pub = await graphPost(`${THREADS_API}/${userId}/threads_publish`, {
+    creation_id: containerId,
+    access_token: token,
+  })
+  const mediaId = pub.id ? String(pub.id) : containerId
+  return { mediaId, permalink: `https://www.threads.net/t/${mediaId}` }
 }
 
 /** 透過 Threads Graph API 搜尋公開貼文（需具備 threads_keyword_search 權限）。 */
@@ -512,26 +601,10 @@ export async function runTopicBotCycle(options?: {
       return { ok: false, error: '話題佇列中的網址皆無法解析出 mediaId / 內文', results: [] }
     }
   } else {
-    const startIdx = new Date().getHours() % state.keywords.length
-    const kw = state.keywords[startIdx] ?? DEFAULT_TOPIC_BOT_KEYWORDS[0]!
-    const searchRes = await searchThreadsTopics(kw, 10)
-    if (!searchRes.ok) {
-      return {
-        ok: false,
-        permissionMissing: searchRes.permissionMissing,
-        error: searchRes.error,
-        results: [],
-      }
-    }
-    candidates = searchRes.posts
-    const nonOwnCount = candidates.filter((p) => p.username.toLowerCase() !== ownUsername).length
-    if (candidates.length > 0 && nonOwnCount === 0) {
-      return {
-        ok: true,
-        searchSelfOnly: true,
-        skipped: `Threads keyword_search 目前僅回傳自家 @${ownUsername} 貼文（需商家/進階權限）；請改用免驗證的「話題佇列 (URL Queue)」貼入想互動的貼文網址！`,
-        results: [],
-      }
+    // 方案 2（免商家驗證）：讀取台灣公開財經／市場話題 RSS，以第 2 小編人格發獨立幽默短串文
+    candidates = await fetchHotTopicsFromRss(5)
+    if (candidates.length === 0) {
+      return { ok: false, error: '無法取得任何公開 RSS 熱門話題', results: [] }
     }
   }
 
@@ -541,9 +614,10 @@ export async function runTopicBotCycle(options?: {
   for (const post of candidates) {
     if (publishedCount >= maxReplies) break
     if (!dryRun && state.todayCount + publishedCount >= state.dailyLimit) break
-    if (!options?.manualPost && !options?.manualUrl && post.username.toLowerCase() === ownUsername) continue
+    if (!options?.manualPost && !options?.manualUrl && post.postType !== 'rss-post' && post.username.toLowerCase() === ownUsername) continue
 
-    const editionKey = `topic-reply:${post.id}`
+    const isRssPost = post.postType === 'rss-post'
+    const editionKey = isRssPost ? `topic-rss:${post.id}` : `topic-reply:${post.id}`
     if (!dryRun && (await hasSocialPosted('threads', editionKey))) {
       if (consumedQueueUrl) {
         await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
@@ -563,13 +637,16 @@ export async function runTopicBotCycle(options?: {
       reason: evalRes.reason,
       published: false,
       dryRun,
+      postType: isRssPost ? 'rss-post' : 'reply',
       llmMode: evalRes.llmMode,
       modelUsed: evalRes.modelUsed,
     }
 
     if (evalRes.suitable && evalRes.replyText && !dryRun) {
       try {
-        const pub = await publishThreadsReply(evalRes.replyText, post.id)
+        const pub = isRssPost
+          ? await publishThreadsTextPost(evalRes.replyText)
+          : await publishThreadsReply(evalRes.replyText, post.id).then((r) => ({ mediaId: r.replyMediaId, permalink: r.permalink }))
         const row = await createSocialPost({
           platform: 'threads',
           editionKey,
@@ -578,7 +655,7 @@ export async function runTopicBotCycle(options?: {
         })
         await updateSocialPost(row.id, {
           status: 'published',
-          external_id: pub.replyMediaId,
+          external_id: pub.mediaId,
           published_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
         })
         entry.published = true
@@ -588,7 +665,7 @@ export async function runTopicBotCycle(options?: {
           await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
         }
       } catch (err: any) {
-        entry.error = err?.message || 'Threads 發布回覆失敗'
+        entry.error = err?.message || 'Threads 發布失敗'
       }
     }
 
