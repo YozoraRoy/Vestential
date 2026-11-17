@@ -66,6 +66,7 @@ vi.mock('./threads-reply', () => ({
 
 import {
   createTopicBotLLM,
+  discoverExternalThreadsUrls,
   discoverExternalThreadsUrlsViaGoogleCse,
   evaluateAndDraftTopicReply,
   filterExternalThreadsUrls,
@@ -221,5 +222,37 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(run.results).toHaveLength(1)
     expect(run.results[0]?.published).toBe(true)
     expect(mocks.publishThreadsReply).toHaveBeenCalledWith('猶豫要不要上車的時候，車子已經開到交流道了。', '99887766')
+  })
+
+  it('Bright Data SERP 優先；失敗時自動降級至 Google CSE 備選', async () => {
+    process.env.BRIGHTDATA_API_KEY = 'bd_key'
+    process.env.BRIGHTDATA_ZONE = 'serp_api1'
+    process.env.GOOGLE_CSE_API_KEY = 'cse_key'
+    process.env.GOOGLE_CSE_ID = 'cse_cx'
+
+    // 1. Bright Data 成功時直接使用 Bright Data 結果
+    const fetchSpy1 = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ organic: [{ link: 'https://www.threads.net/@other_user/post/BD001' }] }),
+    } as any)
+    const okBd = await discoverExternalThreadsUrls('台股')
+    fetchSpy1.mockRestore()
+    expect(okBd.ok).toBe(true)
+    expect(okBd.provider).toBe('brightdata')
+    expect(okBd.urls).toEqual(['https://www.threads.net/@other_user/post/BD001'])
+
+    // 2. Bright Data 失敗（例如 403）時自動降級至 Google CSE
+    const fetchSpy2 = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 403, text: async () => 'Zone disabled' } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [{ link: 'https://www.threads.net/@other_user/post/CSE002' }] }),
+      } as any)
+    const fallbackCse = await discoverExternalThreadsUrls('台股')
+    fetchSpy2.mockRestore()
+    expect(fallbackCse.ok).toBe(true)
+    expect(fallbackCse.provider).toBe('google-cse')
+    expect(fallbackCse.urls).toEqual(['https://www.threads.net/@other_user/post/CSE002'])
   })
 })

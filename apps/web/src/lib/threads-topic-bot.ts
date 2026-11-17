@@ -14,6 +14,7 @@ import { getSocialAccessToken } from './social-tokens'
 import { publishThreadsReply, resolveThreadsPost } from './threads-reply'
 
 const THREADS_API = 'https://graph.threads.net/v1.0'
+const BRIGHTDATA_ENDPOINT = 'https://api.brightdata.com/request'
 const GOOGLE_CSE_ENDPOINT = 'https://www.googleapis.com/customsearch/v1'
 
 export const TOPIC_BOT_ENABLED_KEY = 'social.topic_bot_enabled'
@@ -76,6 +77,7 @@ export interface TopicBotConfigState {
   keywords: string[]
   queueUrls: string[]
   todayCount: number
+  brightDataConfigured: boolean
   cseConfigured: boolean
   llmMode: 'free-first' | 'paid-only'
   freeLabel: string | null
@@ -247,6 +249,7 @@ export async function getTopicBotState(): Promise<TopicBotConfigState> {
   const todayCount = await countTodayTopicBotReplies()
   const { mode, freeLabel, paidLabel } = createTopicBotLLM()
   const logs = parseTopicBotLogs(rawLogs)
+  const brightDataConfigured = Boolean(process.env.BRIGHTDATA_API_KEY?.trim() && process.env.BRIGHTDATA_ZONE?.trim())
   const cseConfigured = Boolean(process.env.GOOGLE_CSE_API_KEY?.trim() && process.env.GOOGLE_CSE_ID?.trim())
 
   return {
@@ -255,6 +258,7 @@ export async function getTopicBotState(): Promise<TopicBotConfigState> {
     keywords: keywords.length > 0 ? keywords : DEFAULT_TOPIC_BOT_KEYWORDS,
     queueUrls,
     todayCount,
+    brightDataConfigured,
     cseConfigured,
     llmMode: mode,
     freeLabel,
@@ -391,6 +395,76 @@ export async function discoverExternalThreadsUrlsViaGoogleCse(
     return { ok: true, urls: filterExternalThreadsUrls(rawLinks, ownUsername) }
   } catch (err: any) {
     return { ok: false, urls: [], error: err?.message || 'Google Custom Search 連線逾時或失敗' }
+  }
+}
+
+/** 透過 Bright Data SERP API（第一順位）搜尋近 7 天他人公開 Threads 貼文。 */
+export async function discoverExternalThreadsUrlsViaBrightData(
+  keyword: string,
+  ownUsername = 'vestential',
+): Promise<{ ok: boolean; urls: string[]; missing?: boolean; error?: string }> {
+  const apiKey = process.env.BRIGHTDATA_API_KEY?.trim()
+  const zone = process.env.BRIGHTDATA_ZONE?.trim()
+  if (!apiKey || !zone) {
+    return {
+      ok: false,
+      urls: [],
+      missing: true,
+      error: '尚未設定 BRIGHTDATA_API_KEY 或 BRIGHTDATA_ZONE',
+    }
+  }
+
+  const query = `(site:threads.net OR site:threads.com) "${keyword}" "/post/"`
+  const targetUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbs=qdr:w&hl=zh-TW&gl=tw&brd_json=1`
+  try {
+    const res = await fetch(BRIGHTDATA_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ zone, url: targetUrl, format: 'raw' }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const text = await res.text()
+    if (!res.ok) {
+      return { ok: false, urls: [], error: `Bright Data HTTP ${res.status}: ${text.slice(0, 160)}` }
+    }
+    const json = JSON.parse(text)
+    const organic = Array.isArray(json?.organic) ? json.organic : Array.isArray(json?.results) ? json.results : []
+    const rawLinks = organic.map((it: any) => String(it?.link ?? it?.url ?? ''))
+    return { ok: true, urls: filterExternalThreadsUrls(rawLinks, ownUsername) }
+  } catch (err: any) {
+    return { ok: false, urls: [], error: err?.message || 'Bright Data SERP 連線逾時或失敗' }
+  }
+}
+
+/** 雙層搜尋：Bright Data SERP（優先）→ Google Custom Search API（備選）。 */
+export async function discoverExternalThreadsUrls(
+  keyword: string,
+  ownUsername = 'vestential',
+): Promise<{ ok: boolean; urls: string[]; provider?: 'brightdata' | 'google-cse'; error?: string }> {
+  const bd = await discoverExternalThreadsUrlsViaBrightData(keyword, ownUsername)
+  if (bd.ok && bd.urls.length > 0) {
+    return { ok: true, urls: bd.urls, provider: 'brightdata' }
+  }
+
+  const cse = await discoverExternalThreadsUrlsViaGoogleCse(keyword, ownUsername)
+  if (cse.ok) {
+    return { ok: true, urls: cse.urls, provider: 'google-cse' }
+  }
+
+  if (bd.missing && cse.cseMissing) {
+    return {
+      ok: false,
+      urls: [],
+      error: '尚未設定 BRIGHTDATA_ZONE / BRIGHTDATA_API_KEY 或備選 GOOGLE_CSE_API_KEY / GOOGLE_CSE_ID，請至少完成一組設定（或改用話題佇列貼入網址）',
+    }
+  }
+  return {
+    ok: false,
+    urls: [],
+    error: [bd.missing ? '' : bd.error, cse.cseMissing ? '' : cse.error].filter(Boolean).join(' | ') || '搜尋失敗',
   }
 }
 
@@ -568,14 +642,14 @@ export async function runTopicBotCycle(options?: {
       return { ok: false, error: '話題佇列中的網址皆無法解析出 mediaId / 內文', results: [] }
     }
   } else {
-    // 透過 Google Custom Search API（每日免費 100 次）搜尋近 7 天他人公開 Threads 貼文
+    // 雙層搜尋：Bright Data SERP（優先）→ Google CSE（備選）
     const startIdx = new Date().getHours() % state.keywords.length
     const kw = state.keywords[startIdx] ?? DEFAULT_TOPIC_BOT_KEYWORDS[0]!
-    const cseRes = await discoverExternalThreadsUrlsViaGoogleCse(kw, ownUsername)
-    if (!cseRes.ok) {
-      return { ok: false, error: cseRes.error, results: [] }
+    const searchRes = await discoverExternalThreadsUrls(kw, ownUsername)
+    if (!searchRes.ok) {
+      return { ok: false, error: searchRes.error, results: [] }
     }
-    for (const url of cseRes.urls) {
+    for (const url of searchRes.urls) {
       try {
         const info = await resolveThreadsPost(url)
         if (info.mediaId && info.text && info.author.toLowerCase() !== ownUsername) {
