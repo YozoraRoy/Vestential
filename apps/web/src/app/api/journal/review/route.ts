@@ -9,6 +9,7 @@ import {
   computeJournalPnl,
   computeJournalStats,
 } from '../../../../lib/journal'
+import { withApiAudit } from '@/lib/api-audit'
 
 /**
  * POST /api/journal/review — AI 交易覆盤（紀律/勝率歸因）。
@@ -19,6 +20,10 @@ import {
  * - LLM 失敗 → 回 fallback:true（quota 已扣，與 analyze 行為一致）。
  */
 export async function POST(req: Request) {
+  return withApiAudit(req, '/api/journal/review', () => handlePost(req))
+}
+
+async function handlePost(req: Request) {
   try {
     const user = await getCurrentUserFromCookies()
     if (!user) {

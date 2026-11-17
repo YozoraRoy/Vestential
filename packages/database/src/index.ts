@@ -77,7 +77,8 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
   SyncJobRow, SyncJobInput, SyncJobUpdate, SyncJobStatus,
   TwseDividendRow, TwseDividendInput, ArenaDividendCreditRow, ArenaDividendCreditInput, DcaPlanRow, DcaPlanInput,
   MarketLevelRow, MarketLevelStatus, MarketLevelInput,
-  DailyMoverRow, DailyMoverInput } from './db.js'
+  DailyMoverRow, DailyMoverInput,
+  ApiErrorCategory, ApiErrorActorType, ApiErrorLogInput, ApiErrorLogRow, ApiErrorSummary } from './db.js'
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'
 export type { Database } from 'better-sqlite3'
@@ -104,3 +105,5 @@ export type { MopsMeeting, ClaimRule, ClaimResult } from './fetchers/mops.js'
 export { fetchTwseMeetings } from './fetchers/twse-meetings.js'
 export type { TwseMeeting } from './fetchers/twse-meetings.js'
 
+
+export { logApiError, listApiErrorLogs, pruneOldApiErrorLogs } from './db.js'

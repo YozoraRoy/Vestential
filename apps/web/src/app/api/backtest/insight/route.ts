@@ -3,6 +3,7 @@ import { registry } from '@stock/market-data'
 import { runGridSearch, MA_PERIOD } from '@stock/backtest'
 import { resolveYahooSymbol } from '@/lib/portfolio'
 import { isCoreEtf } from '@stock/cycle-entry'
+import { withApiAudit } from '@/lib/api-audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +40,10 @@ function checkIsEtf(symbol: string): boolean {
 }
 
 export async function GET(req: Request) {
+  return withApiAudit(req, '/api/backtest/insight', () => handleGet(req))
+}
+
+async function handleGet(req: Request) {
   const { searchParams } = new URL(req.url)
   const symbol = searchParams.get('symbol')?.trim()
   if (!symbol) {

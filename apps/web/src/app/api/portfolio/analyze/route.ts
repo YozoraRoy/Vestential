@@ -3,6 +3,7 @@ import { savePortfolioRecord, consumeAnalysisQuota } from '@stock/database'
 import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../../lib/auth'
 import { buildMarketContext, computePnL, validatePortfolioInput } from '../../../../lib/portfolio'
 import { reportServerError } from '../../../../lib/server-alert'
+import { withApiAudit } from '@/lib/api-audit'
 
 export const runtime = 'nodejs'
 // #23：LLM 鏈（market context＋runPortfolioAnalysis＋存檔）耗時與 recognize 相當，
@@ -10,6 +11,10 @@ export const runtime = 'nodejs'
 export const maxDuration = 120
 
 export async function POST(req: Request) {
+  return withApiAudit(req, '/api/portfolio/analyze', () => handlePost(req))
+}
+
+async function handlePost(req: Request) {
   try {
     const user = await getCurrentUserFromCookies()
     if (!user) {

@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
 import { dbQueryAll, dbQueryFirst, ensureSeedData, hasDb } from '@stock/database'
+import { withApiAudit } from '@/lib/api-audit'
 
 export async function GET(req: Request) {
+  return withApiAudit(req, '/api/odd-lot', () => handleGet(req))
+}
+
+async function handleGet(req: Request) {
   const { searchParams } = new URL(req.url)
   const stockId = searchParams.get('stock_id')
   const date = searchParams.get('date')

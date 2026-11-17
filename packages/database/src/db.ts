@@ -579,6 +579,25 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       CREATE INDEX IF NOT EXISTS idx_llm_usage_agent ON llm_usage_logs(agent);
       CREATE INDEX IF NOT EXISTS idx_llm_usage_project ON llm_usage_logs(project);
 
+      CREATE TABLE IF NOT EXISTS api_error_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        route TEXT NOT NULL,
+        method TEXT NOT NULL DEFAULT 'GET',
+        status_code INTEGER DEFAULT 500,
+        duration_ms INTEGER DEFAULT 0,
+        actor_type TEXT NOT NULL DEFAULT 'guest',
+        user_id INTEGER,
+        user_email TEXT,
+        client_ip TEXT,
+        user_agent TEXT,
+        recovered INTEGER DEFAULT 0,
+        error_message TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_error_created ON api_error_logs(created_at);
+      CREATE INDEX IF NOT EXISTS idx_api_error_category ON api_error_logs(category);
+
       CREATE TABLE IF NOT EXISTS analysis_jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -1376,6 +1395,30 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         CREATE INDEX idx_llm_usage_created ON llm_usage_logs(created_at);
         CREATE INDEX idx_llm_usage_agent ON llm_usage_logs(agent);
         CREATE INDEX idx_llm_usage_project ON llm_usage_logs(project);
+      END
+    `)
+
+    await _pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'api_error_logs')
+      BEGIN
+        CREATE TABLE api_error_logs (
+          id            INT IDENTITY(1,1) PRIMARY KEY,
+          category      NVARCHAR(30) NOT NULL,
+          route         NVARCHAR(120) NOT NULL,
+          method        NVARCHAR(12) NOT NULL DEFAULT 'GET',
+          status_code   INT DEFAULT 500,
+          duration_ms   INT DEFAULT 0,
+          actor_type    NVARCHAR(16) NOT NULL DEFAULT 'guest',
+          user_id       INT NULL,
+          user_email    NVARCHAR(160) NULL,
+          client_ip     NVARCHAR(80) NULL,
+          user_agent    NVARCHAR(80) NULL,
+          recovered     INT DEFAULT 0,
+          error_message NVARCHAR(500) NULL,
+          created_at    DATETIME2 DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_api_error_created ON api_error_logs(created_at);
+        CREATE INDEX idx_api_error_category ON api_error_logs(category);
       END
     `)
 
@@ -8138,4 +8181,174 @@ export async function listDailyMoverDates(limit = 30): Promise<string[]> {
     .sort((a, b) => (b.trade_date > a.trade_date ? 1 : -1))
     .slice(0, maxRows)
     .map((r) => r.trade_date)
+}
+
+// ─── Issue #162：API 錯誤、慢回應與 AI 額度耗盡日誌 ─────────────────────────
+
+export type ApiErrorCategory = 'ai_quota' | 'ai_error' | 'slow_api' | 'api_error' | 'rate_limit'
+export type ApiErrorActorType = 'guest' | 'user'
+
+export interface ApiErrorLogInput {
+  category: ApiErrorCategory
+  route: string
+  method?: string
+  statusCode?: number
+  durationMs?: number
+  actorType?: ApiErrorActorType
+  userId?: number | null
+  userEmail?: string | null
+  clientIp?: string | null
+  userAgent?: string | null
+  recovered?: boolean
+  errorMessage?: string | null
+}
+
+export interface ApiErrorLogRow {
+  id: number
+  category: ApiErrorCategory
+  route: string
+  method: string
+  status_code: number
+  duration_ms: number
+  actor_type: ApiErrorActorType
+  user_id: number | null
+  user_email: string | null
+  client_ip: string | null
+  user_agent: string | null
+  recovered: number
+  error_message: string | null
+  created_at: string
+}
+
+export interface ApiErrorSummary {
+  total: number
+  aiQuota: number
+  aiError: number
+  slowApi: number
+  apiError: number
+  rateLimit: number
+}
+
+const API_ERROR_MAX_ROWS = 10_000
+const API_ERROR_RETENTION_DAYS = 30
+
+function sanitizeErrorText(msg: string | null | undefined): string | null {
+  if (!msg) return null
+  return String(msg)
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,}|gsk_[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{12,}|gh[po]_[A-Za-z0-9_-]{12,})\b/g, '***')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer ***')
+    .slice(0, 500)
+}
+
+/** 寫入一筆 API 錯誤／慢請求／AI 額度紀錄（fire-and-forget，失敗不影響主流程）。 */
+export async function logApiError(input: ApiErrorLogInput): Promise<void> {
+  try {
+    await dbExecute(
+      `INSERT INTO api_error_logs
+        (category, route, method, status_code, duration_ms, actor_type, user_id, user_email, client_ip, user_agent, recovered, error_message)
+       VALUES
+        (@category, @route, @method, @statusCode, @durationMs, @actorType, @userId, @userEmail, @clientIp, @userAgent, @recovered, @errorMessage)`,
+      {
+        category: String(input.category).slice(0, 30),
+        route: String(input.route || '/').slice(0, 120),
+        method: String(input.method || 'GET').toUpperCase().slice(0, 12),
+        statusCode: Number.isFinite(input.statusCode) ? Number(input.statusCode) : 500,
+        durationMs: Math.max(0, Math.round(Number(input.durationMs || 0))),
+        actorType: input.actorType === 'user' ? 'user' : 'guest',
+        userId: input.userId ?? null,
+        userEmail: input.userEmail ? String(input.userEmail).slice(0, 160) : null,
+        clientIp: input.clientIp ? String(input.clientIp).slice(0, 80) : null,
+        userAgent: input.userAgent ? String(input.userAgent).slice(0, 80) : null,
+        recovered: input.recovered ? 1 : 0,
+        errorMessage: sanitizeErrorText(input.errorMessage),
+      },
+    )
+
+    // 抽樣 5% 機率自動淘汰超過 30 天或超過 10,000 筆的舊資料
+    if (Math.random() < 0.05) {
+      await pruneOldApiErrorLogs()
+    }
+  } catch (e) {
+    console.error('[DB] logApiError failed:', e)
+  }
+}
+
+export async function pruneOldApiErrorLogs(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - API_ERROR_RETENTION_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ')
+    await dbExecute(`DELETE FROM api_error_logs WHERE created_at < @cutoff`, { cutoff })
+
+    const pool = await getAzurePool()
+    if (pool) {
+      await pool.request().query(
+        `DELETE FROM api_error_logs WHERE id NOT IN (SELECT TOP (${API_ERROR_MAX_ROWS}) id FROM api_error_logs ORDER BY id DESC)`,
+      )
+    } else {
+      const db = getSqliteDb()
+      if (db) {
+        db.prepare(
+          `DELETE FROM api_error_logs WHERE id NOT IN (SELECT id FROM api_error_logs ORDER BY id DESC LIMIT ?)`,
+        ).run(API_ERROR_MAX_ROWS)
+      }
+    }
+  } catch {
+    // 清理失敗不阻斷主流程
+  }
+}
+
+export async function listApiErrorLogs(opts?: {
+  category?: ApiErrorCategory | 'all'
+  actorType?: ApiErrorActorType | 'all'
+  limit?: number
+}): Promise<{ logs: ApiErrorLogRow[]; summary: ApiErrorSummary }> {
+  const limit = Math.max(1, Math.min(300, Number(opts?.limit ?? 100)))
+  const category = opts?.category && opts.category !== 'all' ? opts.category : null
+  const actorType = opts?.actorType && opts.actorType !== 'all' ? opts.actorType : null
+
+  const since24h = new Date(Date.now() - 86_400_000).toISOString().slice(0, 19).replace('T', ' ')
+  const summaryRows = await dbQueryAll<{ category: string; cnt: number }>(
+    `SELECT category, COUNT(*) AS cnt FROM api_error_logs WHERE created_at >= @since GROUP BY category`,
+    { since: since24h },
+  ).catch(() => [])
+
+  const summary: ApiErrorSummary = { total: 0, aiQuota: 0, aiError: 0, slowApi: 0, apiError: 0, rateLimit: 0 }
+  for (const r of summaryRows) {
+    const cnt = Number(r.cnt || 0)
+    summary.total += cnt
+    if (r.category === 'ai_quota') summary.aiQuota += cnt
+    else if (r.category === 'ai_error') summary.aiError += cnt
+    else if (r.category === 'slow_api') summary.slowApi += cnt
+    else if (r.category === 'api_error') summary.apiError += cnt
+    else if (r.category === 'rate_limit') summary.rateLimit += cnt
+  }
+
+  const pool = await getAzurePool()
+  let logs: ApiErrorLogRow[] = []
+  if (pool) {
+    const req = pool.request()
+    req.input('category', category)
+    req.input('actorType', actorType)
+    const res = await req.query(`
+      SELECT TOP (${limit}) *
+      FROM api_error_logs
+      WHERE (@category IS NULL OR category = @category)
+        AND (@actorType IS NULL OR actor_type = @actorType)
+      ORDER BY id DESC
+    `)
+    logs = (res.recordset as ApiErrorLogRow[]) ?? []
+  } else {
+    logs = await dbQueryAll<ApiErrorLogRow>(
+      `SELECT * FROM api_error_logs
+       WHERE (@category IS NULL OR category = @category)
+         AND (@actorType IS NULL OR actor_type = @actorType)
+       ORDER BY id DESC
+       LIMIT @limit`,
+      { category, actorType, limit },
+    )
+  }
+
+  return { logs, summary }
 }

@@ -12,6 +12,7 @@ const LINKS = [
   { href: '/admin/arena', label: '競技場', icon: '⚔' },
   { href: '/admin/usage', label: '用量報表', icon: '▤' },
   { href: '/admin/llm-usage', label: 'LLM 用量', icon: '∑' },
+  { href: '/admin/errors', label: '錯誤日誌', icon: '⚠' },
   { href: '/admin/settings', label: 'Agent 設定', icon: '⚙' },
 ]
 

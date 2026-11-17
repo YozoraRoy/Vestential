@@ -10,6 +10,7 @@ import {
 import { getDailyAnalysisLimit, getCurrentUserFromCookies, getTaiwanDateStr, isAdminUser } from '../../../lib/auth'
 import { isTaiwanSymbol, normalizeTaiwanSymbol } from '../../../lib/taiwan-symbol'
 import { runAnalysisStream } from './run-analysis'
+import { withApiAudit } from '@/lib/api-audit'
 
 let _engine: TradingEngine | null = null
 let _engineError: string | null = null
@@ -70,6 +71,10 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function POST(req: Request) {
+  return withApiAudit(req, '/api/analyze', () => handlePost(req))
+}
+
+async function handlePost(req: Request) {
   try {
     const { symbol, date, language, agents } = await req.json()
 

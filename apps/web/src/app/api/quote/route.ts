@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { registry } from '@stock/market-data'
 import type { CompanyProfile, Quote } from '@stock/market-data'
+import { withApiAudit } from '@/lib/api-audit'
 
 /**
  * Issue #119 D：台股裸代號正規化為 Yahoo 格式（預設補 .TW），避免裸代號被 Yahoo 誤判為港股（如 2330 -> 2330.HK）。
@@ -41,6 +42,10 @@ function isProfileHit(symbol: string, profile: CompanyProfile | null | undefined
  *   - 兩者皆未命中 → 404 { error: 'symbol not found' }。
  */
 export async function GET(req: Request) {
+  return withApiAudit(req, '/api/quote', () => handleGet(req))
+}
+
+async function handleGet(req: Request) {
   const { searchParams } = new URL(req.url)
   const rawSymbol = searchParams.get('symbol')
   const market = searchParams.get('market') ?? 'TW'

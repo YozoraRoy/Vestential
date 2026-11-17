@@ -4,6 +4,7 @@ import { consumeRecognitionQuota, getRecognitionUsage, refundRecognitionQuota } 
 import { enrichRecognizedPositions } from '../../../../lib/portfolio'
 import { DAILY_RECOGNITION_LIMIT, getCurrentUserFromCookies, getTaiwanDateStr } from '../../../../lib/auth'
 import { reportServerError } from '../../../../lib/server-alert'
+import { withApiAudit } from '@/lib/api-audit'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -24,6 +25,10 @@ export async function GET() {
 
 /** 上傳圖片（multipart file 或 JSON base64）並由 AI 辨識多檔持股。 */
 export async function POST(req: Request) {
+  return withApiAudit(req, '/api/portfolio/recognize', () => handlePost(req))
+}
+
+async function handlePost(req: Request) {
   try {
     const user = await getCurrentUserFromCookies()
     if (!user) {
