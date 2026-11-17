@@ -25,6 +25,13 @@ const COPY: Record<
     subtitle: string
     preTax: string
     postTax: string
+    totalInvestedCost: string
+    costYield: string
+    symbolsCountLabel: string
+    filterWholeLot: string
+    filterAllShares: string
+    excludedNoticePrefix: string
+    excludedNoticeSuffix: string
     totalGross: string
     totalNhi: string
     totalNet: string
@@ -53,6 +60,13 @@ const COPY: Record<
     subtitle: '依台股持股與 TWSE 除息快取試算每月現金股利、二代健保補充保費與可抵減稅額（2026 年適用稅制）。',
     preTax: '稅前金額',
     postTax: '稅後實拿',
+    totalInvestedCost: '實際投入產生股利總金額',
+    costYield: '成本殖利率',
+    symbolsCountLabel: '檔領息標的',
+    filterWholeLot: '僅 ≥ 1,000 股',
+    filterAllShares: '含零股',
+    excludedNoticePrefix: '已自動剔除',
+    excludedNoticeSuffix: '檔不足 1,000 股之標的',
     totalGross: '年度預估總股利（稅前）',
     totalNhi: '二代健保補充保費（2.11%）',
     totalNet: '預估實拿現金流（稅後）',
@@ -80,6 +94,13 @@ const COPY: Record<
     subtitle: 'Estimates monthly cash dividends, 2.11% NHI supplementary premium, and 8.5% dividend tax credit (2026 rules).',
     preTax: 'Pre-tax',
     postTax: 'Net Take-home',
+    totalInvestedCost: 'Invested Capital (Dividend Stocks)',
+    costYield: 'Yield on Cost',
+    symbolsCountLabel: 'dividend stocks',
+    filterWholeLot: '≥ 1,000 sh only',
+    filterAllShares: 'Incl. odd lots',
+    excludedNoticePrefix: 'Excluded',
+    excludedNoticeSuffix: 'odd-lot holdings (< 1,000 sh)',
     totalGross: 'Est. Annual Dividends (Pre-tax)',
     totalNhi: 'NHI Supplementary Fee (2.11%)',
     totalNet: 'Est. Net Cashflow',
@@ -107,6 +128,13 @@ const COPY: Record<
     subtitle: '台湾株の保有銘柄と TWSE 配当データに基づく月別配当・二代健保（2.11%）・税額控除（8.5%）試算（2026年基準）。',
     preTax: '税引前',
     postTax: '手取り額',
+    totalInvestedCost: '配当対象銘柄の投資元本合計',
+    costYield: '取得利回り',
+    symbolsCountLabel: '銘柄',
+    filterWholeLot: '1,000株以上',
+    filterAllShares: '単元未満含む',
+    excludedNoticePrefix: '1,000株未満の',
+    excludedNoticeSuffix: '銘柄を除外済',
     totalGross: '年間配当見込（税引前）',
     totalNhi: '二代健保追加保険料（2.11%）',
     totalNet: '手取りキャッシュフロー',
@@ -149,12 +177,19 @@ export function PortfolioDividendCalendar({
   const [selectedYear, setSelectedYear] = useState<number>(currentYear)
   const [taxMode, setTaxMode] = useState<'post' | 'pre'>('post')
   const [groupBy, setGroupBy] = useState<'pay' | 'ex'>('pay')
+  const [excludeOddLots, setExcludeOddLots] = useState<boolean>(true)
 
   const yearOptions = useMemo(() => [currentYear + 1, currentYear, currentYear - 1], [currentYear])
 
   const calendar = useMemo(
-    () => buildDividendCalendar(holdings, dividends, { today, year: selectedYear, groupBy }),
-    [holdings, dividends, today, selectedYear, groupBy],
+    () =>
+      buildDividendCalendar(holdings, dividends, {
+        today,
+        year: selectedYear,
+        groupBy,
+        minShares: excludeOddLots ? 1000 : 0,
+      }),
+    [holdings, dividends, today, selectedYear, groupBy, excludeOddLots],
   )
 
   return (
@@ -174,6 +209,16 @@ export function PortfolioDividendCalendar({
                 : locale === 'ja'
                   ? '未発表の月については過去最大3年間の同月実績平均による予想を含みます'
                   : '尚未公告之月份（如今年 12 月及明年）已依近 3 年同月份歷史配息均算預估（實際以投信/公司公告為準）'}
+            </p>
+          ) : null}
+          {calendar.excludedHoldings.length > 0 ? (
+            <p className="mt-1.5 ml-0 sm:ml-2 inline-flex items-center gap-1.5 rounded-lg border border-slate-500/30 bg-slate-500/10 px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
+              {t.excludedNoticePrefix} {calendar.excludedHoldings.length} {t.excludedNoticeSuffix}（
+              {calendar.excludedHoldings
+                .slice(0, 6)
+                .map((h) => h.symbol)
+                .join('、')}
+              {calendar.excludedHoldings.length > 6 ? '…' : ''}）
             </p>
           ) : null}
         </div>
@@ -219,6 +264,31 @@ export function PortfolioDividendCalendar({
 
           <div
             role="group"
+            aria-label="Odd lot filter"
+            className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5 text-xs"
+          >
+            <button
+              type="button"
+              onClick={() => setExcludeOddLots(true)}
+              className={`rounded-md px-2.5 py-1 font-medium transition ${
+                excludeOddLots ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {t.filterWholeLot}
+            </button>
+            <button
+              type="button"
+              onClick={() => setExcludeOddLots(false)}
+              className={`rounded-md px-2.5 py-1 font-medium transition ${
+                !excludeOddLots ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {t.filterAllShares}
+            </button>
+          </div>
+
+          <div
+            role="group"
             aria-label="Tax mode"
             className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5"
           >
@@ -248,8 +318,21 @@ export function PortfolioDividendCalendar({
         </div>
       </div>
 
-      {/* 摘要卡片 */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 摘要卡片：最上方第一張強調實際投入產生股利總金額 */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="rounded-2xl border border-[var(--accent)]/40 bg-[var(--bg-card)] p-4">
+          <div className="text-xs font-medium text-[var(--accent)]">{t.totalInvestedCost}</div>
+          <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
+            {fmtNtd(calendar.totalInvestedCost)}
+          </div>
+          <div className="mt-0.5 text-[11px] text-[var(--text-secondary)] tabular-nums">
+            {calendar.dividendGeneratingSymbolCount} {t.symbolsCountLabel}
+            {calendar.effectiveCostYieldPct != null
+              ? ` · ${t.costYield} ${calendar.effectiveCostYieldPct.toFixed(2)}%`
+              : ''}
+          </div>
+        </div>
+
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
           <div className="text-xs text-[var(--text-muted)]">{t.totalGross}</div>
           <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">

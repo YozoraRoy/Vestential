@@ -84,6 +84,12 @@ export interface DividendCalendarMonth {
   events: DividendCalendarEvent[]
 }
 
+export interface ExcludedDividendHolding {
+  symbol: string
+  name: string | null
+  shares: number
+}
+
 export interface DividendCalendarResult {
   year: number
   today: string
@@ -99,6 +105,14 @@ export interface DividendCalendarResult {
   taxCredit: number
   /** 實質稅後殖利率（%）；無成本或無現值基礎時為 null */
   effectiveNetYieldPct: number | null
+  /** 實際投入產生股利的總本金金額（僅計納入計算且該年度有配息之標的的 costBasis 總和） */
+  totalInvestedCost: number
+  /** 該年度有產生股利的標的檔數 */
+  dividendGeneratingSymbolCount: number
+  /** 依實際投入本金計算的稅後成本殖利率（%） */
+  effectiveCostYieldPct: number | null
+  /** 因不足 minShares 而被剔除的台股標的清單 */
+  excludedHoldings: ExcludedDividendHolding[]
   months: DividendCalendarMonth[]
 }
 
@@ -193,7 +207,7 @@ function diffCalendarDays(fromIso: string, toIso: string): number | null {
 export function buildDividendCalendar(
   holdings: readonly CalendarHoldingInput[],
   dividends: readonly CalendarDividendInput[],
-  options?: { today?: string; year?: number; allowEstimate?: boolean; groupBy?: 'pay' | 'ex' },
+  options?: { today?: string; year?: number; allowEstimate?: boolean; groupBy?: 'pay' | 'ex'; minShares?: number },
 ): DividendCalendarResult {
   const today = options?.today && DATE_RE.test(options.today)
     ? options.today
@@ -202,33 +216,51 @@ export function buildDividendCalendar(
   const year = options?.year ?? currentYear
   const allowEstimate = options?.allowEstimate !== false
   const groupBy = options?.groupBy ?? 'ex'
+  const minShares = options?.minShares && options.minShares > 0 ? options.minShares : 0
   const yearPrefix = `${year}-`
 
   // 聚合台股持股（同代號多筆合併股數；排除 shares <= 0 或美股）
-  const holdingMap = new Map<
+  const rawHoldingMap = new Map<
     string,
-    { symbol: string; name: string | null; shares: number; basis: number }
+    { symbol: string; name: string | null; shares: number; basis: number; costBasis: number }
   >()
   for (const h of holdings ?? []) {
     if (h.market === 'us') continue
     const sym = (h.symbol ?? '').trim().toUpperCase()
     const shares = Number(h.shares)
     if (!sym || !Number.isFinite(shares) || shares <= 0) continue
-    const prev = holdingMap.get(sym)
+    const prev = rawHoldingMap.get(sym)
     const mv = Number(h.marketValue)
     const cb = Number(h.costBasis)
-    const itemBasis = Number.isFinite(mv) && mv > 0 ? mv : Number.isFinite(cb) && cb > 0 ? cb : 0
+    const validCost = Number.isFinite(cb) && cb > 0 ? cb : 0
+    const itemBasis = Number.isFinite(mv) && mv > 0 ? mv : validCost
     if (prev) {
       prev.shares += shares
       prev.basis += itemBasis
+      prev.costBasis += validCost
       if (!prev.name && h.name) prev.name = h.name
     } else {
-      holdingMap.set(sym, {
+      rawHoldingMap.set(sym, {
         symbol: sym,
         name: h.name ?? null,
         shares,
         basis: itemBasis,
+        costBasis: validCost,
       })
+    }
+  }
+
+  // 依 minShares 剔除不足門檻之標的（如不足 1,000 股的零股）
+  const holdingMap = new Map<
+    string,
+    { symbol: string; name: string | null; shares: number; basis: number; costBasis: number }
+  >()
+  const excludedHoldings: ExcludedDividendHolding[] = []
+  for (const [sym, item] of rawHoldingMap.entries()) {
+    if (minShares > 0 && item.shares < minShares) {
+      excludedHoldings.push({ symbol: item.symbol, name: item.name, shares: item.shares })
+    } else {
+      holdingMap.set(sym, item)
     }
   }
 
@@ -249,7 +281,7 @@ export function buildDividendCalendar(
       year,
       today,
       taxRulesYear: TAX_RULES_EFFECTIVE_YEAR,
-      hasHoldings: false,
+      hasHoldings: rawHoldingMap.size > 0,
       eventCount: 0,
       isEstimatedYear: false,
       estimatedFromYear: null,
@@ -258,12 +290,17 @@ export function buildDividendCalendar(
       totalNet: 0,
       taxCredit: 0,
       effectiveNetYieldPct: null,
+      totalInvestedCost: 0,
+      dividendGeneratingSymbolCount: 0,
+      effectiveCostYieldPct: null,
+      excludedHoldings,
       months,
     }
   }
 
   const seenEvent = new Set<string>()
   const officialSymbolMonths = new Set<string>()
+  const dividendGeneratingSymbols = new Set<string>()
   let totalGross = 0
   let totalTaxable54c = 0
   let totalNhiFee = 0
@@ -366,6 +403,7 @@ export function buildDividendCalendar(
     totalNhiFee += nhiFee
     totalNet += netAmount
     eventCount++
+    dividendGeneratingSymbols.add(sym)
     if (isEstimated) hasEstimatedEvents = true
   }
 
@@ -440,6 +478,18 @@ export function buildDividendCalendar(
       ? Math.round((totalNet / totalBasis) * 10000) / 100
       : null
 
+  let totalInvestedCostRaw = 0
+  for (const sym of dividendGeneratingSymbols) {
+    const h = holdingMap.get(sym)
+    if (h) totalInvestedCostRaw += h.costBasis
+  }
+  const totalInvestedCost = Math.round(totalInvestedCostRaw)
+  const dividendGeneratingSymbolCount = dividendGeneratingSymbols.size
+  const effectiveCostYieldPct =
+    totalInvestedCost > 0 && eventCount > 0
+      ? Math.round((totalNet / totalInvestedCost) * 10000) / 100
+      : null
+
   return {
     year,
     today,
@@ -453,6 +503,10 @@ export function buildDividendCalendar(
     totalNet,
     taxCredit: computeDividendTaxCredit(totalTaxable54c),
     effectiveNetYieldPct,
+    totalInvestedCost,
+    dividendGeneratingSymbolCount,
+    effectiveCostYieldPct,
+    excludedHoldings,
     months,
   }
 }

@@ -154,4 +154,33 @@ describe('Issue #120 dividend-calendar engine', () => {
     // 年度抵稅只算 0056 的 54C 金額
     expect(res.taxCredit).toBe(Math.round(Math.round(86_600 * 0.3) * 0.085))
   })
+
+  it('minShares=1000 剔除不足千股零股（合併同代號後判斷），並只加總有產生股利標的之實際投入成本', () => {
+    const res = buildDividendCalendar(
+      [
+        // 0056 兩筆各 600 股 → 合併為 1,200 股保留，投入成本 20,000 + 22,000 = 42,000
+        { symbol: '0056', name: '元大高股息', shares: 600, market: 'tw', costBasis: 20_000 },
+        { symbol: '0056', name: '元大高股息', shares: 600, market: 'tw', costBasis: 22_000 },
+        // 2884 僅 1 股（紀念品零股）→ 剔除
+        { symbol: '2884', name: '玉山金', shares: 1, market: 'tw', costBasis: 28 },
+        // 00919 僅 500 股 → 剔除
+        { symbol: '00919', name: '群益台灣精選高息', shares: 500, market: 'tw', costBasis: 11_000 },
+        // 2330 有 1,000 股但當年無配息事件 → 保留在持股中，但不計入「實際投入產生股利的總金額」
+        { symbol: '2330', name: '台積電', shares: 1000, market: 'tw', costBasis: 900_000 },
+      ],
+      [
+        { symbol: '0056', ex_date: '2026-01-22', pay_date: '2026-02-11', cash_dividend: 1.0 },
+        { symbol: '2884', ex_date: '2026-07-01', pay_date: '2026-07-28', cash_dividend: 1.4 },
+        { symbol: '00919', ex_date: '2026-03-17', pay_date: '2026-04-14', cash_dividend: 0.78 },
+      ],
+      { today: '2026-11-17', year: 2026, groupBy: 'pay', allowEstimate: false, minShares: 1000 },
+    )
+
+    expect(res.excludedHoldings.map((h) => h.symbol)).toEqual(['2884', '00919'])
+    expect(res.eventCount).toBe(1)
+    expect(res.totalGross).toBe(1200)
+    expect(res.dividendGeneratingSymbolCount).toBe(1)
+    expect(res.totalInvestedCost).toBe(42_000)
+    expect(res.effectiveCostYieldPct).toBe(Math.round((1200 / 42_000) * 10000) / 100)
+  })
 })
