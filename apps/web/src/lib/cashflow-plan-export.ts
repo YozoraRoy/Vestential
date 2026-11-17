@@ -2,12 +2,228 @@
  * /cashflow-plan 專業財富管理風格 HTML 報告產生器（client-safe，零外部依賴）。
  */
 
+import type { Locale } from '@/i18n/config'
 import type { CashflowPlanEvaluation } from './cashflow-plan'
 
 export interface CashflowPlanExportParams {
   evaluation: CashflowPlanEvaluation
   styleName: string
   exportedAt?: string
+  locale?: Locale
+}
+
+interface ExportCopy {
+  htmlLang: string
+  docTitle: string
+  reportTitle: string
+  styleLabel: string
+  targetLabel: string
+  generatedLabel: string
+  printBtn: string
+  kpiAvgMonthly: string
+  kpiAchievement: (target: string, pct: number) => string
+  kpiTotalCapital: string
+  kpiAssetsCount: (n: number) => string
+  kpiAnnualNet: string
+  kpiAnnualNetSub: (gross: string, yld: string) => string
+  kpiNhi: string
+  kpiNhiSub: string
+  sec1Title: string
+  sec1Note: string
+  colAsset: string
+  colPrice: string
+  colLots: string
+  colCapital: string
+  colWeight: string
+  col54c: string
+  colSafeLots: string
+  colAnnualNet: string
+  colNhiStatus: string
+  safeUnlimited: string
+  lotsUnit: string
+  sharesUnit: string
+  statusWarn: (fee: string) => string
+  statusOk: string
+  historyInsufficient: string
+  totalLabel: string
+  effectiveYieldLabel: (yld: string) => string
+  sec2Title: string
+  sec2Note: (target: string) => string
+  targetTag: (target: string) => string
+  sec3Title: string
+  sec3Note: string
+  colMonth: string
+  colGross: string
+  colNhi: string
+  colNet: string
+  colMonthItems: string
+  noMonthItems: string
+  monthLabel: (m: number) => string
+  disclaimerTitle: string
+  disclaimer1: string
+  disclaimer2: string
+  disclaimer3: string
+}
+
+const MONTH_NAMES_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+const EXPORT_COPY: Record<Locale, ExportCopy> = {
+  'zh-TW': {
+    htmlLang: 'zh-Hant',
+    docTitle: 'Vestential 股利現金流自由配置規劃報告｜月領目標',
+    reportTitle: '股利現金流自由配置規劃報告',
+    styleLabel: '配置風格',
+    targetLabel: '目標月領（稅後）',
+    generatedLabel: '報告產出時間（台北時間）',
+    printBtn: '列印 / 另存 PDF',
+    kpiAvgMonthly: '預估月均實拿（稅後）',
+    kpiAchievement: (target, pct) => `目標 ${target} · 達成率 ${pct}%`,
+    kpiTotalCapital: '預估總投入本金',
+    kpiAssetsCount: (n) => `共配置 ${n} 檔標的`,
+    kpiAnnualNet: '年度預估稅後實拿',
+    kpiAnnualNetSub: (gross, yld) => `稅前 ${gross} · 實質殖利率 ${yld}`,
+    kpiNhi: '二代健保補充保費（2.11%）',
+    kpiNhiSub: '僅就單次 54C ≥ NT$20,000 扣繳',
+    sec1Title: '一、標的張數配置與二代健保安全水位',
+    sec1Note: '安全張數＝單次配息 54C 股利所得低於 NT$20,000 之最大持有張數',
+    colAsset: '標的',
+    colPrice: '目前市價',
+    colLots: '配置張數',
+    colCapital: '投入本金',
+    colWeight: '資金佔比',
+    col54c: '54C 佔比',
+    colSafeLots: '免扣安全張數',
+    colAnnualNet: '預估年領（稅後）',
+    colNhiStatus: '健保檢核狀態',
+    safeUnlimited: '無上限（免扣）',
+    lotsUnit: '張',
+    sharesUnit: '股',
+    statusWarn: (fee) => `單次逾門檻（+${fee}/年）`,
+    statusOk: '免扣安全區',
+    historyInsufficient: '近1年配息紀錄不足',
+    totalLabel: '合計',
+    effectiveYieldLabel: (yld) => `實質年化殖利率 ${yld}`,
+    sec2Title: '二、1 至 12 月預估稅後實拿現金流分佈',
+    sec2Note: (target) => `綠色柱狀表示當月實拿達月領目標（${target}）`,
+    targetTag: (target) => `目標 ${target}`,
+    sec3Title: '三、逐月入帳明細表',
+    sec3Note: '依近 12 個月實際配息發放月份分組',
+    colMonth: '月份',
+    colGross: '稅前股利',
+    colNhi: '二代健保',
+    colNet: '稅後實拿',
+    colMonthItems: '當月入帳標的明細',
+    noMonthItems: '本月無預估入帳',
+    monthLabel: (m) => `${m} 月`,
+    disclaimerTitle: '試算口徑與免責聲明',
+    disclaimer1: '本報告依 Vestential 近 12 個月實際除息與發放紀錄（TWSE / FinMind）試算，新掛牌或配息不足一年之標的不進行年化捏造。',
+    disclaimer2: '二代健保補充保費（2.11%）依據 2026 年適用稅制，僅針對單次給付之「54C 境內股利所得」達 NT$20,000（含）以上計扣；資本利得與收益平準金免扣。',
+    disclaimer3: '本報告僅供個人現金流模擬與資產配置參考，不構成任何形式之投資或稅務建議，實際配息金額與發放日以各投信／發行公司公告為準。',
+  },
+  en: {
+    htmlLang: 'en',
+    docTitle: 'Vestential Monthly Dividend Cashflow Plan Report | Target',
+    reportTitle: 'Monthly Dividend Cashflow Plan Report',
+    styleLabel: 'Strategy Style',
+    targetLabel: 'Target Monthly Net',
+    generatedLabel: 'Generated At (Taipei Time)',
+    printBtn: 'Print / Save PDF',
+    kpiAvgMonthly: 'Est. Monthly Avg (Net)',
+    kpiAchievement: (target, pct) => `Target ${target} · ${pct}% achieved`,
+    kpiTotalCapital: 'Est. Total Capital',
+    kpiAssetsCount: (n) => `${n} holdings configured`,
+    kpiAnnualNet: 'Est. Annual Net Payout',
+    kpiAnnualNetSub: (gross, yld) => `Pre-tax ${gross} · Net Yield ${yld}`,
+    kpiNhi: 'NHI Supplementary Fee (2.11%)',
+    kpiNhiSub: 'Applies only when single 54C ≥ NT$20,000',
+    sec1Title: '1. Holdings Allocation & NHI Safe Lot Threshold',
+    sec1Note: 'Safe lots = max lots keeping single 54C dividend below NT$20,000',
+    colAsset: 'Symbol',
+    colPrice: 'Ref Price',
+    colLots: 'Lots',
+    colCapital: 'Capital',
+    colWeight: 'Weight',
+    col54c: '54C Ratio',
+    colSafeLots: 'Safe Max Lots',
+    colAnnualNet: 'Est. Annual Net',
+    colNhiStatus: 'NHI Status',
+    safeUnlimited: 'Unlimited (Exempt)',
+    lotsUnit: 'lots',
+    sharesUnit: 'sh',
+    statusWarn: (fee) => `Exceeds threshold (+${fee}/yr)`,
+    statusOk: 'Exempt',
+    historyInsufficient: 'Insufficient 1Y history',
+    totalLabel: 'Total',
+    effectiveYieldLabel: (yld) => `Portfolio Net Yield ${yld}`,
+    sec2Title: '2. 12-Month Net Cashflow Distribution',
+    sec2Note: (target) => `Green bars indicate months reaching target (${target})`,
+    targetTag: (target) => `Target ${target}`,
+    sec3Title: '3. Monthly Payout Schedule',
+    sec3Note: 'Grouped by actual payout month over the trailing 12 months',
+    colMonth: 'Month',
+    colGross: 'Pre-tax',
+    colNhi: 'NHI Fee',
+    colNet: 'Net Payout',
+    colMonthItems: 'Payout Breakdown',
+    noMonthItems: 'No scheduled payout',
+    monthLabel: (m) => MONTH_NAMES_EN[m - 1] ?? `${m}`,
+    disclaimerTitle: 'Methodology & Disclaimer',
+    disclaimer1: 'Calculations use trailing 12-month official TWSE / FinMind ex-dividend and payout records without extrapolating newly listed ETFs.',
+    disclaimer2: 'NHI supplementary premium (2.11%, 2026 rules) applies only to domestic 54C dividend income ≥ NT$20,000 per payout; capital gains and equalization reserves are exempt.',
+    disclaimer3: 'For personal cashflow simulation only and not investment or tax advice. Actual payouts follow official issuer announcements.',
+  },
+  ja: {
+    htmlLang: 'ja',
+    docTitle: 'Vestential 月次配当キャッシュフロー計画レポート｜目標',
+    reportTitle: '配当キャッシュフロー自由配分計画レポート',
+    styleLabel: '配分スタイル',
+    targetLabel: '目標月額（手取り）',
+    generatedLabel: '作成日時（台北時間）',
+    printBtn: '印刷 / PDF保存',
+    kpiAvgMonthly: '月平均手取り見込',
+    kpiAchievement: (target, pct) => `目標 ${target} · 達成率 ${pct}%`,
+    kpiTotalCapital: '必要投資元本見込',
+    kpiAssetsCount: (n) => `合計 ${n} 銘柄`,
+    kpiAnnualNet: '年間手取り配当見込',
+    kpiAnnualNetSub: (gross, yld) => `税引前 ${gross} · 実質利回り ${yld}`,
+    kpiNhi: '二代健保追加保険料（2.11%）',
+    kpiNhiSub: '1回の 54C 所得 ≥ NT$20,000 のみ課徴',
+    sec1Title: '一、銘柄配分と二代健保の安全単元ライン',
+    sec1Note: '安全単元＝1回あたりの 54C 配当が NT$20,000 未満に収まる最大保有枚数',
+    colAsset: '銘柄',
+    colPrice: '参考株価',
+    colLots: '保有枚数',
+    colCapital: '投資元本',
+    colWeight: '構成比',
+    col54c: '54C 比率',
+    colSafeLots: '免除安全枚数',
+    colAnnualNet: '年間手取り見込',
+    colNhiStatus: '健保判定',
+    safeUnlimited: '上限なし（免除）',
+    lotsUnit: '枚',
+    sharesUnit: '株',
+    statusWarn: (fee) => `基準超過（+${fee}/年）`,
+    statusOk: '免除ライン内',
+    historyInsufficient: '直近1年の配当実績不足',
+    totalLabel: '合計',
+    effectiveYieldLabel: (yld) => `ポートフォリオ実質利回り ${yld}`,
+    sec2Title: '二、1〜12月 手取りキャッシュフロー分布',
+    sec2Note: (target) => `緑色の棒グラフは月次目標（${target}）達成月を示します`,
+    targetTag: (target) => `目標 ${target}`,
+    sec3Title: '三、月別配当明細表',
+    sec3Note: '直近12ヶ月の実際の支払月に基づき集計',
+    colMonth: '月',
+    colGross: '税引前配当',
+    colNhi: '二代健保',
+    colNet: '手取り額',
+    colMonthItems: '当月配当内訳',
+    noMonthItems: '当月の配当予定なし',
+    monthLabel: (m) => `${m} 月`,
+    disclaimerTitle: '試算基準および免責事項',
+    disclaimer1: '直近12ヶ月の TWSE / FinMind 公式実績データに基づき試算しています（上場1年未満の銘柄を年率換算で水増ししません）。',
+    disclaimer2: '二代健保追加保険料（2.11%、2026年基準）は1回あたり 54C 配当所得が NT$20,000 以上の場合のみ適用されます。',
+    disclaimer3: '本レポートは試算参考資料であり、投資助言や税務アドバイスではありません。実際の配当は各運用会社の公式発表に準じます。',
+  },
 }
 
 function escapeHtml(raw: string): string {
@@ -34,10 +250,12 @@ export function buildCashflowPlanExportHtml({
   evaluation,
   styleName,
   exportedAt,
+  locale = 'zh-TW',
 }: CashflowPlanExportParams): string {
+  const c = EXPORT_COPY[locale] ?? EXPORT_COPY['zh-TW']
   const timestamp =
     exportedAt ??
-    new Date().toLocaleString('zh-TW', {
+    new Date().toLocaleString(locale === 'en' ? 'en-US' : locale === 'ja' ? 'ja-JP' : 'zh-TW', {
       timeZone: 'Asia/Taipei',
       year: 'numeric',
       month: '2-digit',
@@ -65,13 +283,13 @@ export function buildCashflowPlanExportHtml({
       const ratio54cPct = Math.round(a.dividend54cRatio * 100)
       const safeLabel =
         a.safeMaxLots == null
-          ? '無上限（免扣）'
-          : `${a.safeMaxLots.toLocaleString('en-US')} 張`
+          ? c.safeUnlimited
+          : `${a.safeMaxLots.toLocaleString('en-US')} ${c.lotsUnit}`
       const statusBadge = a.nhiTriggered
-        ? `<span class="badge badge-warn">單次逾門檻（+${fmtNtd(a.annualNhiFee)}/年）</span>`
-        : `<span class="badge badge-ok">免扣安全區</span>`
+        ? `<span class="badge badge-warn">${c.statusWarn(fmtNtd(a.annualNhiFee))}</span>`
+        : `<span class="badge badge-ok">${c.statusOk}</span>`
       const historyNote = a.insufficientHistory
-        ? `<span class="badge badge-muted">近1年配息紀錄不足</span>`
+        ? `<span class="badge badge-muted">${c.historyInsufficient}</span>`
         : ''
 
       return `
@@ -82,8 +300,8 @@ export function buildCashflowPlanExportHtml({
           </td>
           <td class="num">${fmtNtd(a.price)}</td>
           <td class="num">
-            <strong>${a.lots.toLocaleString('en-US')} 張</strong>
-            <div class="sub">${(a.lots * 1000).toLocaleString('en-US')} 股</div>
+            <strong>${a.lots.toLocaleString('en-US')} ${c.lotsUnit}</strong>
+            <div class="sub">${(a.lots * 1000).toLocaleString('en-US')} ${c.sharesUnit}</div>
           </td>
           <td class="num">${fmtNtd(a.capital)}</td>
           <td class="num">${fmtPct(weightPct)}</td>
@@ -105,7 +323,7 @@ export function buildCashflowPlanExportHtml({
           <div class="bar-track">
             <div class="bar-fill ${reached ? 'bar-fill-hit' : ''}" style="height: ${barPct}%;"></div>
           </div>
-          <div class="bar-lbl">${m.month}月</div>
+          <div class="bar-lbl">${escapeHtml(c.monthLabel(m.month))}</div>
         </div>`
     })
     .join('\n')
@@ -114,13 +332,13 @@ export function buildCashflowPlanExportHtml({
     .map((m) => {
       const itemsHtml =
         m.items.length === 0
-          ? `<span class="sub">本月無預估入帳</span>`
+          ? `<span class="sub">${c.noMonthItems}</span>`
           : m.items
               .map(
                 (it) =>
                   `<div class="event-pill">
                     <span class="event-sym">${escapeHtml(it.symbol)}</span>
-                    <span>${it.lots.toLocaleString('en-US')}張 × ${it.cashDividend}元</span>
+                    <span>${it.lots.toLocaleString('en-US')}${c.lotsUnit} × ${it.cashDividend}</span>
                     <span class="event-date">(${escapeHtml(it.payDate)})</span>
                     <strong class="strong-green">${fmtNtd(it.net)}</strong>
                   </div>`,
@@ -129,7 +347,7 @@ export function buildCashflowPlanExportHtml({
 
       return `
         <tr>
-          <td class="month-cell">${m.month} 月</td>
+          <td class="month-cell">${escapeHtml(c.monthLabel(m.month))}</td>
           <td class="num">${fmtNtd(m.gross)}</td>
           <td class="num ${m.nhiFee > 0 ? 'warn-text' : 'sub'}">${m.nhiFee > 0 ? `-${fmtNtd(m.nhiFee)}` : 'NT$0'}</td>
           <td class="num strong-green">${fmtNtd(m.net)}</td>
@@ -139,11 +357,11 @@ export function buildCashflowPlanExportHtml({
     .join('\n')
 
   return `<!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="${c.htmlLang}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Vestential 股利現金流自由配置規劃報告｜月領目標 ${fmtNtd(evaluation.targetMonthlyNet)}</title>
+  <title>${escapeHtml(c.docTitle)} ${fmtNtd(evaluation.targetMonthlyNet)}</title>
   <style>
     :root {
       --navy: #0f172a;
@@ -448,58 +666,58 @@ export function buildCashflowPlanExportHtml({
     <header class="header">
       <div>
         <div class="brand">VESTENTIAL · WEALTH CASHFLOW PLANNER</div>
-        <h1>股利現金流自由配置規劃報告</h1>
+        <h1>${c.reportTitle}</h1>
         <div class="meta-row">
-          <span class="meta-chip">配置風格：${escapeHtml(styleName)}</span>
-          <span class="meta-chip">目標月領（稅後）：${fmtNtd(evaluation.targetMonthlyNet)}</span>
-          <span class="meta-chip">報告產出時間：${escapeHtml(timestamp)}（台北時間）</span>
+          <span class="meta-chip">${c.styleLabel}：${escapeHtml(styleName)}</span>
+          <span class="meta-chip">${c.targetLabel}：${fmtNtd(evaluation.targetMonthlyNet)}</span>
+          <span class="meta-chip">${c.generatedLabel}：${escapeHtml(timestamp)}</span>
         </div>
       </div>
-      <button type="button" class="print-btn" onclick="window.print()">列印 / 另存 PDF</button>
+      <button type="button" class="print-btn" onclick="window.print()">${c.printBtn}</button>
     </header>
 
     <section class="kpi-grid">
       <div class="kpi-card highlight">
-        <div class="kpi-label">預估月均實拿（稅後）</div>
+        <div class="kpi-label">${c.kpiAvgMonthly}</div>
         <div class="kpi-value" style="color: var(--emerald);">${fmtNtd(evaluation.monthlyAvgNet)}</div>
-        <div class="kpi-sub">目標 ${fmtNtd(evaluation.targetMonthlyNet)} · 達成率 ${achievementPct}%</div>
+        <div class="kpi-sub">${c.kpiAchievement(fmtNtd(evaluation.targetMonthlyNet), achievementPct)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">預估總投入本金</div>
+        <div class="kpi-label">${c.kpiTotalCapital}</div>
         <div class="kpi-value">${fmtNtd(evaluation.totalCapital)}</div>
-        <div class="kpi-sub">共配置 ${evaluation.assets.length} 檔標的</div>
+        <div class="kpi-sub">${c.kpiAssetsCount(evaluation.assets.length)}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">年度預估稅後實拿</div>
+        <div class="kpi-label">${c.kpiAnnualNet}</div>
         <div class="kpi-value">${fmtNtd(evaluation.annualNet)}</div>
-        <div class="kpi-sub">稅前 ${fmtNtd(evaluation.annualGross)} · 實質殖利率 ${fmtPct(evaluation.portfolioYieldPct)}</div>
+        <div class="kpi-sub">${c.kpiAnnualNetSub(fmtNtd(evaluation.annualGross), fmtPct(evaluation.portfolioYieldPct))}</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">二代健保補充保費（2.11%）</div>
+        <div class="kpi-label">${c.kpiNhi}</div>
         <div class="kpi-value" style="color: ${evaluation.annualNhiFee > 0 ? 'var(--amber)' : 'var(--navy)'};">
           ${evaluation.annualNhiFee > 0 ? `-${fmtNtd(evaluation.annualNhiFee)}` : 'NT$0'}
         </div>
-        <div class="kpi-sub">僅就單次 54C ≥ NT$20,000 扣繳</div>
+        <div class="kpi-sub">${c.kpiNhiSub}</div>
       </div>
     </section>
 
     <section class="section">
       <h2 class="section-title">
-        <span>一、標的張數配置與二代健保安全水位</span>
-        <span class="section-note">安全張數＝單次配息 54C 股利所得低於 NT$20,000 之最大持有張數</span>
+        <span>${c.sec1Title}</span>
+        <span class="section-note">${c.sec1Note}</span>
       </h2>
       <table>
         <thead>
           <tr>
-            <th>標的</th>
-            <th class="num">目前市價</th>
-            <th class="num">配置張數</th>
-            <th class="num">投入本金</th>
-            <th class="num">資金佔比</th>
-            <th class="num">54C 佔比</th>
-            <th class="num">免扣安全張數</th>
-            <th class="num">預估年領（稅後）</th>
-            <th>健保檢核狀態</th>
+            <th>${c.colAsset}</th>
+            <th class="num">${c.colPrice}</th>
+            <th class="num">${c.colLots}</th>
+            <th class="num">${c.colCapital}</th>
+            <th class="num">${c.colWeight}</th>
+            <th class="num">${c.col54c}</th>
+            <th class="num">${c.colSafeLots}</th>
+            <th class="num">${c.colAnnualNet}</th>
+            <th>${c.colNhiStatus}</th>
           </tr>
         </thead>
         <tbody>
@@ -507,14 +725,14 @@ export function buildCashflowPlanExportHtml({
         </tbody>
         <tfoot>
           <tr>
-            <td colspan="2">合計</td>
-            <td class="num">${evaluation.assets.reduce((s, a) => s + a.lots, 0).toLocaleString('en-US')} 張</td>
+            <td colspan="2">${c.totalLabel}</td>
+            <td class="num">${evaluation.assets.reduce((s, a) => s + a.lots, 0).toLocaleString('en-US')} ${c.lotsUnit}</td>
             <td class="num">${fmtNtd(evaluation.totalCapital)}</td>
             <td class="num">100.00%</td>
             <td class="num">—</td>
             <td class="num">—</td>
             <td class="num strong-green">${fmtNtd(evaluation.annualNet)}</td>
-            <td class="sub">實質年化殖利率 ${fmtPct(evaluation.portfolioYieldPct)}</td>
+            <td class="sub">${c.effectiveYieldLabel(fmtPct(evaluation.portfolioYieldPct))}</td>
           </tr>
         </tfoot>
       </table>
@@ -522,13 +740,13 @@ export function buildCashflowPlanExportHtml({
 
     <section class="section">
       <h2 class="section-title">
-        <span>二、1 至 12 月預估稅後實拿現金流分佈</span>
-        <span class="section-note">綠色柱狀表示當月實拿達月領目標（${fmtNtd(evaluation.targetMonthlyNet)}）</span>
+        <span>${c.sec2Title}</span>
+        <span class="section-note">${c.sec2Note(fmtNtd(evaluation.targetMonthlyNet))}</span>
       </h2>
       <div class="chart-wrap">
         <div class="chart-area">
           <div class="target-line" style="bottom: ${targetLinePct}%;">
-            <span class="target-tag">目標 ${fmtNtd(evaluation.targetMonthlyNet)}</span>
+            <span class="target-tag">${c.targetTag(fmtNtd(evaluation.targetMonthlyNet))}</span>
           </div>
           ${monthBars}
         </div>
@@ -537,17 +755,17 @@ export function buildCashflowPlanExportHtml({
 
     <section class="section">
       <h2 class="section-title">
-        <span>三、逐月入帳明細表</span>
-        <span class="section-note">依近 12 個月實際配息發放月份分組</span>
+        <span>${c.sec3Title}</span>
+        <span class="section-note">${c.sec3Note}</span>
       </h2>
       <table>
         <thead>
           <tr>
-            <th>月份</th>
-            <th class="num">稅前股利</th>
-            <th class="num">二代健保</th>
-            <th class="num">稅後實拿</th>
-            <th>當月入帳標的明細</th>
+            <th>${c.colMonth}</th>
+            <th class="num">${c.colGross}</th>
+            <th class="num">${c.colNhi}</th>
+            <th class="num">${c.colNet}</th>
+            <th>${c.colMonthItems}</th>
           </tr>
         </thead>
         <tbody>
@@ -557,11 +775,11 @@ export function buildCashflowPlanExportHtml({
     </section>
 
     <footer class="footer">
-      <strong>試算口徑與免責聲明</strong>
+      <strong>${c.disclaimerTitle}</strong>
       <ul>
-        <li>本報告依 Vestential 近 12 個月實際除息與發放紀錄（TWSE / FinMind）試算，新掛牌或配息不足一年之標的不進行年化捏造。</li>
-        <li>二代健保補充保費（2.11%）依據 2026 年適用稅制，僅針對單次給付之「54C 境內股利所得」達 NT$20,000（含）以上計扣；資本利得與收益平準金免扣。</li>
-        <li>本報告僅供個人現金流模擬與資產配置參考，不構成任何形式之投資或稅務建議，實際配息金額與發放日以各投信／發行公司公告為準。</li>
+        <li>${c.disclaimer1}</li>
+        <li>${c.disclaimer2}</li>
+        <li>${c.disclaimer3}</li>
       </ul>
     </footer>
   </div>

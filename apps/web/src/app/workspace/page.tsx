@@ -109,7 +109,9 @@ export default async function WorkspacePage() {
           desc:
             locale === 'en'
               ? 'Simulate 20k-100k NTD monthly post-tax dividend cashflow portfolios with custom ETF weights.'
-              : '自由試算月領 2~10 萬稅後現金流（預設 4 萬），含風格範本、54C 健保精算與 12 個月發放分佈。',
+              : locale === 'ja'
+                ? '目標月次配当（2〜10万元）や配分スタイルを自由に試算し、二代健保・月別受取分布を確認できます。'
+                : '自由試算月領 2~10 萬稅後現金流（預設 4 萬），含風格範本、54C 健保精算與 12 個月發放分佈。',
           accent: 'green',
         },
       ],

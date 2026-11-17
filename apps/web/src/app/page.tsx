@@ -180,7 +180,13 @@ export default async function Home() {
           href={localizePath(locale, '/cashflow-plan')}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-emerald-500/20 to-blue-500/20 hover:from-emerald-500/30 hover:to-blue-500/30 border border-emerald-400/40 text-xs font-semibold text-emerald-200 transition shadow-sm"
         >
-          <span>💰 月領現金流 Plan（2~10萬自由配置）</span>
+          <span>
+            {locale === 'en'
+              ? '💰 Monthly Dividend Cashflow Plan (20k–100k)'
+              : locale === 'ja'
+                ? '💰 月次配当プラン（2〜10万円自由配分）'
+                : '💰 月領現金流 Plan（2~10萬自由配置）'}
+          </span>
           <span className="text-[10px] text-emerald-300/80">→</span>
         </Link>
         <Link

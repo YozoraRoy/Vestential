@@ -33,4 +33,35 @@ describe('cashflow-plan-export', () => {
     expect(html).not.toContain('<script>alert(1)</script>')
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
+
+  it('支援英文 (en) 與日文 (ja) 語系報告輸出', () => {
+    const asset = buildAssetProfile({
+      symbol: '0056',
+      name: '元大高股息',
+      price: 36.5,
+      today: '2026-11-17',
+      rawDividends: [{ ex_date: '2026-01-22', pay_date: '2026-02-11', cash_dividend: 0.866 }],
+    })
+    const evaluation = evaluateCashflowPlan([{ asset, lots: 10 }], 40_000)
+
+    const enHtml = buildCashflowPlanExportHtml({
+      evaluation,
+      styleName: 'Balanced Monthly Income',
+      exportedAt: '2026-11-17 16:30',
+      locale: 'en',
+    })
+    expect(enHtml).toContain('<html lang="en">')
+    expect(enHtml).toContain('Monthly Dividend Cashflow Plan Report')
+    expect(enHtml).toContain('Balanced Monthly Income')
+
+    const jaHtml = buildCashflowPlanExportHtml({
+      evaluation,
+      styleName: 'バランス毎月配当',
+      exportedAt: '2026-11-17 16:30',
+      locale: 'ja',
+    })
+    expect(jaHtml).toContain('<html lang="ja">')
+    expect(jaHtml).toContain('配当キャッシュフロー自由配分計画レポート')
+    expect(jaHtml).toContain('バランス毎月配当')
+  })
 })
