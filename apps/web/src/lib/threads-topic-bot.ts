@@ -26,21 +26,21 @@ export const TOPIC_BOT_LOGS_KEY = 'social.topic_bot_logs'
 
 export const DEFAULT_TOPIC_BOT_KEYWORDS = ['台股', 'ETF', '存股', '薪水', 'AI股', '美股', '小資理財']
 export const DEFAULT_TOPIC_BOT_DAILY_LIMIT = 5
-export const TOPIC_REPLY_MIN_CHARS = 12
-export const TOPIC_REPLY_MAX_CHARS = 35
-export const TOPIC_REPLY_TARGET_DESC = '15～30 字'
+export const TOPIC_REPLY_MIN_CHARS = 25
+export const TOPIC_REPLY_MAX_CHARS = 55
+export const TOPIC_REPLY_TARGET_DESC = '30～50 字'
 
-export const DEFAULT_TOPIC_REPLY_PROMPT = `你是台灣上班族，正在用自己的帳號滑 Threads，看到別人的貼文想順手留一句有共鳴又好笑的話。
+export const DEFAULT_TOPIC_REPLY_PROMPT = `你是台灣上班族，正在用自己的帳號滑 Threads，看到別人的貼文想順手留一段有共鳴、看懂重點又自然好笑的話。
 
 【核心原則（說人話 speak-human-tw）】
-1. 先看懂貼文在講什麼，只對「貼文裡真的提到的事」做反應，不自顧自講大道理。
+1. 先看懂貼文在講什麼，並依照貼文語氣判斷最適合的切入點（同理共鳴、幽默接梗或輕量觀點補充），只對「貼文裡真的提到的事」做反應，不自顧自講大道理。
 2. 絕對去 AI 味：禁止「值得注意的是」「總的來說」「綜上所述」「不僅…更…」「這意味著」「加油！」這類套話、說教腔或完美收尾；允許口語碎片與自嘲。
 3. 台灣日常口語＋全形標點：嚴禁中國用語（視頻、質量、信息量、接地氣、博主），不用「筆者」。
 4. 風格：幽默、生活化、像朋友在旁邊嘴一句，帶點小資族／上班族面對物價、投資或工作的苦笑與共鳴。
 5. 嚴格禁廣告：絕對不提平台名稱、網址或「歡迎追蹤」「來看看」，單靠這句話本身好笑／有感讓人點進主頁。
 
 【輸出限制】
-- 長度嚴格控制在 **15～30 個中文字**（含標點）。
+- 長度嚴格控制在 **30～50 個中文字**（含標點）。
 - 最多 0～1 個自然 emoji（禁止 🚀💡🔥 轟炸）。
 - 只輸出一行最終回覆正文，不要引號、不要編號、不要任何解釋。`
 
@@ -65,10 +65,57 @@ export interface TopicBotLogEntry {
   reason: string
   published: boolean
   dryRun: boolean
+  deliveryMode?: 'auto-reply' | 'telegram' | 'manual-copy'
+  telegramSent?: boolean
   postType?: 'reply' | 'rss-post'
   llmMode: 'free-first' | 'paid-only'
   modelUsed: string
   error?: string
+}
+
+/** 判斷 ID 是否為 Threads Graph API reply_to_id 接受的 17 位數 threads_media_id（如 179.../180...）。 */
+export function isThreadsGraphMediaId(id: string): boolean {
+  return /^1[78]\d{15}$/.test(id.trim())
+}
+
+/** 選項 B：將原貼文連結與 AI 生成回覆推送到 Telegram，方便使用者 3 秒點開貼上留言。 */
+export async function sendTelegramReplyNotification(params: {
+  author: string
+  postSnippet: string
+  permalink: string
+  replyText: string
+}): Promise<boolean> {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim()
+  if (!token || !chatId) return false
+
+  const message = [
+    '💬 Threads 2 號小編 — 待留言通知',
+    `對象：@${params.author || 'threads'}`,
+    `原文：${params.postSnippet}`,
+    '',
+    '🔗 點此前往貼文留言：',
+    params.permalink,
+    '',
+    '📋 建議回覆（可直接複製貼上）：',
+    params.replyText,
+  ].join('\n')
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: message,
+        disable_web_page_preview: false,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 export interface TopicBotConfigState {
@@ -540,10 +587,10 @@ export async function evaluateAndDraftTopicReply(
 
   // 第 1 步：讀取貼文判斷是否適合幽默接話
   const evalSystem = [
-    '你是台灣社群編輯，要判斷一篇 Threads 貼文是否適合用「15～30字幽默生活化口吻」留言互動。',
+    '你是台灣社群編輯，要判斷一篇 Threads 貼文是否適合用「30～50 字幽默生活化口吻」留言互動，並先抓出最適合的切入點。',
     injectionGuardNote(),
     '排除條件（以下一律回 NO）：政治立場爭吵、重大災難或悲傷新聞、純賣貨／直銷／詐騙廣告、無實質內容的抽獎文。',
-    '只輸出 JSON：{"suitable": true/false, "reason": "簡短原因"}，不要其他文字。',
+    '只輸出 JSON：{"suitable": true/false, "reason": "簡短原因或切入點"}，不要其他文字。',
   ].join('\n')
 
   const evalRaw = await llm.generate(evalSystem, dataBlock('thread', post.text, 1200))
@@ -570,7 +617,7 @@ export async function evaluateAndDraftTopicReply(
   for (let attempt = 1; attempt <= 2; attempt++) {
     const rawReply = await llm.generate(
       systemPrompt,
-      `${dataBlock('thread', post.text, 1200)}\n\n請直接輸出 1 則 15～30 個中文字的幽默人話回覆：`,
+      `${dataBlock('thread', post.text, 1200)}\n\n切入點參考：${reason}\n請直接輸出 1 則 30～50 個中文字的幽默人話回覆：`,
     )
     const check = validateTopicReplyText(rawReply)
     if (check.ok) {
@@ -624,9 +671,6 @@ export async function runTopicBotCycle(options?: {
     candidates = [options.manualPost]
   } else if (options?.manualUrl?.trim()) {
     const info = await resolveThreadsPost(options.manualUrl.trim())
-    if (!info.mediaId && !dryRun) {
-      return { ok: false, error: '無法從該網址解析出 Threads mediaId，無法發布回覆。', results: [] }
-    }
     candidates = [
       {
         id: info.mediaId || `url-${info.shortcode}`,
@@ -732,28 +776,67 @@ export async function runTopicBotCycle(options?: {
       modelUsed: evalRes.modelUsed,
     }
 
+    const deliverOptionB = async () => {
+      const telegramSent = await sendTelegramReplyNotification({
+        author: post.username,
+        postSnippet: post.text.slice(0, 120),
+        permalink: post.permalink,
+        replyText: evalRes.replyText,
+      })
+      const row = await createSocialPost({
+        platform: 'threads',
+        editionKey,
+        content: evalRes.replyText,
+        imageUrl: null,
+      })
+      await updateSocialPost(row.id, { status: 'deferred' })
+      entry.deliveryMode = telegramSent ? 'telegram' : 'manual-copy'
+      entry.telegramSent = telegramSent
+      publishedCount += 1
+      if (consumedQueueUrl) {
+        await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
+      }
+    }
+
     if (evalRes.suitable && evalRes.replyText && !dryRun) {
-      try {
-        const pub = await publishThreadsReply(evalRes.replyText, post.id)
-        const row = await createSocialPost({
-          platform: 'threads',
-          editionKey,
-          content: evalRes.replyText,
-          imageUrl: null,
-        })
-        await updateSocialPost(row.id, {
-          status: 'published',
-          external_id: pub.replyMediaId,
-          published_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
-        })
-        entry.published = true
-        entry.permalink = pub.permalink
-        publishedCount += 1
-        if (consumedQueueUrl) {
-          await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
+      if (!isThreadsGraphMediaId(post.id)) {
+        // 公開網頁僅能取得 19 位數 post_id（如 3901...），無法直接作為 reply_to_id；改走選項 B 推播／待機清單
+        try {
+          await deliverOptionB()
+        } catch (err: any) {
+          entry.error = err?.message || '選項 B 推播紀錄建立失敗'
         }
-      } catch (err: any) {
-        entry.error = err?.message || 'Threads 發布回覆失敗'
+      } else {
+        try {
+          const pub = await publishThreadsReply(evalRes.replyText, post.id)
+          const row = await createSocialPost({
+            platform: 'threads',
+            editionKey,
+            content: evalRes.replyText,
+            imageUrl: null,
+          })
+          await updateSocialPost(row.id, {
+            status: 'published',
+            external_id: pub.replyMediaId,
+            published_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          })
+          entry.published = true
+          entry.deliveryMode = 'auto-reply'
+          entry.permalink = pub.permalink
+          publishedCount += 1
+          if (consumedQueueUrl) {
+            await saveTopicBotConfig({ queueUrls: state.queueUrls.filter((u) => u !== consumedQueueUrl) })
+          }
+        } catch (err: any) {
+          const msg = err?.message || 'Threads 發布回覆失敗'
+          if (/not a valid threads_media ID|Error 100|\(100\)/i.test(msg)) {
+            await deliverOptionB().catch(() => {
+              entry.error = msg
+            })
+          } else {
+            entry.error = msg
+          }
+        }
       }
     }
 

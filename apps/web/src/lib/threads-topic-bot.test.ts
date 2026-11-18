@@ -70,6 +70,7 @@ import {
   discoverExternalThreadsUrlsViaGoogleCse,
   evaluateAndDraftTopicReply,
   filterExternalThreadsUrls,
+  isThreadsGraphMediaId,
   runTopicBotCycle,
   validateTopicReplyText,
 } from './threads-topic-bot'
@@ -93,12 +94,12 @@ describe('threads-topic-bot (第 2 小編)', () => {
     process.env = savedEnv
   })
 
-  it('validateTopicReplyText 嚴格把關 15~30 字、禁廣告與禁 AI 味／中國用語', () => {
-    expect(validateTopicReplyText('領薪水那天最開心，隔天繳完房租就醒了。').ok).toBe(true)
+  it('validateTopicReplyText 嚴格把關 30~50 字（25~55 容錯）、禁廣告與禁 AI 味／中國用語', () => {
+    expect(validateTopicReplyText('領薪水那天最開心，結果隔天繳完房租跟信用卡帳單就瞬間醒了，月底還是得乖乖吃土。').ok).toBe(true)
     expect(validateTopicReplyText('太短了').ok).toBe(false)
-    expect(validateTopicReplyText('這是一段超過三十五個字元的超級長回覆，用來測試系統是否會自動把過長像論文一樣的句子擋下來。').ok).toBe(false)
+    expect(validateTopicReplyText('這是一段超過五十五個字元的超級無敵冗長回覆內容，用來測試系統是否會自動把過長像論文一樣的句子直接擋下來不讓它送出。').ok).toBe(false)
     expect(validateTopicReplyText('歡迎追蹤我看更多分析 https://vestential.com').ok).toBe(false)
-    expect(validateTopicReplyText('值得注意的是，這個視頻質量真的很高。').ok).toBe(false)
+    expect(validateTopicReplyText('值得注意的是，這個視頻質量真的很高，建議大家趕快來看看。').ok).toBe(false)
   })
 
   it('createTopicBotLLM 支援偵測 FALLBACK2 + FALLBACK 雙免費 Groq Key，未設定則為 paid-only', () => {
@@ -132,10 +133,10 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(mocks.generate).toHaveBeenCalledTimes(1)
   })
 
-  it('evaluateAndDraftTopicReply 適合時產出合格 15~30 字回覆', async () => {
+  it('evaluateAndDraftTopicReply 適合時產出合格 30~50 字回覆', async () => {
     mocks.generate
       .mockResolvedValueOnce('{"suitable": true, "reason": "上班族薪水共鳴"}')
-      .mockResolvedValueOnce('「薪水進帳那一秒我也是大富翁，五分鐘後恢復原廠設定。」')
+      .mockResolvedValueOnce('「薪水進帳那一秒我也覺得自己是大富翁，五分鐘後繳完房租跟卡費就立刻恢復原廠設定。」')
 
     const res = await evaluateAndDraftTopicReply({
       id: '102',
@@ -144,10 +145,10 @@ describe('threads-topic-bot (第 2 小編)', () => {
       permalink: 'https://www.threads.net/t/102',
     })
     expect(res.suitable).toBe(true)
-    expect(res.replyText).toBe('薪水進帳那一秒我也是大富翁，五分鐘後恢復原廠設定。')
+    expect(res.replyText).toBe('薪水進帳那一秒我也覺得自己是大富翁，五分鐘後繳完房租跟卡費就立刻恢復原廠設定。')
   })
 
-  it('runTopicBotCycle 在開關關閉時安全略過，開啟並手動測試時可正常執行', async () => {
+  it('runTopicBotCycle 在開關關閉時安全略過，17 位數 mediaId 時可自動發布回覆', async () => {
     const skipped = await runTopicBotCycle({ dryRun: false })
     expect(skipped.skipped).toContain('關閉')
 
@@ -157,12 +158,12 @@ describe('threads-topic-bot (第 2 小編)', () => {
     })
     mocks.generate
       .mockResolvedValueOnce('{"suitable": true, "reason": "ETF討論"}')
-      .mockResolvedValueOnce('存股存到最後，發現自己其實是在存心酸跟耐心。')
+      .mockResolvedValueOnce('存股存到最後，常常發現自己其實是在存心酸跟耐心，每天看盤心臟都快受不了。')
 
     const run = await runTopicBotCycle({
       dryRun: false,
       manualPost: {
-        id: '2001',
+        id: '17900000000002001',
         username: 'etf_fan',
         text: '買高股息ETF到底要抱多久才有感？',
         permalink: 'https://www.threads.net/t/2001',
@@ -171,7 +172,44 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(run.ok).toBe(true)
     expect(run.results).toHaveLength(1)
     expect(run.results[0]?.published).toBe(true)
-    expect(mocks.publishThreadsReply).toHaveBeenCalledWith('存股存到最後，發現自己其實是在存心酸跟耐心。', '2001')
+    expect(run.results[0]?.deliveryMode).toBe('auto-reply')
+    expect(mocks.publishThreadsReply).toHaveBeenCalledWith(
+      '存股存到最後，常常發現自己其實是在存心酸跟耐心，每天看盤心臟都快受不了。',
+      '17900000000002001',
+    )
+  })
+
+  it('19 位數 post_id（如 3901157463294964600）自動改走選項 B：Telegram 推播或手動待貼清單，不觸發 Error 100', async () => {
+    expect(isThreadsGraphMediaId('17900000000002001')).toBe(true)
+    expect(isThreadsGraphMediaId('3901157463294964600')).toBe(false)
+
+    mocks.getAgentSetting.mockImplementation(async (k: string) => (k === 'social.topic_bot_enabled' ? 'on' : null))
+    process.env.TELEGRAM_BOT_TOKEN = 'tg_bot_token'
+    process.env.TELEGRAM_CHAT_ID = '123456789'
+
+    mocks.generate
+      .mockResolvedValueOnce('{"suitable": true, "reason": "文組創業反差感"}')
+      .mockResolvedValueOnce('同樣都是文組，我還在為報告煩惱，你已經遠端創業領科技業薪水，這差距太真實了吧。')
+
+    const tgSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ ok: true } as any)
+    const run = await runTopicBotCycle({
+      dryRun: false,
+      manualPost: {
+        id: '3901157463294964600',
+        username: 'yao__0214',
+        text: '我是文組 但我自行創業 可以遠端工作。薪水差不多科技業的薪水 時間蠻自由的',
+        permalink: 'https://www.threads.net/@yao__0214/post/DYjsgssj3N4',
+      },
+    })
+    tgSpy.mockRestore()
+
+    expect(run.ok).toBe(true)
+    expect(mocks.publishThreadsReply).not.toHaveBeenCalled()
+    expect(run.results[0]?.published).toBe(false)
+    expect(run.results[0]?.deliveryMode).toBe('telegram')
+    expect(run.results[0]?.telegramSent).toBe(true)
+    expect(run.results[0]?.error).toBeUndefined()
+    expect(mocks.updateSocialPost).toHaveBeenCalledWith(99, { status: 'deferred' })
   })
 
   it('filterExternalThreadsUrls 僅保留他人 /post/ 網址並排除自家 @vestential', () => {
@@ -196,14 +234,14 @@ describe('threads-topic-bot (第 2 小編)', () => {
     mocks.getAgentSetting.mockImplementation(async (k: string) => (k === 'social.topic_bot_enabled' ? 'on' : null))
     mocks.resolveThreadsPost.mockResolvedValueOnce({
       shortcode: 'XYZ789',
-      mediaId: '99887766',
+      mediaId: '17900000099887766',
       author: 'investor_tw',
       text: '今天台積電又創新高，空手的人心情好複雜',
       permalink: 'https://www.threads.net/@investor_tw/post/XYZ789',
     })
     mocks.generate
       .mockResolvedValueOnce('{"suitable": true, "reason": "台股共鳴"}')
-      .mockResolvedValueOnce('猶豫要不要上車的時候，車子已經開到交流道了。')
+      .mockResolvedValueOnce('每次還在猶豫要不要上車的時候，車子就已經開上交流道一路衝到終點站了，只能目送。')
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
       ok: true,
@@ -221,7 +259,10 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(run.ok).toBe(true)
     expect(run.results).toHaveLength(1)
     expect(run.results[0]?.published).toBe(true)
-    expect(mocks.publishThreadsReply).toHaveBeenCalledWith('猶豫要不要上車的時候，車子已經開到交流道了。', '99887766')
+    expect(mocks.publishThreadsReply).toHaveBeenCalledWith(
+      '每次還在猶豫要不要上車的時候，車子就已經開上交流道一路衝到終點站了，只能目送。',
+      '17900000099887766',
+    )
   })
 
   it('Bright Data SERP 優先；失敗時自動降級至 Google CSE 備選', async () => {
@@ -288,7 +329,7 @@ describe('threads-topic-bot (第 2 小編)', () => {
     })
     mocks.generate
       .mockResolvedValueOnce('{"suitable": true, "reason": "台股共鳴"}')
-      .mockResolvedValueOnce('看盤看到去泡麵加蛋壓壓驚。')
+      .mockResolvedValueOnce('今天看盤看到懷疑人生，中午只好默默去泡一碗麵再多加一顆蛋幫自己壓壓驚。')
 
     const spyRotate = vi
       .spyOn(globalThis, 'fetch')
@@ -303,6 +344,6 @@ describe('threads-topic-bot (第 2 小編)', () => {
     spyRotate.mockRestore()
     expect(cycle.ok).toBe(true)
     expect(cycle.results).toHaveLength(1)
-    expect(cycle.results[0]?.replyText).toBe('看盤看到去泡麵加蛋壓壓驚。')
+    expect(cycle.results[0]?.replyText).toBe('今天看盤看到懷疑人生，中午只好默默去泡一碗麵再多加一顆蛋幫自己壓壓驚。')
   })
 })
