@@ -9,7 +9,8 @@ import { getSocialAccessToken } from './social-tokens'
 // 注意：API 的 reply_to_id 只能吃自家/可讀取的 threads_media_id，跨使用者貼文
 // 需 App Review 打通公開內容讀取後才有機會。
 
-const UA =
+const UA_CRAWLER = 'facebookexternalhit/1.1'
+const UA_BROWSER =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36'
 const THREADS_API = 'https://graph.threads.net/v1.0'
 export const THREADS_REPLY_MAX_CHARS = 500
@@ -60,7 +61,8 @@ export async function resolveThreadsPost(permalinkOrShortcode: string): Promise<
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const res = await fetch(parsed.permalink, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) })
+      const ua = attempt === 1 ? UA_CRAWLER : UA_BROWSER
+      const res = await fetch(parsed.permalink, { headers: { 'User-Agent': ua }, signal: AbortSignal.timeout(15_000) })
       if (res.ok) {
         const html = await res.text()
         const mediaId = html.match(/"post_id":"(\d+)"/)?.[1] ?? null

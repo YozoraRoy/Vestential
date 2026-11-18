@@ -667,7 +667,7 @@ export async function runTopicBotCycle(options?: {
       }
     }
     if (candidates.length === 0) {
-      return { ok: false, error: `Google CSE 搜尋「${kw}」未取得可解析出 mediaId 的他人貼文`, results: [] }
+      return { ok: false, error: `搜尋（${searchRes.provider ?? 'Bright Data'}）「${kw}」未取得可解析出 mediaId 的他人貼文`, results: [] }
     }
   }
 
