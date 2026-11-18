@@ -255,4 +255,54 @@ describe('threads-topic-bot (第 2 小編)', () => {
     expect(fallbackCse.provider).toBe('google-cse')
     expect(fallbackCse.urls).toEqual(['https://www.threads.net/@other_user/post/CSE002'])
   })
+
+  it('Bright Data 回傳空內容或非 Threads 網址時回傳詳細診斷原因，並於輪巡時自動換下一個關鍵字', async () => {
+    process.env.BRIGHTDATA_API_KEY = 'bd_key'
+    process.env.BRIGHTDATA_ZONE = 'serp_api_zone'
+    delete process.env.GOOGLE_CSE_API_KEY
+    delete process.env.GOOGLE_CSE_ID
+
+    // 1. 回傳空內容時，應明確回傳「回傳空內容」與 zone 名稱（不出現籠統「搜尋失敗」）
+    const spyEmpty = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '',
+    } as any)
+    const emptyRes = await discoverExternalThreadsUrls('薪水')
+    spyEmpty.mockRestore()
+    expect(emptyRes.ok).toBe(false)
+    expect(emptyRes.error).toContain('serp_api_zone')
+    expect(emptyRes.error).toContain('回傳空內容')
+
+    // 2. 第 1 個關鍵字無可用網址時，runTopicBotCycle 自動輪巡第 2 個關鍵字並成功擬稿
+    mocks.getAgentSetting.mockImplementation(async (k: string) => {
+      if (k === 'social.topic_bot_keywords') return '薪水,台股'
+      return null
+    })
+    mocks.resolveThreadsPost.mockResolvedValueOnce({
+      shortcode: 'DeaxLSgCW0V',
+      mediaId: '4006731098557607189',
+      author: '0912_mm',
+      text: '台股在跌啥，看盤看到懷疑人生',
+      permalink: 'https://www.threads.net/@0912_mm/post/DeaxLSgCW0V',
+    })
+    mocks.generate
+      .mockResolvedValueOnce('{"suitable": true, "reason": "台股共鳴"}')
+      .mockResolvedValueOnce('看盤看到去泡麵加蛋壓壓驚。')
+
+    const spyRotate = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => '' } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ organic: [{ link: 'https://www.threads.com/@0912_mm/post/DeaxLSgCW0V' }] }),
+      } as any)
+
+    const cycle = await runTopicBotCycle({ dryRun: true })
+    spyRotate.mockRestore()
+    expect(cycle.ok).toBe(true)
+    expect(cycle.results).toHaveLength(1)
+    expect(cycle.results[0]?.replyText).toBe('看盤看到去泡麵加蛋壓壓驚。')
+  })
 })

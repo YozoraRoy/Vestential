@@ -398,7 +398,7 @@ export async function discoverExternalThreadsUrlsViaGoogleCse(
   }
 }
 
-/** 透過 Bright Data SERP API（第一順位）搜尋近 7 天他人公開 Threads 貼文。 */
+/** 透過 Bright Data SERP API（第一順位）搜尋他人公開 Threads 貼文。 */
 export async function discoverExternalThreadsUrlsViaBrightData(
   keyword: string,
   ownUsername = 'vestential',
@@ -414,8 +414,9 @@ export async function discoverExternalThreadsUrlsViaBrightData(
     }
   }
 
-  const query = `(site:threads.net OR site:threads.com) "${keyword}" "/post/"`
-  const targetUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbs=qdr:w&hl=zh-TW&gl=tw&brd_json=1`
+  // 實測確認：在 Bright Data SERP 使用 site:/OR/tbs 算符易被 Google 擋回空內容，改用自然關鍵字穩定取得 /post/ 網址
+  const query = `threads.com post ${keyword}`
+  const targetUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=zh-TW&gl=tw&brd_json=1`
   try {
     const res = await fetch(BRIGHTDATA_ENDPOINT, {
       method: 'POST',
@@ -428,14 +429,30 @@ export async function discoverExternalThreadsUrlsViaBrightData(
     })
     const text = await res.text()
     if (!res.ok) {
-      return { ok: false, urls: [], error: `Bright Data HTTP ${res.status}: ${text.slice(0, 160)}` }
+      return { ok: false, urls: [], error: `Bright Data (${zone}) HTTP ${res.status}: ${text.slice(0, 160)}` }
     }
-    const json = JSON.parse(text)
+    if (!text.trim()) {
+      return { ok: false, urls: [], error: `Bright Data (${zone}) 回傳空內容 (HTTP ${res.status})，關鍵字「${keyword}」` }
+    }
+    let json: any
+    try {
+      json = JSON.parse(text)
+    } catch {
+      return { ok: false, urls: [], error: `Bright Data (${zone}) 回傳非 JSON：${text.slice(0, 160)}` }
+    }
     const organic = Array.isArray(json?.organic) ? json.organic : Array.isArray(json?.results) ? json.results : []
     const rawLinks = organic.map((it: any) => String(it?.link ?? it?.url ?? ''))
-    return { ok: true, urls: filterExternalThreadsUrls(rawLinks, ownUsername) }
+    const filtered = filterExternalThreadsUrls(rawLinks, ownUsername)
+    if (filtered.length === 0) {
+      return {
+        ok: true,
+        urls: [],
+        error: `Bright Data (${zone}) 搜尋「${keyword}」取得 ${organic.length} 筆結果，但過濾後無他人 /post/ 貼文`,
+      }
+    }
+    return { ok: true, urls: filtered }
   } catch (err: any) {
-    return { ok: false, urls: [], error: err?.message || 'Bright Data SERP 連線逾時或失敗' }
+    return { ok: false, urls: [], error: err?.message || `Bright Data (${zone}) SERP 連線逾時或失敗` }
   }
 }
 
@@ -450,7 +467,7 @@ export async function discoverExternalThreadsUrls(
   }
 
   const cse = await discoverExternalThreadsUrlsViaGoogleCse(keyword, ownUsername)
-  if (cse.ok) {
+  if (cse.ok && cse.urls.length > 0) {
     return { ok: true, urls: cse.urls, provider: 'google-cse' }
   }
 
@@ -461,10 +478,11 @@ export async function discoverExternalThreadsUrls(
       error: '尚未設定 BRIGHTDATA_ZONE / BRIGHTDATA_API_KEY 或備選 GOOGLE_CSE_API_KEY / GOOGLE_CSE_ID，請至少完成一組設定（或改用話題佇列貼入網址）',
     }
   }
+  const cseReason = cse.cseMissing ? '' : cse.error || `Google CSE 搜尋「${keyword}」無結果`
   return {
     ok: false,
     urls: [],
-    error: [bd.missing ? '' : bd.error, cse.cseMissing ? '' : cse.error].filter(Boolean).join(' | ') || '搜尋失敗',
+    error: [bd.missing ? '' : bd.error, cseReason].filter(Boolean).join(' | ') || `關鍵字「${keyword}」未找到可用貼文`,
   }
 }
 
@@ -642,32 +660,42 @@ export async function runTopicBotCycle(options?: {
       return { ok: false, error: '話題佇列中的網址皆無法解析出 mediaId / 內文', results: [] }
     }
   } else {
-    // 雙層搜尋：Bright Data SERP（優先）→ Google CSE（備選）
+    // 雙層搜尋：Bright Data SERP（優先）→ Google CSE（備選），最多輪巡 3 個關鍵字
     const startIdx = new Date().getHours() % state.keywords.length
-    const kw = state.keywords[startIdx] ?? DEFAULT_TOPIC_BOT_KEYWORDS[0]!
-    const searchRes = await discoverExternalThreadsUrls(kw, ownUsername)
-    if (!searchRes.ok) {
-      return { ok: false, error: searchRes.error, results: [] }
-    }
-    for (const url of searchRes.urls) {
-      try {
-        const info = await resolveThreadsPost(url)
-        if (info.mediaId && info.text && info.author.toLowerCase() !== ownUsername) {
-          candidates.push({
-            id: info.mediaId,
-            username: info.author || 'threads_user',
-            text: info.text,
-            permalink: info.permalink,
-            postType: 'reply',
-          })
-          if (candidates.length >= 3) break
-        }
-      } catch {
-        // 單篇解析失敗則換下一篇
+    const maxAttempts = Math.min(3, state.keywords.length)
+    const searchReasons: string[] = []
+
+    for (let offset = 0; offset < maxAttempts; offset++) {
+      const kw = state.keywords[(startIdx + offset) % state.keywords.length] ?? DEFAULT_TOPIC_BOT_KEYWORDS[0]!
+      const searchRes = await discoverExternalThreadsUrls(kw, ownUsername)
+      if (!searchRes.ok) {
+        if (searchRes.error) searchReasons.push(searchRes.error)
+        continue
       }
+      for (const url of searchRes.urls) {
+        try {
+          const info = await resolveThreadsPost(url)
+          if (info.mediaId && info.text && info.author.toLowerCase() !== ownUsername) {
+            if (!dryRun && (await hasSocialPosted('threads', `topic-reply:${info.mediaId}`))) continue
+            candidates.push({
+              id: info.mediaId,
+              username: info.author || 'threads_user',
+              text: info.text,
+              permalink: info.permalink,
+              postType: 'reply',
+            })
+            if (candidates.length >= 3) break
+          }
+        } catch {
+          // 單篇解析失敗則換下一篇
+        }
+      }
+      if (candidates.length > 0) break
+      searchReasons.push(`搜尋（${searchRes.provider ?? 'Bright Data'}）「${kw}」找到 ${searchRes.urls.length} 筆網址，但皆無法解析出可用 mediaId 或已回覆過`)
     }
+
     if (candidates.length === 0) {
-      return { ok: false, error: `搜尋（${searchRes.provider ?? 'Bright Data'}）「${kw}」未取得可解析出 mediaId 的他人貼文`, results: [] }
+      return { ok: false, error: searchReasons.join('；') || '未取得任何可用外部貼文', results: [] }
     }
   }
 
