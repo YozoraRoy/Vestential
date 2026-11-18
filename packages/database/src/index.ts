@@ -3,6 +3,8 @@ export {
   dbQueryAll, dbQueryFirst, dbExecute, dbExecRaw,
   saveAnalysisRecord, getAnalysisRecords, getAnalysisRecordById,
   savePortfolioRecord, getPortfolioRecords, getPortfolioRecordsByGuest, deletePortfolioRecord, updatePortfolioRecord,
+  updatePortfolioRecordByOwner, deletePortfolioRecordByOwner,
+  insertPortfolioTransaction, getPortfolioTransactions, getPortfolioTransactionsByGuest,
   updatePortfolioSyncedPrice, listPortfolioRecordsForSync,
   saveTradeJournalEntry, listTradeJournalEntries, getTradeJournalEntryById,
   updateTradeJournalEntry, deleteTradeJournalEntry,
@@ -78,6 +80,7 @@ export type { AnalysisRecord, AnalysisJobRow, AnalysisJobInput, AnalysisJobUpdat
   TwseDividendRow, TwseDividendInput, ArenaDividendCreditRow, ArenaDividendCreditInput, DcaPlanRow, DcaPlanInput,
   MarketLevelRow, MarketLevelStatus, MarketLevelInput,
   DailyMoverRow, DailyMoverInput,
+  PortfolioTransactionInput, PortfolioTransactionRow, PortfolioOwnerFilter,
   ApiErrorCategory, ApiErrorActorType, ApiErrorLogInput, ApiErrorLogRow, ApiErrorSummary } from './db.js'
 export { exportSyncData, mergeExports, applySyncMerge, applySyncImport, SYNC_TABLES } from './sync.js'
 export type { SyncExport, SyncRow, MergedExport, SyncTableName, TaggedRow, RowSource } from './sync.js'

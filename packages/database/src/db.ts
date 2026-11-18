@@ -209,6 +209,27 @@ function getSqliteDb(): Database.Database | null {
         created_at TEXT DEFAULT (datetime('now', 'localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_portfolio_user ON portfolio_records(user_id, id);
+      CREATE TABLE IF NOT EXISTS portfolio_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL DEFAULT 0,
+        guest_uid TEXT,
+        market TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        symbol_name TEXT,
+        side TEXT NOT NULL,
+        shares REAL NOT NULL,
+        price REAL NOT NULL,
+        fee REAL NOT NULL DEFAULT 0,
+        tax REAL NOT NULL DEFAULT 0,
+        total_amount REAL NOT NULL,
+        realized_pnl REAL,
+        realized_pnl_pct REAL,
+        trade_date TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT DEFAULT (datetime('now', 'localtime'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_ptx_user ON portfolio_transactions(user_id, id);
+      CREATE INDEX IF NOT EXISTS idx_ptx_guest ON portfolio_transactions(guest_uid, id);
       CREATE TABLE IF NOT EXISTS claim_codes (
         code_hash TEXT PRIMARY KEY,
         guest_uid TEXT NOT NULL,
@@ -950,6 +971,30 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         ALTER TABLE portfolio_records ADD price_synced_at DATETIME;
       IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_portfolio_guest')
         CREATE INDEX idx_portfolio_guest ON portfolio_records(guest_uid, id);
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'portfolio_transactions')
+      BEGIN
+        CREATE TABLE portfolio_transactions (
+          id                INT IDENTITY(1,1) PRIMARY KEY,
+          user_id           INT NOT NULL DEFAULT 0,
+          guest_uid         NVARCHAR(64),
+          market            NVARCHAR(10) NOT NULL,
+          symbol            NVARCHAR(30) NOT NULL,
+          symbol_name       NVARCHAR(255),
+          side              NVARCHAR(10) NOT NULL,
+          shares            FLOAT NOT NULL,
+          price             FLOAT NOT NULL,
+          fee               FLOAT NOT NULL DEFAULT 0,
+          tax               FLOAT NOT NULL DEFAULT 0,
+          total_amount      FLOAT NOT NULL,
+          realized_pnl      FLOAT,
+          realized_pnl_pct  FLOAT,
+          trade_date        NVARCHAR(20) NOT NULL,
+          note              NVARCHAR(500),
+          created_at        DATETIME DEFAULT GETDATE()
+        );
+        CREATE INDEX idx_ptx_user ON portfolio_transactions(user_id, id);
+        CREATE INDEX idx_ptx_guest ON portfolio_transactions(guest_uid, id);
+      END
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'claim_codes')
       BEGIN
         CREATE TABLE claim_codes (
@@ -3489,6 +3534,347 @@ export async function updatePortfolioRecord(
   row.yield_on_cost = patch.yieldOnCost
   row.strategy = strategyStr
   return true
+}
+
+export interface PortfolioOwnerFilter {
+  userId?: number | null
+  guestUid?: string | null
+}
+
+/** 依 userId 或 guestUid 安全更新持股紀錄（支援會員與訪客）。 */
+export async function updatePortfolioRecordByOwner(
+  id: number,
+  owner: PortfolioOwnerFilter,
+  patch: PortfolioRecordUpdate,
+): Promise<boolean> {
+  if (owner.userId) {
+    return updatePortfolioRecord(id, owner.userId, patch)
+  }
+  const guestUid = owner.guestUid?.trim()
+  if (!guestUid) return false
+  const symbolName = patch.symbolName ?? null
+  const strategyStr = patch.strategy ?? null
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return false
+    try {
+      const result = await pool.request()
+        .input('id', sql.Int, id)
+        .input('guestUid', sql.NVarChar(64), guestUid)
+        .input('market', sql.NVarChar(10), patch.market)
+        .input('symbol', sql.NVarChar(30), patch.symbol)
+        .input('symbolName', sql.NVarChar(255), symbolName)
+        .input('shares', sql.Float, patch.shares)
+        .input('cost', sql.Float, patch.cost)
+        .input('currentPrice', sql.Float, patch.currentPrice)
+        .input('dividend', sql.Float, patch.dividend)
+        .input('costBasis', sql.Float, patch.costBasis)
+        .input('marketValue', sql.Float, patch.marketValue)
+        .input('pnl', sql.Float, patch.unrealizedPnl)
+        .input('pnlPct', sql.Float, patch.unrealizedPnlPct)
+        .input('totalReturn', sql.Float, patch.totalReturn)
+        .input('totalReturnPct', sql.Float, patch.totalReturnPct)
+        .input('yieldOnCost', sql.Float, patch.yieldOnCost)
+        .input('strategy', sql.NVarChar(50), strategyStr)
+        .query(`
+          UPDATE portfolio_records SET
+            market = @market, symbol = @symbol, symbol_name = @symbolName,
+            shares = @shares, cost = @cost, current_price = @currentPrice, dividend = @dividend,
+            cost_basis = @costBasis, market_value = @marketValue,
+            unrealized_pnl = @pnl, unrealized_pnl_pct = @pnlPct,
+            total_return = @totalReturn, total_return_pct = @totalReturnPct,
+            yield_on_cost = @yieldOnCost, strategy = @strategy
+          WHERE id = @id AND guest_uid = @guestUid
+        `)
+      return (result.rowsAffected[0] ?? 0) > 0
+    } catch (e) {
+      console.error('[AzureSQL] updatePortfolioRecordByOwner error:', e)
+      return false
+    }
+  }
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      const info = db.prepare(`
+        UPDATE portfolio_records SET
+          market = ?, symbol = ?, symbol_name = ?,
+          shares = ?, cost = ?, current_price = ?, dividend = ?,
+          cost_basis = ?, market_value = ?,
+          unrealized_pnl = ?, unrealized_pnl_pct = ?,
+          total_return = ?, total_return_pct = ?,
+          yield_on_cost = ?, strategy = ?
+        WHERE id = ? AND guest_uid = ?
+      `).run(
+        patch.market, patch.symbol, symbolName,
+        patch.shares, patch.cost, patch.currentPrice, patch.dividend,
+        patch.costBasis, patch.marketValue,
+        patch.unrealizedPnl, patch.unrealizedPnlPct,
+        patch.totalReturn, patch.totalReturnPct,
+        patch.yieldOnCost, strategyStr,
+        id, guestUid,
+      )
+      if (info.changes > 0) return true
+    } catch (e) {
+      console.error('[SQLite] updatePortfolioRecordByOwner error:', e)
+      return false
+    }
+  }
+  const row = portfolioMemoryStore.find(r => r.id === id && r.guest_uid === guestUid)
+  if (!row) return false
+  row.market = patch.market
+  row.symbol = patch.symbol
+  row.symbol_name = symbolName
+  row.shares = patch.shares
+  row.cost = patch.cost
+  row.current_price = patch.currentPrice
+  row.dividend = patch.dividend
+  row.cost_basis = patch.costBasis
+  row.market_value = patch.marketValue
+  row.unrealized_pnl = patch.unrealizedPnl
+  row.unrealized_pnl_pct = patch.unrealizedPnlPct
+  row.total_return = patch.totalReturn
+  row.total_return_pct = patch.totalReturnPct
+  row.yield_on_cost = patch.yieldOnCost
+  row.strategy = strategyStr
+  return true
+}
+
+/** 依 userId 或 guestUid 安全刪除持股紀錄（清倉移除）。 */
+export async function deletePortfolioRecordByOwner(
+  id: number,
+  owner: PortfolioOwnerFilter,
+): Promise<boolean> {
+  if (owner.userId) {
+    return deletePortfolioRecord(id, owner.userId)
+  }
+  const guestUid = owner.guestUid?.trim()
+  if (!guestUid) return false
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return false
+    try {
+      const result = await pool.request()
+        .input('id', sql.Int, id)
+        .input('guestUid', sql.NVarChar(64), guestUid)
+        .query('DELETE FROM portfolio_records WHERE id = @id AND guest_uid = @guestUid')
+      return (result.rowsAffected[0] ?? 0) > 0
+    } catch (e) {
+      console.error('[AzureSQL] deletePortfolioRecordByOwner error:', e)
+      return false
+    }
+  }
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      const info = db.prepare('DELETE FROM portfolio_records WHERE id = ? AND guest_uid = ?').run(id, guestUid)
+      if (info.changes > 0) return true
+    } catch (e) {
+      console.error('[SQLite] deletePortfolioRecordByOwner error:', e)
+      return false
+    }
+  }
+  const idx = portfolioMemoryStore.findIndex(r => r.id === id && r.guest_uid === guestUid)
+  if (idx >= 0) {
+    portfolioMemoryStore.splice(idx, 1)
+    return true
+  }
+  return false
+}
+
+export interface PortfolioTransactionInput {
+  userId?: number
+  guestUid?: string | null
+  market: string
+  symbol: string
+  symbolName?: string | null
+  side: 'buy' | 'sell'
+  shares: number
+  price: number
+  fee: number
+  tax: number
+  totalAmount: number
+  realizedPnl?: number | null
+  realizedPnlPct?: number | null
+  tradeDate: string
+  note?: string | null
+}
+
+export interface PortfolioTransactionRow {
+  id: number
+  user_id: number
+  guest_uid: string | null
+  market: string
+  symbol: string
+  symbol_name: string | null
+  side: 'buy' | 'sell'
+  shares: number
+  price: number
+  fee: number
+  tax: number
+  total_amount: number
+  realized_pnl: number | null
+  realized_pnl_pct: number | null
+  trade_date: string
+  note: string | null
+  created_at: string
+}
+
+const portfolioTransactionsMemoryStore: PortfolioTransactionRow[] = []
+let portfolioTransactionsMemorySeq = 1
+
+export async function insertPortfolioTransaction(tx: PortfolioTransactionInput): Promise<number> {
+  const userId = tx.userId ?? 0
+  const guestUid = tx.guestUid ?? null
+  const symbolName = tx.symbolName ?? null
+  const realizedPnl = tx.realizedPnl ?? null
+  const realizedPnlPct = tx.realizedPnlPct ?? null
+  const note = tx.note ?? null
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('userId', sql.Int, userId)
+          .input('guestUid', sql.NVarChar(64), guestUid)
+          .input('market', sql.NVarChar(10), tx.market)
+          .input('symbol', sql.NVarChar(30), tx.symbol)
+          .input('symbolName', sql.NVarChar(255), symbolName)
+          .input('side', sql.NVarChar(10), tx.side)
+          .input('shares', sql.Float, tx.shares)
+          .input('price', sql.Float, tx.price)
+          .input('fee', sql.Float, tx.fee)
+          .input('tax', sql.Float, tx.tax)
+          .input('totalAmount', sql.Float, tx.totalAmount)
+          .input('realizedPnl', sql.Float, realizedPnl)
+          .input('realizedPnlPct', sql.Float, realizedPnlPct)
+          .input('tradeDate', sql.NVarChar(20), tx.tradeDate)
+          .input('note', sql.NVarChar(500), note)
+          .query(`
+            INSERT INTO portfolio_transactions (
+              user_id, guest_uid, market, symbol, symbol_name, side,
+              shares, price, fee, tax, total_amount, realized_pnl, realized_pnl_pct, trade_date, note
+            )
+            OUTPUT INSERTED.id
+            VALUES (
+              @userId, @guestUid, @market, @symbol, @symbolName, @side,
+              @shares, @price, @fee, @tax, @totalAmount, @realizedPnl, @realizedPnlPct, @tradeDate, @note
+            )
+          `)
+        return Number(result.recordset?.[0]?.id ?? 0)
+      } catch (e) {
+        console.error('[AzureSQL] insertPortfolioTransaction error:', e)
+        throw e
+      }
+    }
+  }
+
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      const info = db.prepare(`
+        INSERT INTO portfolio_transactions (
+          user_id, guest_uid, market, symbol, symbol_name, side,
+          shares, price, fee, tax, total_amount, realized_pnl, realized_pnl_pct, trade_date, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        userId, guestUid, tx.market, tx.symbol, symbolName, tx.side,
+        tx.shares, tx.price, tx.fee, tx.tax, tx.totalAmount, realizedPnl, realizedPnlPct, tx.tradeDate, note,
+      )
+      return Number(info.lastInsertRowid)
+    } catch (e) {
+      console.error('[SQLite] insertPortfolioTransaction error:', e)
+      throw e
+    }
+  }
+
+  const id = portfolioTransactionsMemorySeq++
+  portfolioTransactionsMemoryStore.unshift({
+    id,
+    user_id: userId,
+    guest_uid: guestUid,
+    market: tx.market,
+    symbol: tx.symbol,
+    symbol_name: symbolName,
+    side: tx.side,
+    shares: tx.shares,
+    price: tx.price,
+    fee: tx.fee,
+    tax: tx.tax,
+    total_amount: tx.totalAmount,
+    realized_pnl: realizedPnl,
+    realized_pnl_pct: realizedPnlPct,
+    trade_date: tx.tradeDate,
+    note,
+    created_at: new Date().toISOString(),
+  })
+  return id
+}
+
+export async function getPortfolioTransactions(userId: number, limit = 100): Promise<PortfolioTransactionRow[]> {
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('userId', sql.Int, userId)
+          .input('limit', sql.Int, limit)
+          .query(`
+            SELECT TOP (@limit) *
+            FROM portfolio_transactions
+            WHERE user_id = @userId
+            ORDER BY trade_date DESC, id DESC
+          `)
+        return result.recordset as PortfolioTransactionRow[]
+      } catch (e) {
+        console.error('[AzureSQL] getPortfolioTransactions error:', e)
+      }
+    }
+  }
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      return db.prepare(
+        'SELECT * FROM portfolio_transactions WHERE user_id = ? ORDER BY trade_date DESC, id DESC LIMIT ?'
+      ).all(userId, limit) as PortfolioTransactionRow[]
+    } catch (e) {
+      console.error('[SQLite] getPortfolioTransactions error:', e)
+    }
+  }
+  return portfolioTransactionsMemoryStore.filter(r => r.user_id === userId).slice(0, limit)
+}
+
+export async function getPortfolioTransactionsByGuest(guestUid: string, limit = 100): Promise<PortfolioTransactionRow[]> {
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      try {
+        const result = await pool.request()
+          .input('guestUid', sql.NVarChar(64), guestUid)
+          .input('limit', sql.Int, limit)
+          .query(`
+            SELECT TOP (@limit) *
+            FROM portfolio_transactions
+            WHERE guest_uid = @guestUid AND user_id = 0
+            ORDER BY trade_date DESC, id DESC
+          `)
+        return result.recordset as PortfolioTransactionRow[]
+      } catch (e) {
+        console.error('[AzureSQL] getPortfolioTransactionsByGuest error:', e)
+      }
+    }
+  }
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      return db.prepare(
+        'SELECT * FROM portfolio_transactions WHERE guest_uid = ? AND user_id = 0 ORDER BY trade_date DESC, id DESC LIMIT ?'
+      ).all(guestUid, limit) as PortfolioTransactionRow[]
+    } catch (e) {
+      console.error('[SQLite] getPortfolioTransactionsByGuest error:', e)
+    }
+  }
+  return portfolioTransactionsMemoryStore.filter(r => r.guest_uid === guestUid && r.user_id === 0).slice(0, limit)
 }
 
 // ─── Portfolio 現價同步（Issue #33）───────────────────────────────────

@@ -3,7 +3,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { TrendingUp, Zap, RefreshCw, Sparkles, History, ChevronDown, ChevronUp, Upload, Trash2, CheckCircle2, Plus, X, Search, Pencil, Target } from 'lucide-react'
+import { TrendingUp, Zap, RefreshCw, Sparkles, History, ChevronDown, ChevronUp, Upload, Trash2, CheckCircle2, Plus, X, Search, Pencil, Target, ArrowDownUp } from 'lucide-react'
+import {
+  PortfolioTradeModal,
+  PortfolioTransactionsTab,
+  type PortfolioTransactionItem,
+  type PortfolioTransactionsSummary,
+  type TradeModalInitialPreset,
+} from '@/components/portfolio-trade-panel'
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
@@ -211,7 +218,18 @@ export default function PortfolioPage() {
   const router = useRouter()
   const { dict, locale } = useI18n()
   const ui = dict.portfolio
-  const [portfolioTab, setPortfolioTab] = useState<'overview' | 'dividend-calendar' | 'radar'>('overview')
+  const [portfolioTab, setPortfolioTab] = useState<'overview' | 'dividend-calendar' | 'radar' | 'transactions'>('overview')
+  const [tradeModalOpen, setTradeModalOpen] = useState(false)
+  const [tradePreset, setTradePreset] = useState<TradeModalInitialPreset | null>(null)
+  const [transactions, setTransactions] = useState<PortfolioTransactionItem[]>([])
+  const [txSummary, setTxSummary] = useState<PortfolioTransactionsSummary>({
+    totalRealizedPnl: 0,
+    totalBuyAmount: 0,
+    totalSellAmount: 0,
+    buyCount: 0,
+    sellCount: 0,
+  })
+  const [txLoading, setTxLoading] = useState(false)
   const STRATEGIES = useMemo(() => buildStrategies(ui), [ui])
   const typo = useTableTypography()
   // #23：safe-parse 友善文案（i18n 三語），傳給 parseJsonSafe。
@@ -241,6 +259,30 @@ export default function PortfolioPage() {
   const [feeDiscount, setFeeDiscount] = useState<number>(DEFAULT_FEE_DISCOUNT)
   const [progress, setProgress] = useState<{ step: string; detail: string }[]>([])
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setTxLoading(true)
+    fetch('/api/portfolio/transactions')
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d?.success) return
+        if (Array.isArray(d.transactions)) setTransactions(d.transactions)
+        if (d.summary) setTxSummary(d.summary)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setTxLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const openTradeModal = (preset?: TradeModalInitialPreset) => {
+    setTradePreset(preset ?? null)
+    setTradeModalOpen(true)
+  }
 
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [expandedId, setExpandedId] = useState<number | null>(null)
@@ -1345,15 +1387,27 @@ export default function PortfolioPage() {
             <p className="text-sm text-[var(--text-secondary)]">{showAdd ? ui.headerSubtitleAdd : ui.headerSubtitleView}</p>
           </div>
         </div>
-        {!showAdd && portfolioTab === 'overview' && (
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition"
-          >
-            <Plus className="w-4 h-4" />
-            {ui.headerAdd}
-          </button>
+        {!showAdd && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openTradeModal()}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-emerald-500/40 bg-emerald-500/15 text-emerald-300 text-sm font-semibold hover:bg-emerald-500/25 transition"
+            >
+              <ArrowDownUp className="w-4 h-4" />
+              {locale === 'en' ? 'Buy / Sell Trade' : locale === 'ja' ? '売買・自動精算' : '買入／賣出結算'}
+            </button>
+            {portfolioTab === 'overview' && (
+              <button
+                type="button"
+                onClick={() => setShowAdd(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition"
+              >
+                <Plus className="w-4 h-4" />
+                {ui.headerAdd}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -1392,6 +1446,17 @@ export default function PortfolioPage() {
         >
           {locale === 'en' ? 'Holdings Radar' : locale === 'ja' ? '銘柄レーダー' : '穿透雷達'}
         </button>
+        <button
+          type="button"
+          onClick={() => setPortfolioTab('transactions')}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            portfolioTab === 'transactions'
+              ? 'bg-[var(--accent)] text-white'
+              : 'text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]'
+          }`}
+        >
+          {locale === 'en' ? 'Trade Ledger' : locale === 'ja' ? '取引精算履歴' : '交易結算紀錄'}
+        </button>
       </div>
 
       {portfolioTab === 'dividend-calendar' ? (
@@ -1428,6 +1493,14 @@ export default function PortfolioPage() {
                 ? 'Add at least one Taiwan ETF holding in Holdings Overview to inspect look-through stock exposure and overlaps.'
                 : '於「持股總覽」新增任一台股 ETF 持股後，即可於此檢視成分股真實曝險比例與重疊度分析。',
           }}
+        />
+      ) : portfolioTab === 'transactions' ? (
+        <PortfolioTransactionsTab
+          transactions={transactions}
+          summary={txSummary}
+          loading={txLoading}
+          locale={locale}
+          onOpenTradeModal={() => openTradeModal()}
         />
       ) : (
         <>
@@ -2427,29 +2500,47 @@ export default function PortfolioPage() {
                     <Fragment key={item.id}>
                       <tr onClick={() => expandHistory(item)} className="border-b border-white/5 hover:bg-white/5 transition cursor-pointer">
                         <td className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap">
-                          {authMode === 'user' && (
-                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={() => openEditRecord(item)}
-                                title={ui.btnEditRecord}
-                                aria-label={ui.btnEditRecord}
-                                className="p-1.5 rounded-lg bg-white/5 text-[var(--accent)] hover:bg-white/10 transition"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRecord(item)}
-                                disabled={deletingId === item.id}
-                                title={ui.btnDeleteRecord}
-                                aria-label={ui.btnDeleteRecord}
-                                className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50 disabled:cursor-wait"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openTradeModal({
+                                  market: item.market,
+                                  symbol: item.symbol,
+                                  symbolName: item.symbol_name ?? undefined,
+                                  side: 'buy',
+                                  currentPrice: item.current_price,
+                                })
+                              }
+                              title={locale === 'en' ? 'Buy / Sell' : '買／賣結算'}
+                              className="px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-[11px] font-medium transition"
+                            >
+                              {locale === 'en' ? 'Trade' : '買/賣'}
+                            </button>
+                            {authMode === 'user' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditRecord(item)}
+                                  title={ui.btnEditRecord}
+                                  aria-label={ui.btnEditRecord}
+                                  className="p-1.5 rounded-lg bg-white/5 text-[var(--accent)] hover:bg-white/10 transition"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRecord(item)}
+                                  disabled={deletingId === item.id}
+                                  title={ui.btnDeleteRecord}
+                                  aria-label={ui.btnDeleteRecord}
+                                  className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50 disabled:cursor-wait"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                         {visibleColumns.rating && (
                           <td className="px-3 py-2 whitespace-nowrap">
@@ -2795,6 +2886,21 @@ export default function PortfolioPage() {
       )}
         </>
       )}
+
+      <PortfolioTradeModal
+        open={tradeModalOpen}
+        onClose={() => setTradeModalOpen(false)}
+        locale={locale}
+        feeDiscount={feeDiscount}
+        existingHoldings={history}
+        initialPreset={tradePreset}
+        onSettled={({ records, transactions: nextTxs, summary: nextSum, message }) => {
+          setHistory(records)
+          setTransactions(nextTxs)
+          setTxSummary(nextSum)
+          setNotice(message)
+        }}
+      />
     </div>
   )
 }
