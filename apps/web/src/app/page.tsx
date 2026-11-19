@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { getDict, getLocale } from '@/i18n/server'
+import { getCurrentUserFromCookies } from '@/lib/auth'
 import { localizePath } from '@/i18n/paths'
 import { buildAlternates } from '@/i18n/metadata'
 import type { Locale } from '@/i18n/config'
@@ -353,6 +354,8 @@ const HOME_COPY: Record<
 export default async function Home() {
   const dict = await getDict()
   const locale = await getLocale()
+  const currentUser = await getCurrentUserFromCookies().catch(() => null)
+  const isLoggedIn = Boolean(currentUser)
   const t = HOME_COPY[locale] ?? HOME_COPY['zh-TW']
 
   // 並行讀取首頁第 2、3、4 層所需的真實動態數據（含安全 fallback）
@@ -458,7 +461,7 @@ export default async function Home() {
           </p>
 
           <div className="pt-1">
-            <HomeHeroSearch locale={locale} />
+            <HomeHeroSearch locale={locale} isLoggedIn={isLoggedIn} />
           </div>
         </div>
 

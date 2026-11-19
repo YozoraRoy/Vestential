@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { BarChart3, Brain, Search as SearchIcon, Clock, History, FileText, ChevronRight, Target, RefreshCw, Trash2, Zap, AlertTriangle } from 'lucide-react'
+import { BarChart3, Brain, Search as SearchIcon, Clock, History, FileText, ChevronRight, Target, RefreshCw, Trash2, Zap, AlertTriangle, Lock } from 'lucide-react'
 import { AGENT_KEYS, type AnalysisLanguage } from '@stock/core'
 import { SearchBar } from '@/components/search-bar'
 import { AnalysisCard } from '@/components/analysis-card'
@@ -36,7 +36,7 @@ interface AnalysisRecord {
 
 function AnalyzeContent() {
   const searchParams = useSearchParams()
-  const symbolParam = searchParams.get('symbol') || searchParams.get('stock_id') || ''
+  const symbolParam = searchParams.get('symbol') || searchParams.get('ticker') || searchParams.get('stock_id') || ''
   const { locale: language, setLocale: setLanguage, dict } = useI18n()
   const ui = dict.analyzePage
 
@@ -520,6 +520,48 @@ function AnalyzeContent() {
     <div className="max-w-6xl mx-auto px-4 py-8">
 
       <WorkspaceBackLink className="mb-4" />
+
+      {!isLoggedIn && (
+        <div className="mb-6 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0 mt-0.5">
+              <Lock className="w-4 h-4" />
+            </span>
+            <div>
+              <div className="text-sm font-bold text-amber-200">
+                {language === 'en'
+                  ? 'Member Sign-In Required for Live 12-AI Analysis'
+                  : language === 'ja'
+                    ? '12 AI リアルタイム分析の起動にはログインが必要です'
+                    : '🔒 啟動 12 AI 即時個股分析需先登入會員'}
+              </div>
+              <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
+                {language === 'en'
+                  ? 'Sign in to run new multi-agent analyses (daily free quota included). You can still browse published historical reports below.'
+                  : language === 'ja'
+                    ? 'ログインすると毎日の無料枠で新規 AI 分析を実行できます。下の公開済み過去レポートはログイン不要で閲覧できます。'
+                    : '登入即可享有每日免費 AI 分析額度並立即啟動分析；下方既有的公開歷史分析報告仍可免費瀏覽預覽。'}
+              </p>
+            </div>
+          </div>
+          <a
+            href={localizePath(
+              language,
+              `/login?redirect=${encodeURIComponent(
+                symbolParam ? `/analyze?symbol=${encodeURIComponent(symbolParam)}` : '/analyze',
+              )}`,
+            )}
+            className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[var(--accent)] hover:opacity-90 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 transition"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            {language === 'en'
+              ? 'Sign In to Analyze'
+              : language === 'ja'
+                ? 'ログインして分析する'
+                : '立即登入解鎖分析'}
+          </a>
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-4 mb-8">
         <div className="bg-[var(--bg-card)] rounded-xl p-4 border border-white/5">

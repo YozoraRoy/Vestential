@@ -354,7 +354,12 @@ export default function PortfolioRiskPanel({ ui, isLoggedIn, summary, summarySta
               </button>
             </div>
           ) : (
-            <span className="text-[11px] text-[var(--text-secondary)]">{ui.riskAiLoginRequired}</span>
+            <a
+              href="/login?redirect=/portfolio"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/25 transition"
+            >
+              🔒 {ui.riskAiLoginRequired} →
+            </a>
           )}
         </div>
         <p className="text-[10px] text-[var(--text-secondary)] mb-2">{ui.riskAiQuota}</p>

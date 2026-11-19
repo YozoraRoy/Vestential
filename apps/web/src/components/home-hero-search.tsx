@@ -13,6 +13,8 @@ const SEARCH_COPY: Record<
   {
     placeholder: string
     submitBtn: string
+    submitBtnLocked: string
+    loginHint: string
     searching: string
     noMatch: string
     analyzeTag: string
@@ -25,6 +27,8 @@ const SEARCH_COPY: Record<
   'zh-TW': {
     placeholder: '輸入台股代號或名稱（如 2330、0050），啟動 12 個 AI 智能體分析…',
     submitBtn: '立即分析',
+    submitBtnLocked: '🔒 登入分析',
+    loginHint: '🔒 啟動 12 AI 即時個股分析需登入會員（支援免費每日額度）',
     searching: '搜尋台股標的中…',
     noMatch: '按 Enter 直接分析此代號',
     analyzeTag: '啟動 12 AI 分析 →',
@@ -36,6 +40,8 @@ const SEARCH_COPY: Record<
   en: {
     placeholder: 'Enter TWSE ticker or name (e.g. 2330, 0050) to launch 12-Agent AI Analysis…',
     submitBtn: 'Analyze',
+    submitBtnLocked: '🔒 Sign In',
+    loginHint: '🔒 Sign in required to run live 12-AI analysis (daily free quota)',
     searching: 'Searching TWSE symbols…',
     noMatch: 'Press Enter to analyze this ticker',
     analyzeTag: 'Run 12-AI Analysis →',
@@ -47,6 +53,8 @@ const SEARCH_COPY: Record<
   ja: {
     placeholder: '台湾株コードまたは銘柄名（例：2330、0050）を入力して 12 AI エージェント分析を起動…',
     submitBtn: 'AI 分析',
+    submitBtnLocked: '🔒 ログイン分析',
+    loginHint: '🔒 12 AI リアルタイム分析の起動にはログインが必要です',
     searching: '銘柄を検索中…',
     noMatch: 'Enterキーでこの銘柄を分析',
     analyzeTag: '12 AI 分析を起動 →',
@@ -57,7 +65,7 @@ const SEARCH_COPY: Record<
   },
 }
 
-export function HomeHeroSearch({ locale }: { locale: Locale }) {
+export function HomeHeroSearch({ locale, isLoggedIn = false }: { locale: Locale; isLoggedIn?: boolean }) {
   const router = useRouter()
   const t = SEARCH_COPY[locale] ?? SEARCH_COPY['zh-TW']
   const [query, setQuery] = useState('')
@@ -104,7 +112,12 @@ export function HomeHeroSearch({ locale }: { locale: Locale }) {
     const clean = rawSymbol.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
     if (!clean) return
     setOpen(false)
-    router.push(localizePath(locale, `/analyze?ticker=${encodeURIComponent(clean)}`))
+    const target = `/analyze?symbol=${encodeURIComponent(clean)}`
+    if (!isLoggedIn) {
+      router.push(localizePath(locale, `/login?redirect=${encodeURIComponent(target)}`))
+      return
+    }
+    router.push(localizePath(locale, target))
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -161,7 +174,7 @@ export function HomeHeroSearch({ locale }: { locale: Locale }) {
             type="submit"
             className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[var(--accent)] hover:opacity-95 text-white font-semibold text-xs md:text-sm px-4 py-2.5 transition shadow-sm cursor-pointer"
           >
-            <span>{t.submitBtn}</span>
+            <span>{isLoggedIn ? t.submitBtn : t.submitBtnLocked}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -212,15 +225,24 @@ export function HomeHeroSearch({ locale }: { locale: Locale }) {
       </form>
 
       {/* 熱門捷徑（Quick Chips） */}
+      {!isLoggedIn && (
+        <p className="mt-2 text-[11px] text-amber-300/90">{t.loginHint}</p>
+      )}
       <div className="mt-3.5 flex flex-wrap items-center gap-2">
         <Link
-          href={localizePath(locale, '/analyze?ticker=2330')}
+          href={localizePath(
+            locale,
+            isLoggedIn ? '/analyze?symbol=2330' : `/login?redirect=${encodeURIComponent('/analyze?symbol=2330')}`,
+          )}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-[var(--text-primary)] transition"
         >
           {t.chip2330}
         </Link>
         <Link
-          href={localizePath(locale, '/analyze?ticker=0050')}
+          href={localizePath(
+            locale,
+            isLoggedIn ? '/analyze?symbol=0050' : `/login?redirect=${encodeURIComponent('/analyze?symbol=0050')}`,
+          )}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-[var(--text-primary)] transition"
         >
           {t.chip0050}

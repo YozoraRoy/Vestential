@@ -29,6 +29,7 @@ import { shouldWarnNhiForHolding } from '@/lib/dividend-calendar'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildHoldingsHash, findRiskSummariesByDate, getTaiwanDateStrClient, pruneOldRiskSummaries, saveRiskSummary } from '@/lib/risk-summary-cache'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { localizePath } from '@/i18n/paths'
 import { parseJsonSafe, parseSseJson } from '@/lib/safe-parse'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
@@ -1690,12 +1691,30 @@ export default function PortfolioPage() {
             </button>
             <button
               type="button"
-              onClick={handleAnalyze}
-              disabled={analyzing || saving || authMode !== 'user'}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+              onClick={() => {
+                if (authMode !== 'user') {
+                  window.location.href = localizePath(locale, '/login?redirect=/portfolio')
+                  return
+                }
+                handleAnalyze()
+              }}
+              disabled={analyzing || saving}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition disabled:opacity-50 ${
+                authMode !== 'user'
+                  ? 'border border-amber-500/40 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25'
+                  : 'bg-[var(--accent)] text-white hover:opacity-90'
+              }`}
             >
               <Sparkles className="w-4 h-4" />
-              {analyzing ? ui.formAiAnalyzing : ui.formAiAnalyze}
+              {authMode !== 'user'
+                ? locale === 'en'
+                  ? '🔒 Sign In for AI Diagnosis'
+                  : locale === 'ja'
+                    ? '🔒 ログインしてAI診断'
+                    : '🔒 登入解鎖 AI 診斷'
+                : analyzing
+                  ? ui.formAiAnalyzing
+                  : ui.formAiAnalyze}
             </button>
           </div>
 
@@ -1811,7 +1830,7 @@ export default function PortfolioPage() {
         </div>
       ) : (
       <>
-      {authMode === 'user' && (
+      {authMode === 'user' ? (
       <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-6">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-medium flex items-center gap-2">
@@ -2092,6 +2111,31 @@ export default function PortfolioPage() {
           </div>
         )}
       </div>
+      ) : (
+        <div className="bg-[var(--bg-card)] rounded-2xl border border-amber-500/35 bg-amber-500/10 p-6 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-bold text-amber-200">
+              {locale === 'en'
+                ? '🔒 Sign In Required for AI Screenshot Recognition'
+                : locale === 'ja'
+                  ? '🔒 スクショ AI 自動認識にはログインが必要です'
+                  : '🔒 券商截圖 AI 自動辨識需先登入會員'}
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] mt-1">
+              {locale === 'en'
+                ? 'Sign in to upload broker screenshots for AI position parsing, or switch to Manual Entry / Trade Ledger for free.'
+                : locale === 'ja'
+                  ? 'ログインすると証券スクショの AI 自動解析が利用できます（手入力・売買精算はログイン不要で利用可能）。'
+                  : '登入即可上傳券商庫存／對帳單截圖讓 AI 自動識別匯入；未登入仍可免費使用「單筆新增」與「買入／賣出結算」。'}
+            </p>
+          </div>
+          <a
+            href={localizePath(locale, '/login?redirect=/portfolio')}
+            className="shrink-0 inline-flex items-center justify-center rounded-xl bg-[var(--accent)] hover:opacity-90 text-white text-xs font-semibold px-4 py-2.5 transition"
+          >
+            {ui.guestLogin}
+          </a>
+        </div>
       )}
       </>
       )}
