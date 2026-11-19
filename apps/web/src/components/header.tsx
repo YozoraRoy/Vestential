@@ -368,10 +368,10 @@ export function Header({ initialUser }: { initialUser: HeaderUser | null }) {
                     <div className="absolute right-0 mt-2 w-56 bg-[var(--bg-card)] border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
                       <div className="px-4 py-3 border-b border-white/5">
                         <div className="text-sm font-medium truncate">
-                          {user.displayName || '未命名使用者'}
+                          {user.displayName || (locale === 'en' ? 'Unnamed User' : locale === 'ja' ? '名称未設定' : '未命名使用者')}
                         </div>
                         <div className="text-xs text-[var(--text-secondary)] truncate mt-0.5">
-                          {user.email || '未綁定 Email'}
+                          {user.email || (locale === 'en' ? 'No Email Linked' : locale === 'ja' ? 'メール未連携' : '未綁定 Email')}
                         </div>
                         {typeof remaining === 'number' && (
                           <div className="flex items-center gap-1 mt-2 text-xs text-[var(--accent)]">
@@ -396,7 +396,7 @@ export function Header({ initialUser }: { initialUser: HeaderUser | null }) {
                           className="flex items-center gap-2 px-4 py-2.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 transition"
                         >
                           <Zap className="w-4 h-4 text-[var(--accent)]" />
-                          後台管理
+                          {locale === 'en' ? 'Admin Console' : locale === 'ja' ? '管理コンソール' : '後台管理'}
                         </Link>
                       )}
                       <button

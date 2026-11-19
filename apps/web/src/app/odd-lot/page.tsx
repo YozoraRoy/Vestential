@@ -9,7 +9,8 @@ import {
   formatTradingDayWithWeekday,
   isCurrentlyHolidayOrWeekend,
 } from '@/utils/taiwan-calendar'
-import { getDict } from '@/i18n/server'
+import { getDict, getLocale } from '@/i18n/server'
+import { localizePath } from '@/i18n/paths'
 
 import SEEDED_ODD_LOTS from '@/data/seeded-odd-lots.json'
 
@@ -157,6 +158,7 @@ export default async function OddLotPage({
   const holidayInfo = isCurrentlyHolidayOrWeekend()
   const formattedLatestDate = formatTradingDayWithWeekday(latestDateStr)
   const dict = await getDict()
+  const locale = await getLocale()
   const d = dict.oddLot
 
   return (
@@ -187,11 +189,17 @@ export default async function OddLotPage({
             </div>
           )}
           <Link
-            href="/gift-map"
+            href={localizePath(locale, '/gift-map')}
             className="bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/50 px-4 py-2 rounded-xl flex items-center gap-2 text-xs text-emerald-300 font-medium transition shadow-sm"
           >
             <Gift className="w-4 h-4 text-emerald-400" />
-            <span>🎁 紀念品攻略地圖</span>
+            <span>
+              {locale === 'en'
+                ? '🎁 Shareholder Gift Map'
+                : locale === 'ja'
+                  ? '🎁 株主優待マップ'
+                  : '🎁 紀念品攻略地圖'}
+            </span>
           </Link>
           <div className="bg-[var(--bg-card)] border border-white/10 px-4 py-2 rounded-xl flex items-center gap-2 text-xs">
             <Gift className="w-4 h-4 text-[var(--accent-green)]" />

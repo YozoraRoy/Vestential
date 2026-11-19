@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { localizePath } from '@/i18n/paths'
 import { searchStocks, StockCandidateList, type StockCandidate } from '@/components/stock-search'
 import { CORE_ETF_UNIVERSE, resolveStockName, getUniverseTier } from '@stock/cycle-entry'
 
@@ -42,7 +43,7 @@ const POPULAR_ETFS = [
 ]
 
 export default function DcaLabPage() {
-  const { dict } = useI18n()
+  const { dict, locale } = useI18n()
   const ui = dict.dcaLab
 
   const [symbol, setSymbol] = useState('0050')
@@ -135,7 +136,7 @@ export default function DcaLabPage() {
       {/* 雙頁模式切換分頁 */}
       <div className="flex items-center gap-3 mb-6 border-b border-white/10 pb-3">
         <Link
-          href="/backtest"
+          href={localizePath(locale, '/backtest')}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 transition"
         >
           {ui.tabSwing}

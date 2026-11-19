@@ -1488,11 +1488,13 @@ export default function PortfolioPage() {
             fromEtf: ui.radarFromEtf,
             overlapTitle: ui.radarOverlapTitle,
             overlapDesc: ui.radarOverlapDesc,
-            emptyTitle: locale === 'en' ? 'No ETF look-through data yet' : '尚無 ETF 穿透曝險資料',
+            emptyTitle: locale === 'en' ? 'No ETF look-through data yet' : locale === 'ja' ? 'ETF 構成銘柄データがまだありません' : '尚無 ETF 穿透曝險資料',
             emptyDesc:
               locale === 'en'
                 ? 'Add at least one Taiwan ETF holding in Holdings Overview to inspect look-through stock exposure and overlaps.'
-                : '於「持股總覽」新增任一台股 ETF 持股後，即可於此檢視成分股真實曝險比例與重疊度分析。',
+                : locale === 'ja'
+                  ? '「保有銘柄一覧」に台湾株ETFを1銘柄以上追加すると、組入銘柄の重複度や実質エクスポージャーを確認できます。'
+                  : '於「持股總覽」新增任一台股 ETF 持股後，即可於此檢視成分股真實曝險比例與重疊度分析。',
           }}
         />
       ) : portfolioTab === 'transactions' ? (
@@ -1518,7 +1520,7 @@ export default function PortfolioPage() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <a
-                href="/login?redirect=/portfolio"
+                href={localizePath(locale, '/login?redirect=/portfolio')}
                 className="px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition"
               >
                 {ui.guestLogin}
@@ -1607,14 +1609,14 @@ export default function PortfolioPage() {
             onClick={() => setAddMode('manual')}
             className={`px-4 py-2 rounded-xl text-xs font-medium transition ${addMode === 'manual' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-white/10 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
           >
-            {locale === 'en' ? 'Manual Entry & AI Trial' : '✍️ 單筆新增／AI 試算'}
+            {locale === 'en' ? 'Manual Entry & AI Trial' : locale === 'ja' ? '✍️ 手入力・AI試算' : '✍️ 單筆新增／AI 試算'}
           </button>
           <button
             type="button"
             onClick={() => setAddMode('ocr')}
             className={`px-4 py-2 rounded-xl text-xs font-medium transition ${addMode === 'ocr' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-white/10 text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
           >
-            {locale === 'en' ? 'Batch Screenshot Import' : '📸 截圖批次匯入'}
+            {locale === 'en' ? 'Batch Screenshot Import' : locale === 'ja' ? '📸 スクショ一括取込' : '📸 截圖批次匯入'}
           </button>
         </div>
       {addMode === 'manual' ? (
@@ -2146,7 +2148,7 @@ export default function PortfolioPage() {
         <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-6 text-center">
           <p className="text-sm text-[var(--text-secondary)] mb-3">{ui.guestAiLoginRequired}</p>
           <a
-            href="/login?redirect=/portfolio"
+            href={localizePath(locale, '/login?redirect=/portfolio')}
             className="inline-flex px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition"
           >
             {ui.guestLogin}
@@ -2411,12 +2413,12 @@ export default function PortfolioPage() {
                 >
                   {reviewing ? ui.btnReviewing : ui.btnReview}
                 </button>
-                <a href="/journal" className="text-xs text-[var(--accent)] hover:underline">{ui.reviewJournalLink}</a>
+                <a href={localizePath(locale, '/journal')} className="text-xs text-[var(--accent)] hover:underline">{ui.reviewJournalLink}</a>
               </div>
             ) : (
               <p className="text-xs text-[var(--text-secondary)]">
                 {ui.guestAiLoginRequired}{' '}
-                <a href="/login?redirect=/portfolio" className="text-[var(--accent)] hover:underline">{ui.guestLogin}</a>
+                <a href={localizePath(locale, '/login?redirect=/portfolio')} className="text-[var(--accent)] hover:underline">{ui.guestLogin}</a>
               </p>
             )}
             {reviewError && <p className="text-sm text-red-400 mt-3">{reviewError}</p>}
@@ -2556,10 +2558,10 @@ export default function PortfolioPage() {
                                   currentPrice: item.current_price,
                                 })
                               }
-                              title={locale === 'en' ? 'Buy / Sell' : '買／賣結算'}
+                              title={locale === 'en' ? 'Buy / Sell' : locale === 'ja' ? '売買・精算' : '買／賣結算'}
                               className="px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-[11px] font-medium transition"
                             >
-                              {locale === 'en' ? 'Trade' : '買/賣'}
+                              {locale === 'en' ? 'Trade' : locale === 'ja' ? '売買' : '買/賣'}
                             </button>
                             {authMode === 'user' && (
                               <>

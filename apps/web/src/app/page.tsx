@@ -109,6 +109,7 @@ const HOME_COPY: Record<
     bentoAPreviewStep2: string
     bentoAPreviewNetPnl: string
     bentoAPreviewTaxNote: string
+    bentoAPreviewRadarNote: string
     bentoACta: string
     bentoBTag: string
     bentoBTitle: string
@@ -177,6 +178,7 @@ const HOME_COPY: Record<
     bentoAPreviewStep2: '⚡ 自動產出稅後損益與風險雷達',
     bentoAPreviewNetPnl: '稅後實拿淨損益 +NT$128,450 (+14.8%)',
     bentoAPreviewTaxNote: '已自動扣除折讓手續費、0.3%/0.1% 證交稅與 54C 二代健保',
+    bentoAPreviewRadarNote: 'ETF 穿透雷達 + 買賣結算',
     bentoACta: '立即體驗截圖記帳 →',
     bentoBTag: '【找標的】多智能體協作',
     bentoBTitle: '12 AI 智能體分析 × AI 投資競技場',
@@ -244,6 +246,7 @@ const HOME_COPY: Record<
     bentoAPreviewStep2: '⚡ Auto Net P&L & Risk Radar',
     bentoAPreviewNetPnl: 'Net After-Tax P&L +NT$128,450 (+14.8%)',
     bentoAPreviewTaxNote: 'Includes fee discounts, 0.3%/0.1% transaction tax & 54C NHI check',
+    bentoAPreviewRadarNote: 'ETF Look-Through + Trade Ledger',
     bentoACta: 'Try Screenshot P&L Now →',
     bentoBTag: '[Find Stocks] Multi-Agent AI',
     bentoBTitle: '12-Agent AI Analysis × AI Trading Arena',
@@ -311,6 +314,7 @@ const HOME_COPY: Record<
     bentoAPreviewStep2: '⚡ 税引後損益とリスクを自動算出',
     bentoAPreviewNetPnl: '税引後純損益 +NT$128,450 (+14.8%)',
     bentoAPreviewTaxNote: '手数料割引・取引税・54C二代健保を自動反映',
+    bentoAPreviewRadarNote: 'ETF 重複レーダー + 売買精算',
     bentoACta: 'スクショ損益管理を試す →',
     bentoBTag: '【銘柄発掘】マルチAI',
     bentoBTitle: '12 AI エージェント分析 × AI 投資アリーナ',
@@ -628,7 +632,7 @@ export default async function Home() {
                   <div className="rounded-lg bg-white/[0.04] border border-white/5 p-2.5 flex flex-col justify-center">
                     <div className="text-[11px] text-[var(--text-secondary)]">0056 · 00878 · 2330</div>
                     <div className="text-xs font-semibold text-[var(--text-primary)] mt-0.5">
-                      ETF 穿透雷達 + 買賣結算
+                      {t.bentoAPreviewRadarNote}
                     </div>
                   </div>
                 </div>

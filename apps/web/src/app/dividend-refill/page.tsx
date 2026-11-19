@@ -16,6 +16,206 @@ import { searchStocks, StockCandidateList, type StockCandidate } from '@/compone
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 import type { FillDaysHistogram } from '@/lib/ex-dividend-engine'
+import { useI18n } from '@/i18n/LanguageProvider'
+import { localizePath } from '@/i18n/paths'
+import type { Locale } from '@/i18n/config'
+
+const REFILL_COPY: Record<
+  Locale,
+  {
+    toCalendar: string
+    title: string
+    subtitle: string
+    placeholder: string
+    ariaSymbol: string
+    submitBtn: string
+    examplesLabel: string
+    loadingMsg: (sym: string) => string
+    periodLabel: (from: string, to: string, count: number) => string
+    yearsIncomplete: (since: string) => string
+    insufficientBanner: (count: number) => string
+    insufficientShort: string
+    statFillRate: string
+    statFillSub: (filled: number, total: number) => string
+    statExpiryRate: string
+    statExpirySub: (matured: number) => string
+    statAvgDays: string
+    daysUnit: string
+    medianLabel: (d: string) => string
+    statMaxDrawdown: string
+    d20Label: (v: string) => string
+    histTitle: string
+    noHistEvents: string
+    timesUnit: string
+    pieTitle: string
+    noData: string
+    pieAria: string
+    filledPctLabel: string
+    filledLegend: (n: number) => string
+    unfilledLegend: (n: number) => string
+    tableTitle: string
+    tableEmpty: string
+    colExDate: string
+    colCashDiv: string
+    colPreClose: string
+    colStatus: string
+    colDays: string
+    colDrawdown: string
+    statusFilled: string
+    statusUnfilled: string
+    statusWatching: string
+    d1: string
+    d2: string
+    d3: string
+    d4Pre: string
+    d4Link: string
+  }
+> = {
+  'zh-TW': {
+    toCalendar: '前往除權息日曆 →',
+    title: '單檔填息回顧器',
+    subtitle: '查詢台股個股或 ETF 歷史除息事件的填息天數分布、到期填息比率與最大貼息幅度（純現金股利）。',
+    placeholder: '輸入台股代號或名稱（例如 0056、2330）',
+    ariaSymbol: '股票代號或名稱',
+    submitBtn: '查詢歷史填息',
+    examplesLabel: '熱門範例：',
+    loadingMsg: (sym) => `正在載入 ${sym} 歷史除息與還原收盤資料…`,
+    periodLabel: (from, to, count) => `資料期間：${from} ~ ${to}（共 ${count} 筆事件）`,
+    yearsIncomplete: (since) => `年份不全（資料起始：${since}）`,
+    insufficientBanner: (count) => `樣本不足（有效除息事件 ${count} 筆，少於 3 筆門檻），為避免誤導，不輸出統計機率與評分，僅列出既有明細供參考。`,
+    insufficientShort: '樣本不足',
+    statFillRate: '填息成功率（40日內）',
+    statFillSub: (filled, total) => `${filled} / ${total} 次達標`,
+    statExpiryRate: '到期填息比率（滿40日）',
+    statExpirySub: (matured) => `滿窗樣本 ${matured} 筆`,
+    statAvgDays: '填息天數（平均 / 中位數）',
+    daysUnit: '天',
+    medianLabel: (d) => `中位數：${d}`,
+    statMaxDrawdown: '最大貼息幅度（滿窗未填）',
+    d20Label: (v) => `D20 填息率：${v}`,
+    histTitle: '填息天數分布直方圖（交易日分箱）',
+    noHistEvents: '尚無歷史除息事件資料',
+    timesUnit: '次',
+    pieTitle: '填息成功 / 未填比例',
+    noData: '尚無資料',
+    pieAria: '填息成功與未填比例圓餅圖',
+    filledPctLabel: '已填息佔比',
+    filledLegend: (n) => `已填息：${n} 筆`,
+    unfilledLegend: (n) => `未填息：${n} 筆`,
+    tableTitle: '歷史除息事件明細',
+    tableEmpty: '查無歷史除息事件（可能為無配息標的或資料期間尚未覆蓋）',
+    colExDate: '除息日',
+    colCashDiv: '現金股利 (元)',
+    colPreClose: '除息前收盤 (還原)',
+    colStatus: '狀態',
+    colDays: '填息天數',
+    colDrawdown: '窗口最大貼息%',
+    statusFilled: '已填息',
+    statusUnfilled: '40日未填',
+    statusWatching: '觀察中',
+    d1: '1. 統計方式：採 Yahoo Finance 還原權值收盤序列（adjclose）與 TWSE 除息快取計算；填息定義＝除息日起 40 個交易日內收盤 ≥ 除息前一日收盤。',
+    d2: '2. 歷史填息統計僅供研究參考，不構成任何投資建議；過去填息表現不代表未來表現。',
+    d3: '3. 資料涵蓋：僅含純現金股利除息事件（不含純除權配股）；若歷史期間不足 5 年或快取缺年，已於上方標註「年份不全」。',
+    d4Pre: '4. 使用本工具即表示同意 ',
+    d4Link: '服務條款與免責聲明',
+  },
+  en: {
+    toCalendar: 'Ex-Dividend Calendar →',
+    title: 'Single-Stock Dividend Fill Analyzer',
+    subtitle: 'Inspect historical days-to-fill distribution, 40-day fill rate, and max drawdown on TWSE cash dividends.',
+    placeholder: 'Enter TWSE ticker or name (e.g. 0056, 2330)',
+    ariaSymbol: 'Ticker or stock name',
+    submitBtn: 'Analyze History',
+    examplesLabel: 'Popular:',
+    loadingMsg: (sym) => `Loading ${sym} historical ex-dividend & adjusted price data…`,
+    periodLabel: (from, to, count) => `Period: ${from} ~ ${to} (${count} events)`,
+    yearsIncomplete: (since) => `Incomplete history (since: ${since})`,
+    insufficientBanner: (count) => `Insufficient sample (${count} events, below 3-event minimum). Statistics are suppressed to prevent misleading rates.`,
+    insufficientShort: 'Low sample',
+    statFillRate: 'Fill Rate (within 40d)',
+    statFillSub: (filled, total) => `${filled} / ${total} filled`,
+    statExpiryRate: 'Matured Fill Rate (40d)',
+    statExpirySub: (matured) => `${matured} matured events`,
+    statAvgDays: 'Days to Fill (Avg / Med)',
+    daysUnit: 'd',
+    medianLabel: (d) => `Median: ${d}`,
+    statMaxDrawdown: 'Max Unfilled Drawdown',
+    d20Label: (v) => `D20 Fill Rate: ${v}`,
+    histTitle: 'Days-to-Fill Histogram (Trading Days)',
+    noHistEvents: 'No historical ex-dividend events found',
+    timesUnit: 'x',
+    pieTitle: 'Filled vs. Unfilled Ratio',
+    noData: 'No data',
+    pieAria: 'Dividend fill ratio chart',
+    filledPctLabel: 'Filled Share',
+    filledLegend: (n) => `Filled: ${n}`,
+    unfilledLegend: (n) => `Unfilled: ${n}`,
+    tableTitle: 'Historical Ex-Dividend Events',
+    tableEmpty: 'No historical ex-dividend events found.',
+    colExDate: 'Ex-Date',
+    colCashDiv: 'Cash Div',
+    colPreClose: 'Pre-Ex Close (Adj)',
+    colStatus: 'Status',
+    colDays: 'Days to Fill',
+    colDrawdown: 'Max Drawdown %',
+    statusFilled: 'Filled',
+    statusUnfilled: '40d Unfilled',
+    statusWatching: 'Watching',
+    d1: '1. Methodology: Uses Yahoo Finance adjusted close series & TWSE dividend cache; filled = close ≥ pre-ex close within 40 trading days.',
+    d2: '2. For historical research only, not investment advice; past fill speed does not predict future results.',
+    d3: '3. Scope: Cash dividend events only (excludes stock dividends).',
+    d4Pre: '4. By using this tool you agree to our ',
+    d4Link: 'Terms & Disclaimer',
+  },
+  ja: {
+    toCalendar: '権利落ちカレンダーへ →',
+    title: '個別銘柄 配当埋め（填息）分析',
+    subtitle: '台湾株の過去の現金配当における配当落ち回復日数分布・40日以内回復率・最大下落幅を確認できます。',
+    placeholder: '銘柄コードまたは名前を入力（例：0056、2330）',
+    ariaSymbol: '銘柄コードまたは名前',
+    submitBtn: '履歴を分析',
+    examplesLabel: '人気例：',
+    loadingMsg: (sym) => `${sym} の過去配当・調整後終値データを読み込み中…`,
+    periodLabel: (from, to, count) => `期間：${from} 〜 ${to}（計 ${count} 件）`,
+    yearsIncomplete: (since) => `年数不足（データ開始：${since}）`,
+    insufficientBanner: (count) => `サンプル不足（有効イベント ${count} 件、最小基準3件未満）のため統計スコアは表示しません。`,
+    insufficientShort: 'サンプル不足',
+    statFillRate: '配当埋め成功率（40日以内）',
+    statFillSub: (filled, total) => `${filled} / ${total} 回達成`,
+    statExpiryRate: '満期回復率（40日経過）',
+    statExpirySub: (matured) => `満期サンプル ${matured} 件`,
+    statAvgDays: '回復日数（平均 / 中央値）',
+    daysUnit: '日',
+    medianLabel: (d) => `中央値：${d}`,
+    statMaxDrawdown: '最大下落幅（未回復）',
+    d20Label: (v) => `20日回復率：${v}`,
+    histTitle: '配当埋め日数ヒストグラム（営業日）',
+    noHistEvents: '過去の配当イベントデータがありません',
+    timesUnit: '回',
+    pieTitle: '回復 / 未回復 比率',
+    noData: 'データなし',
+    pieAria: '配当埋め比率グラフ',
+    filledPctLabel: '回復割合',
+    filledLegend: (n) => `回復済：${n} 件`,
+    unfilledLegend: (n) => `未回復：${n} 件`,
+    tableTitle: '過去配当イベント明細',
+    tableEmpty: '過去の現金配当イベントが見つかりません。',
+    colExDate: '権利落日',
+    colCashDiv: '現金配当',
+    colPreClose: '前日終値(調整済)',
+    colStatus: '状態',
+    colDays: '回復日数',
+    colDrawdown: '最大下落%',
+    statusFilled: '回復済',
+    statusUnfilled: '40日未回復',
+    statusWatching: '観察中',
+    d1: '1. 集計方法：Yahoo Finance 調整後終値と TWSE 配当データを用い、40営業日以内に前日終値以上へ回復した場合を「回復済」とします。',
+    d2: '2. 過去統計の参考ツールであり、投資助言ではありません。',
+    d3: '3. 現金配当イベントのみを対象としています。',
+    d4Pre: '4. ご利用にあたり ',
+    d4Link: '利用規約・免責事項',
+  },
+}
 
 // Issue #136：單檔填息回顧器（/dividend-refill）
 // 文案紅線：僅歷史統計＋免責，禁「預測/保證」字眼。
@@ -227,6 +427,8 @@ export default function DividendRefillPage() {
   // Donut SVG geometry
   const pieRadius = 46
   const pieCircumference = 2 * Math.PI * pieRadius
+  const { locale } = useI18n()
+  const t = REFILL_COPY[locale] ?? REFILL_COPY['zh-TW']
   const filledRatio =
     data && data.histogram.eventCount > 0
       ? data.histogram.filledCount / data.histogram.eventCount
@@ -238,10 +440,10 @@ export default function DividendRefillPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <WorkspaceBackLink />
         <Link
-          href="/ex-dividend"
+          href={localizePath(locale, '/ex-dividend')}
           className="text-xs font-medium text-[var(--accent)] hover:underline"
         >
-          前往除權息日曆 →
+          {t.toCalendar}
         </Link>
       </div>
 
@@ -250,10 +452,10 @@ export default function DividendRefillPage() {
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-[var(--text-primary)] sm:text-2xl">
-              單檔填息回顧器
+              {t.title}
             </h1>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              查詢台股個股或 ETF 歷史除息事件的填息天數分布、到期填息比率與最大貼息幅度（純現金股利）。
+              {t.subtitle}
             </p>
           </div>
           {data && (
@@ -280,8 +482,8 @@ export default function DividendRefillPage() {
                 setQuery(e.target.value)
                 setShowCandidates(true)
               }}
-              placeholder="輸入台股代號或名稱（例如 0056、2330）"
-              aria-label="股票代號或名稱"
+              placeholder={t.placeholder}
+              aria-label={t.ariaSymbol}
               className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] py-2.5 pl-9 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:outline-none"
             />
             {showCandidates && (candidatesLoading || candidates.length > 0) && query.trim().length > 0 && (
@@ -300,12 +502,12 @@ export default function DividendRefillPage() {
             type="submit"
             className="inline-flex items-center justify-center rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
           >
-            查詢歷史填息
+            {t.submitBtn}
           </button>
         </form>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-[var(--text-muted)]">熱門範例：</span>
+          <span className="text-xs text-[var(--text-muted)]">{t.examplesLabel}</span>
           {QUICK_SYMBOLS.map((item) => (
             <button
               key={item.symbol}
@@ -330,7 +532,7 @@ export default function DividendRefillPage() {
           aria-live="polite"
           className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5"
         >
-          <TableSkeleton rows={5} message={`正在載入 ${activeSymbol} 歷史除息與還原收盤資料…`} />
+          <TableSkeleton rows={5} message={t.loadingMsg(activeSymbol)} />
         </section>
       )}
 
@@ -351,13 +553,13 @@ export default function DividendRefillPage() {
                 {data.symbol} {data.name ?? ''}
               </h2>
               <span className="text-xs text-[var(--text-muted)]">
-                資料期間：{data.data_period.from} ~ {data.data_period.to}（共 {data.stats.eventCount} 筆事件）
+                {t.periodLabel(data.data_period.from, data.data_period.to, data.stats.eventCount)}
               </span>
             </div>
             {data.years_incomplete && (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
                 <AlertTriangle className="h-3.5 w-3.5" />
-                年份不全（資料起始：{data.history_since ?? '無'}）
+                {t.yearsIncomplete(data.history_since ?? '—')}
               </span>
             )}
           </div>
@@ -366,53 +568,51 @@ export default function DividendRefillPage() {
           {data.stats.insufficient && (
             <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
               <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>
-                樣本不足（有效除息事件 {data.stats.eventCount} 筆，少於 3 筆門檻），為避免誤導，不輸出統計機率與評分，僅列出既有明細供參考。
-              </span>
+              <span>{t.insufficientBanner(data.stats.eventCount)}</span>
             </div>
           )}
 
           {/* 4 張統計卡 */}
           <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="text-xs text-[var(--text-muted)]">填息成功率（40日內）</div>
+              <div className="text-xs text-[var(--text-muted)]">{t.statFillRate}</div>
               <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
-                {data.stats.insufficient ? '樣本不足' : fmtPct(data.histogram.fillRate)}
+                {data.stats.insufficient ? t.insufficientShort : fmtPct(data.histogram.fillRate)}
               </div>
               <div className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                {data.histogram.filledCount} / {data.histogram.eventCount} 次達標
+                {t.statFillSub(data.histogram.filledCount, data.histogram.eventCount)}
               </div>
             </div>
 
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="text-xs text-[var(--text-muted)]">到期填息比率（滿40日）</div>
+              <div className="text-xs text-[var(--text-muted)]">{t.statExpiryRate}</div>
               <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
-                {data.stats.insufficient ? '樣本不足' : fmtPct(data.stats.expiryFillRate)}
+                {data.stats.insufficient ? t.insufficientShort : fmtPct(data.stats.expiryFillRate)}
               </div>
               <div className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                滿窗樣本 {data.stats.maturedCount} 筆
+                {t.statExpirySub(data.stats.maturedCount)}
               </div>
             </div>
 
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="text-xs text-[var(--text-muted)]">填息天數（平均 / 中位數）</div>
+              <div className="text-xs text-[var(--text-muted)]">{t.statAvgDays}</div>
               <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
-                {data.stats.avgFillDays != null ? `${fmtNum(data.stats.avgFillDays, 1)} 天` : '—'}
+                {data.stats.avgFillDays != null ? `${fmtNum(data.stats.avgFillDays, 1)} ${t.daysUnit}` : '—'}
               </div>
               <div className="mt-0.5 text-xs text-[var(--text-secondary)] tabular-nums">
-                中位數：{data.histogram.medianFillDays != null ? `${data.histogram.medianFillDays} 天` : '—'}
+                {t.medianLabel(data.histogram.medianFillDays != null ? `${data.histogram.medianFillDays} ${t.daysUnit}` : '—')}
               </div>
             </div>
 
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
-              <div className="text-xs text-[var(--text-muted)]">最大貼息幅度（滿窗未填）</div>
+              <div className="text-xs text-[var(--text-muted)]">{t.statMaxDrawdown}</div>
               <div className="mt-1 text-xl font-bold tabular-nums text-rose-400">
                 {data.stats.maxUnfilledDrawdownPct != null
                   ? `${fmtNum(data.stats.maxUnfilledDrawdownPct, 2)}%`
                   : '0.00%'}
               </div>
               <div className="mt-0.5 text-xs text-[var(--text-secondary)]">
-                D20 填息率：{data.stats.insufficient ? '—' : fmtPct(data.stats.fillRateD20)}
+                {t.d20Label(data.stats.insufficient ? '—' : fmtPct(data.stats.fillRateD20))}
               </div>
             </div>
           </section>
@@ -424,13 +624,13 @@ export default function DividendRefillPage() {
               <div className="mb-4 flex items-center gap-2">
                 <BarChart3 className="h-4 w-4 text-[var(--accent)]" />
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                  填息天數分布直方圖（交易日分箱）
+                  {t.histTitle}
                 </h3>
               </div>
 
               {data.histogram.eventCount === 0 ? (
                 <div className="py-10 text-center text-sm text-[var(--text-muted)]">
-                  尚無歷史除息事件資料
+                  {t.noHistEvents}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -449,7 +649,7 @@ export default function DividendRefillPage() {
                           />
                         </div>
                         <span className="text-right tabular-nums text-[var(--text-primary)]">
-                          {bin.count} 次 ({Math.round(bin.ratio * 100)}%)
+                          {bin.count} {t.timesUnit} ({Math.round(bin.ratio * 100)}%)
                         </span>
                       </div>
                     )
@@ -463,17 +663,17 @@ export default function DividendRefillPage() {
               <div className="mb-4 flex items-center gap-2">
                 <PieChartIcon className="h-4 w-4 text-[var(--accent)]" />
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                  填息成功 / 未填比例
+                  {t.pieTitle}
                 </h3>
               </div>
 
               {data.histogram.eventCount === 0 ? (
                 <div className="py-10 text-center text-sm text-[var(--text-muted)]">
-                  尚無資料
+                  {t.noData}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center gap-4">
-                  <svg viewBox="0 0 120 120" className="h-36 w-36" role="img" aria-label="填息成功與未填比例圓餅圖">
+                  <svg viewBox="0 0 120 120" className="h-36 w-36" role="img" aria-label={t.pieAria}>
                     <circle
                       cx="60"
                       cy="60"
@@ -498,7 +698,7 @@ export default function DividendRefillPage() {
                       textAnchor="middle"
                       className="fill-[var(--text-primary)] text-sm font-bold"
                     >
-                      {data.stats.insufficient ? '樣本不足' : `${Math.round(filledRatio * 100)}%`}
+                      {data.stats.insufficient ? t.insufficientShort : `${Math.round(filledRatio * 100)}%`}
                     </text>
                     <text
                       x="60"
@@ -506,7 +706,7 @@ export default function DividendRefillPage() {
                       textAnchor="middle"
                       className="fill-[var(--text-muted)] text-[10px]"
                     >
-                      已填息佔比
+                      {t.filledPctLabel}
                     </text>
                   </svg>
 
@@ -514,13 +714,13 @@ export default function DividendRefillPage() {
                     <div className="flex items-center gap-1.5">
                       <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
                       <span className="text-[var(--text-secondary)]">
-                        已填息：{data.histogram.filledCount} 筆
+                        {t.filledLegend(data.histogram.filledCount)}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <span className="h-2.5 w-2.5 rounded-full bg-rose-500/75" />
                       <span className="text-[var(--text-secondary)]">
-                        未填息：{data.histogram.unfilledCount} 筆
+                        {t.unfilledLegend(data.histogram.unfilledCount)}
                       </span>
                     </div>
                   </div>
@@ -532,26 +732,26 @@ export default function DividendRefillPage() {
           {/* 事件明細表（符合 docs/ui-table-checklist.md） */}
           <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-5">
             <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">
-              歷史除息事件明細
+              {t.tableTitle}
             </h3>
 
             {sortedEvents.length === 0 ? (
               <div className="py-8 text-center text-sm text-[var(--text-muted)]">
-                查無歷史除息事件（可能為無配息標的或資料期間尚未覆蓋）
+                {t.tableEmpty}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className={tableClass(typo, 'w-full min-w-[640px] border-collapse')}>
                   <thead>
                     <tr className={headTrClass(typo, 'border-b border-[var(--border)]')}>
-                      {renderSortTh('exDate', '除息日', 'left')}
-                      {renderSortTh('cashDividend', '現金股利 (元)')}
-                      {renderSortTh('preClose', '除息前收盤 (還原)')}
+                      {renderSortTh('exDate', t.colExDate, 'left')}
+                      {renderSortTh('cashDividend', t.colCashDiv)}
+                      {renderSortTh('preClose', t.colPreClose)}
                       <th className="px-3 py-2.5 text-center font-semibold text-[var(--text-secondary)]">
-                        狀態
+                        {t.colStatus}
                       </th>
-                      {renderSortTh('daysToFill', '填息天數')}
-                      {renderSortTh('maxDrawdownPct', '窗口最大貼息%')}
+                      {renderSortTh('daysToFill', t.colDays)}
+                      {renderSortTh('maxDrawdownPct', t.colDrawdown)}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
@@ -569,20 +769,20 @@ export default function DividendRefillPage() {
                         <td className="px-3 py-2.5 text-center">
                           {ev.filled ? (
                             <span className="inline-flex rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
-                              已填息
+                              {t.statusFilled}
                             </span>
                           ) : ev.matured ? (
                             <span className="inline-flex rounded-full bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-400">
-                              40日未填
+                              {t.statusUnfilled}
                             </span>
                           ) : (
                             <span className="inline-flex rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-400">
-                              觀察中
+                              {t.statusWatching}
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums text-[var(--text-primary)]">
-                          {ev.daysToFill != null ? `${ev.daysToFill} 天` : '—'}
+                          {ev.daysToFill != null ? `${ev.daysToFill} ${t.daysUnit}` : '—'}
                         </td>
                         <td
                           className={`px-3 py-2.5 text-right tabular-nums ${
@@ -601,19 +801,13 @@ export default function DividendRefillPage() {
 
           {/* 免責四件套 */}
           <footer className="rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)]/50 p-4 text-xs leading-relaxed text-[var(--text-muted)]">
-            <p>
-              1. 統計方式：採 Yahoo Finance 還原權值收盤序列（adjclose）與 TWSE 除息快取計算；填息定義＝除息日起 40 個交易日內收盤 ≥ 除息前一日收盤。
-            </p>
+            <p>{t.d1}</p>
+            <p className="mt-1">{t.d2}</p>
+            <p className="mt-1">{t.d3}</p>
             <p className="mt-1">
-              2. 歷史填息統計僅供研究參考，不構成任何投資建議；過去填息表現不代表未來表現。
-            </p>
-            <p className="mt-1">
-              3. 資料涵蓋：僅含純現金股利除息事件（不含純除權配股）；若歷史期間不足 5 年或快取缺年，已於上方標註「年份不全」。
-            </p>
-            <p className="mt-1">
-              4. 使用本工具即表示同意{' '}
-              <Link href="/terms" className="text-[var(--accent)] underline">
-                服務條款與免責聲明
+              {t.d4Pre}
+              <Link href={localizePath(locale, '/terms')} className="text-[var(--accent)] underline">
+                {t.d4Link}
               </Link>
               。
             </p>

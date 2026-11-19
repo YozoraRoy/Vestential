@@ -18,6 +18,7 @@ import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildBacktestInsight } from '@/lib/backtest-interpret'
 import { isCoreEtf } from '@stock/cycle-entry'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { localizePath } from '@/i18n/paths'
 import type { Dict } from '@/i18n/dictionaries'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
@@ -593,7 +594,7 @@ export default function BacktestPage() {
           {dict.dcaLab.tabSwing}
         </div>
         <Link
-          href="/dca-lab"
+          href={localizePath(locale, '/dca-lab')}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/5 transition"
         >
           {dict.dcaLab.tabDca}
