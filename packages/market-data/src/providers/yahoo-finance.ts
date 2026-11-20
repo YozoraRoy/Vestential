@@ -27,6 +27,13 @@ const PROFILE_SEARCH_TIMEOUT_MS = 6000
 /** v7 finance/quote 的 crumb：連同 cookie 一起取得，2 小時 TTL。 */
 const crumbCache = new TTLCache<{ cookies: string; crumb: string }>(2 * 60 * 60 * 1000)
 
+/** Issue #173：基本面資料快取（成功 6 小時、失敗 10 分鐘負面快取，避免多持倉重複打 Yahoo 觸發限流）。 */
+const FUNDAMENTALS_TTL_MS = 6 * 60 * 60 * 1000
+const FUNDAMENTALS_MISS_TTL_MS = 10 * 60 * 1000
+const FUNDAMENTALS_TIMEOUT_MS = 8000
+const fundamentalsCache = new TTLCache<Fundamentals>(FUNDAMENTALS_TTL_MS)
+const fundamentalsMissCache = new TTLCache<true>(FUNDAMENTALS_MISS_TTL_MS)
+
 interface YahooResult {
   chart?: {
     result?: Array<{
@@ -146,15 +153,23 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<BatchQuote[]>
   return out
 }
 
-/** Issue #88：v11 quoteSummary 取數本體（crumb 優先、裸 fetch 兜底；全失敗回 null 由呼叫端三態）。 */
+/**
+ * Issue #173：v10 quoteSummary 取數本體（原 v11 已下架回 404；v10 搭配 crumb+cookie 可正常取得台/美股完整財報）。
+ * 一次帶齊 price,summaryDetail,financialData,defaultKeyStatistics 四個 module；
+ * 401/403 時清除 crumb 快取重試一次；逾時 8s；全失敗回 null 由呼叫端三態降級。
+ */
 async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
-  const base = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${symbol}?modules=price,summaryDetail`
+  const modules = 'price,summaryDetail,financialData,defaultKeyStatistics'
+  const base = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules}`
   for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), FUNDAMENTALS_TIMEOUT_MS)
     try {
       const { cookies, crumb } = await getCrumb()
       if (!crumb) break
       const res = await fetch(`${base}&crumb=${encodeURIComponent(crumb)}`, {
         headers: { 'User-Agent': CHROME_AGENT, Cookie: cookies, Accept: 'application/json' },
+        signal: controller.signal,
       })
       if (res.status === 401 || res.status === 403) {
         crumbCache.clear()
@@ -166,15 +181,11 @@ async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
       break
     } catch {
       break
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
-  try {
-    const res = await fetch(base, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
-  }
+  return null
 }
 
 export const yahooFinanceProvider: MarketDataProvider = {
@@ -242,29 +253,63 @@ export const yahooFinanceProvider: MarketDataProvider = {
   },
 
   async getFundamentals(symbol: string): Promise<Fundamentals> {
-    // Issue #88：v11 quoteSummary 無 crumb 易被擋（裸 fetch 常回空）；
-    // 先走 crumb 流程（401/403 清快取換新 crumb 重試一次），仍失敗才降級舊裸 fetch。
-    const data = await fetchFundamentalsRaw(symbol)
-    const price = data?.quoteSummary?.result?.[0]?.price ?? {}
-    const summary = data?.quoteSummary?.result?.[0]?.summaryDetail ?? {}
+    const key = (symbol ?? '').trim().toUpperCase()
+    if (!key) return { symbol }
+
+    const cached = fundamentalsCache.get(key)
+    if (cached) return cached
+    if (fundamentalsMissCache.get(key)) return { symbol }
+
+    const data = await fetchFundamentalsRaw(key)
+    const root = data?.quoteSummary?.result?.[0]
+    if (!root) {
+      fundamentalsMissCache.set(key, true)
+      return { symbol }
+    }
+
+    const price = root.price ?? {}
+    const summary = root.summaryDetail ?? {}
+    const fin = root.financialData ?? {}
+    const stats = root.defaultKeyStatistics ?? {}
 
     const num = (v: any): number | undefined => {
       const raw = typeof v === 'object' && v !== null ? v.raw : v
       return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined
     }
-    return {
+
+    const result: Fundamentals = {
       symbol,
       marketCap: num(price.marketCap) ?? num(summary.marketCap),
       peRatio: num(summary.trailingPE) ?? num(summary.forwardPE),
-      eps: num(summary.trailingEps),
+      forwardPe: num(summary.forwardPE) ?? num(stats.forwardPE),
+      priceToBook: num(stats.priceToBook),
+      pegRatio: num(stats.pegRatio),
+      eps: num(stats.trailingEps) ?? num(summary.trailingEps),
       dividendYield: num(summary.dividendYield),
-      // #34：fallback 用既有 summaryDetail 欄位（trailingAnnualDividendYield 小數／dividendRate 每股金額）；
-      // Yahoo 未回傳即 undefined（#94：web 端參考殖利率欄已下架，此處僅供 AI 引擎等既有取用端）。
       trailingAnnualDividendYield: num(summary.trailingAnnualDividendYield),
       dividendRate: num(summary.dividendRate),
+      payoutRatio: num(summary.payoutRatio),
+      returnOnEquity: num(fin.returnOnEquity),
+      operatingMargins: num(fin.operatingMargins),
+      grossMargins: num(fin.grossMargins),
+      profitMargins: num(fin.profitMargins) ?? num(stats.profitMargins),
+      revenueGrowth: num(fin.revenueGrowth),
+      earningsGrowth: num(fin.earningsGrowth),
+      debtToEquity: num(fin.debtToEquity),
+      currentRatio: num(fin.currentRatio),
+      freeCashflow: num(fin.freeCashflow),
+      operatingCashflow: num(fin.operatingCashflow),
+      fiftyTwoWeekHigh: num(summary.fiftyTwoWeekHigh),
+      fiftyTwoWeekLow: num(summary.fiftyTwoWeekLow),
+      currentPrice: num(fin.currentPrice) ?? num(price.regularMarketPrice),
+      quoteType: typeof price.quoteType === 'string' ? price.quoteType : undefined,
+      revenue: num(fin.totalRevenue),
+      netIncome: num(stats.netIncomeToCommon),
       sector: price.sector,
       industry: price.industry,
     }
+    fundamentalsCache.set(key, result)
+    return result
   },
 
   /**

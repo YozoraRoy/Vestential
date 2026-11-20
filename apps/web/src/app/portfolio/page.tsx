@@ -13,6 +13,8 @@ import {
 } from '@/components/portfolio-trade-panel'
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
+import { HealthVerdictBadge, PortfolioHealthPanel } from '@/components/portfolio-health-panel'
+import type { HoldingHealthResult, PortfolioHealthReport } from '@/lib/portfolio-health'
 import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
 import { computePortfolioReviewStats, filterPortfolioReviewByMonth, PORTFOLIO_MIN_REVIEW_COUNT } from '@/lib/portfolio-review'
 import { type DividendYtdEntry } from '@/lib/portfolio-dividends'
@@ -289,7 +291,62 @@ export default function PortfolioPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [addMode, setAddMode] = useState<'manual' | 'ocr'>('manual')
-  const [listTab, setListTab] = useState<'positions' | 'risk'>('positions')
+  const [listTab, setListTab] = useState<'positions' | 'health' | 'risk'>('positions')
+  // #173：基本面健檢（純數據零 LLM）page 層 state（切頁籤不重抓；持倉變動時可重新檢核）。
+  const [healthReport, setHealthReport] = useState<PortfolioHealthReport | null>(null)
+  const [healthLoading, setHealthLoading] = useState(false)
+  const [healthError, setHealthError] = useState<string | null>(null)
+  const [healthFocusKey, setHealthFocusKey] = useState<string | null>(null)
+  const healthFetchedHashRef = useRef<string | null>(null)
+
+  const fetchPortfolioHealth = useCallback(async (force = false) => {
+    setHealthLoading(true)
+    setHealthError(null)
+    try {
+      const res = await fetch('/api/portfolio/health', { cache: 'no-store' })
+      const data = await parseJsonSafe<PortfolioHealthReport & { success?: boolean; error?: string }>(res, {
+        connectionInterrupted: ui.errConnectionInterrupted,
+        serverBusy: ui.errServerBusy,
+      })
+      if (!res.ok || !data || data.error) {
+        if (force) setHealthError(data?.error || '基本面健檢載入失敗')
+        return
+      }
+      setHealthReport(data)
+    } catch {
+      if (force) setHealthError('網路連線異常，基本面健檢載入失敗')
+    } finally {
+      setHealthLoading(false)
+    }
+  }, [ui.errConnectionInterrupted, ui.errServerBusy])
+
+  const healthByKey = useMemo(() => {
+    const map = new Map<string, HoldingHealthResult>()
+    for (const h of healthReport?.holdings ?? []) {
+      map.set(`${h.market}:${h.symbol.toUpperCase()}`, h)
+    }
+    return map
+  }, [healthReport])
+
+  const handleOpenHealthDetail = useCallback((key: string) => {
+    setHealthFocusKey(key)
+    setListTab('health')
+  }, [])
+
+  const handleDeepAnalyzeFromHealth = useCallback((item: HoldingHealthResult) => {
+    setMarket(item.market)
+    setSymbol(item.symbol)
+    setSymbolName(item.symbolName ?? '')
+    setShares(String(item.shares))
+    setCost(String(item.cost))
+    setCurrentPrice(String(item.currentPrice))
+    setStrategyId('buffett')
+    setShowAdd(true)
+    setAddMode('manual')
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [])
   // #30：風險總結 page 層 state（切持倉/風險頁籤不卸載清空）。
   // 有效定義：暫存日期＝今日（台灣日）且持倉快照 hash＝當前持倉；跨日／持倉變動即失效。
   const [riskSummary, setRiskSummary] = useState<(RiskSummaryValue & { dateStr: string; hash: string }) | null>(null)
@@ -474,6 +531,14 @@ export default function PortfolioPage() {
     () => buildHoldingsHash(history.map((r) => ({ market: r.market, symbol: r.symbol, shares: r.shares, current_price: r.current_price }))),
     [history],
   )
+
+  // #173：持倉就緒後靜默載入一次基本面健檢（零 LLM、後端有 6h 快取），讓持倉列表燈號與健檢分頁共用同一份資料。
+  useEffect(() => {
+    if (!historyReady || history.length === 0) return
+    if (healthFetchedHashRef.current === holdingsHash) return
+    healthFetchedHashRef.current = holdingsHash
+    void fetchPortfolioHealth(false)
+  }, [historyReady, history.length, holdingsHash, fetchPortfolioHealth])
   // 當日有效總結：日期＝今日（台灣日）且 hash＝當前持倉；維持全手動，不自動產生。
   const riskSummaryValid = riskSummary != null && riskSummary.dateStr === getTaiwanDateStrClient() && riskSummary.hash === holdingsHash
   const riskSummaryStale = riskSummary != null && riskSummary.dateStr === getTaiwanDateStrClient() && riskSummary.hash !== holdingsHash
@@ -2248,14 +2313,18 @@ export default function PortfolioPage() {
               {ui.historyTitle}
             </h2>
             <div className="flex rounded-lg overflow-hidden border border-white/10">
-              {(['positions', 'risk'] as const).map(t => (
+              {(['positions', 'health', 'risk'] as const).map(t => (
                 <button
                   key={t}
                   type="button"
                   onClick={() => setListTab(t)}
                   className={`px-3 py-1 text-xs transition ${listTab === t ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
                 >
-                  {t === 'positions' ? ui.riskTabPositions : ui.riskTabRisk}
+                  {t === 'positions'
+                    ? ui.riskTabPositions
+                    : t === 'health'
+                      ? (locale === 'en' ? 'Fundamentals' : '基本面健檢')
+                      : ui.riskTabRisk}
                 </button>
               ))}
             </div>
@@ -2430,7 +2499,17 @@ export default function PortfolioPage() {
             <p className="text-xs text-[var(--text-secondary)] mt-3">{ui.reviewDisclaimer}</p>
           </section>
         )}
-        {listTab === 'risk' ? (
+        {listTab === 'health' ? (
+          <PortfolioHealthPanel
+            report={healthReport}
+            loading={healthLoading}
+            error={healthError}
+            onRefresh={() => void fetchPortfolioHealth(true)}
+            focusKey={healthFocusKey}
+            onFocusHandled={() => setHealthFocusKey(null)}
+            onDeepAnalyze={handleDeepAnalyzeFromHealth}
+          />
+        ) : listTab === 'risk' ? (
           <PortfolioRiskPanel
             ui={ui}
             isLoggedIn={authMode === 'user'}
@@ -2621,6 +2700,17 @@ export default function PortfolioPage() {
                                   </span>
                                 )
                               })()}
+                              {(() => {
+                                const hKey = `${item.market}:${item.symbol.toUpperCase()}`
+                                const hItem = healthByKey.get(hKey)
+                                if (!hItem) return null
+                                return (
+                                  <HealthVerdictBadge
+                                    item={hItem}
+                                    onClick={() => handleOpenHealthDetail(hKey)}
+                                  />
+                                )
+                              })()}
                             </span>
                           </td>
                         )}
@@ -2718,6 +2808,17 @@ export default function PortfolioPage() {
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 ${badge.className}`}>
                             {badge.text}
                           </span>
+                        )
+                      })()}
+                      {(() => {
+                        const hKey = `${item.market}:${item.symbol.toUpperCase()}`
+                        const hItem = healthByKey.get(hKey)
+                        if (!hItem) return null
+                        return (
+                          <HealthVerdictBadge
+                            item={hItem}
+                            onClick={() => handleOpenHealthDetail(hKey)}
+                          />
                         )
                       })()}
                     </div>

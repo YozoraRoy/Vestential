@@ -34,12 +34,48 @@ export interface Fundamentals {
   symbol: string
   marketCap?: number
   peRatio?: number
+  /** #173：預估本益比（Forward PE） */
+  forwardPe?: number
+  /** #173：股價淨值比（P/B） */
+  priceToBook?: number
+  /** #173：本益成長比（PEG） */
+  pegRatio?: number
   eps?: number
   dividendYield?: number
   /** #34：Yahoo quoteSummary summaryDetail 既有欄位（小數，如 0.035＝3.5%）；缺值即 undefined。 */
   trailingAnnualDividendYield?: number
-  /** #34：Yahoo quoteSummary summaryDetail 既有欄位（每股配息金額，币值）；用於 dividendRate/現價 推算。 */
+  /** #34：Yahoo quoteSummary summaryDetail 既有欄位（每股配息金額，幣值）；用於 dividendRate/現價 推算。 */
   dividendRate?: number
+  /** #173：配息發放率（小數，如 0.52＝52%） */
+  payoutRatio?: number
+  /** #173：股東權益報酬率 ROE（小數，如 0.25＝25%） */
+  returnOnEquity?: number
+  /** #173：營業利益率（小數） */
+  operatingMargins?: number
+  /** #173：毛利率（小數） */
+  grossMargins?: number
+  /** #173：淨利率（小數） */
+  profitMargins?: number
+  /** #173：營收年增率（小數） */
+  revenueGrowth?: number
+  /** #173：獲利年增率（小數） */
+  earningsGrowth?: number
+  /** #173：負債權益比 Debt-to-Equity（Yahoo 原始百分比，如 45 代表 45%） */
+  debtToEquity?: number
+  /** #173：流動比率 Current Ratio（如 1.8） */
+  currentRatio?: number
+  /** #173：自由現金流（幣值） */
+  freeCashflow?: number
+  /** #173：營業現金流（幣值） */
+  operatingCashflow?: number
+  /** #173：52 週最高價 */
+  fiftyTwoWeekHigh?: number
+  /** #173：52 週最低價 */
+  fiftyTwoWeekLow?: number
+  /** #173：即時參考價 */
+  currentPrice?: number
+  /** #173：標的類型（EQUITY / ETF 等） */
+  quoteType?: string
   revenue?: number
   netIncome?: number
   sector?: string
