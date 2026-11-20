@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { TrendingUp, Zap, RefreshCw, Sparkles, History, ChevronDown, ChevronUp, Upload, Trash2, CheckCircle2, Plus, X, Search, Pencil, Target, ArrowDownUp } from 'lucide-react'
 import {
@@ -1424,19 +1425,17 @@ export default function PortfolioPage() {
   const holdingsRadar = useMemo(() => computeLookThroughRadar(history), [history])
 
   const stats = useMemo(() => {
-    const byMarket: Record<Market, { count: number; pnl: number }> = {
-      tw: { count: 0, pnl: 0 },
-      us: { count: 0, pnl: 0 },
+    const byMarket: Record<Market, { count: number; pnl: number; cost: number }> = {
+      tw: { count: 0, pnl: 0, cost: 0 },
+      us: { count: 0, pnl: 0, cost: 0 },
     }
-    // #29：第四卡改「投資總成本」＝ Σ cost_basis（台＋美合計，可手算重現）。
-    let totalCost = 0
     for (const r of history) {
       const m = r.market === 'us' ? 'us' : 'tw'
       byMarket[m].count += 1
       byMarket[m].pnl += r.unrealized_pnl
-      totalCost += r.cost_basis
+      byMarket[m].cost += r.cost_basis
     }
-    return { ...byMarket, totalCost }
+    return { ...byMarket, totalCost: byMarket.tw.cost }
   }, [history])
 
   const inputCls =
@@ -1454,7 +1453,14 @@ export default function PortfolioPage() {
           </div>
         </div>
         {!showAdd && (
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <Link
+              href={localizePath(locale, '/portfolio/us')}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-sky-500/40 bg-sky-500/15 text-sky-300 text-sm font-medium hover:bg-sky-500/25 transition"
+            >
+              <span>🇺🇸</span>
+              <span>{locale === 'en' ? 'US Stocks & Health' : '美股損益與健檢'}</span>
+            </Link>
             <button
               type="button"
               onClick={() => openTradeModal()}
@@ -2243,10 +2249,28 @@ export default function PortfolioPage() {
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
             <p className="text-xs text-[var(--text-secondary)]">{ui.summaryTwPnl}</p>
             <p className={`text-lg font-bold mt-1 ${stats.tw.pnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>{formatMoney(stats.tw.pnl, 'tw')}</p>
+            {stats.us.count > 0 && (
+              <p className={`text-xs font-semibold mt-0.5 ${stats.us.pnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                美股 {formatMoney(stats.us.pnl, 'us')}
+              </p>
+            )}
           </div>
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
             <p className="text-xs text-[var(--text-secondary)]">{ui.summaryTotalCost}</p>
-            <p className="text-lg font-bold mt-1">{formatMoney(stats.totalCost, 'tw')}</p>
+            <p className="text-lg font-bold mt-1">{formatMoney(stats.tw.cost, 'tw')}</p>
+            {stats.us.count > 0 && (
+              <div className="flex items-center justify-between gap-2 mt-0.5">
+                <span className="text-xs font-semibold text-sky-300">
+                  美股 {formatMoney(stats.us.cost, 'us')}
+                </span>
+                <Link
+                  href={localizePath(locale, '/portfolio/us')}
+                  className="text-[11px] text-[var(--accent)] hover:underline whitespace-nowrap"
+                >
+                  看台幣折算 →
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       )}

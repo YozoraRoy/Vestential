@@ -44,6 +44,7 @@ export interface FundamentalsInput {
   eps?: number
   dividendYield?: number
   trailingAnnualDividendYield?: number
+  dividendRate?: number
   payoutRatio?: number
   returnOnEquity?: number
   operatingMargins?: number
@@ -112,6 +113,8 @@ export interface HoldingHealthResult {
     roePct: number | null
     fcfPositive: boolean | null
     dividendYieldPct: number | null
+    /** 每股年配息（原幣，來自 Yahoo dividendRate；缺值為 null） */
+    dividendRate: number | null
   }
   /** 已評估的有效指標數 */
   evaluatedMetricCount: number
@@ -437,6 +440,7 @@ function evaluateEquity(
       roePct,
       fcfPositive: cashFlowVal != null ? cashFlowVal > 0 : null,
       dividendYieldPct: yld.value,
+      dividendRate: finite(f.dividendRate),
     },
     evaluatedMetricCount,
   }
@@ -587,6 +591,7 @@ function evaluateFinancial(
       roePct,
       fcfPositive: null,
       dividendYieldPct: yld.value,
+      dividendRate: finite(f.dividendRate),
     },
     evaluatedMetricCount,
   }
@@ -733,6 +738,7 @@ function evaluateEtf(
       roePct: null,
       fcfPositive: null,
       dividendYieldPct: yld.value,
+      dividendRate: finite(input.fundamentals?.dividendRate),
     },
     evaluatedMetricCount,
   }

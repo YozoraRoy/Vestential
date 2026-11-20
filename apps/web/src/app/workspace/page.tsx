@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BarChart3,
   Coins,
+  DollarSign,
   Gauge,
   Search,
   Sparkles,
@@ -100,6 +101,18 @@ export default async function WorkspacePage() {
           icon: Wallet,
           title: w.portfolioTitle,
           desc: w.portfolioDesc,
+          accent: 'green',
+        },
+        {
+          href: '/portfolio/us',
+          icon: DollarSign,
+          title: locale === 'en' ? 'US Portfolio & Fundamentals' : locale === 'ja' ? '米国株損益・健全性診断' : '美股損益試算與基本面健檢',
+          desc:
+            locale === 'en'
+              ? 'Calculate USD/TWD PnL, sub-brokerage fees, 30% dividend tax, average-down simulator, and fundamental health checks.'
+              : locale === 'ja'
+                ? '米ドル・台湾ドル換算損益、手数料・配当税試算、難平買いシミュレーターと財務健全性診断をまとめて管理。'
+                : 'USD/TWD 匯率折算、海外券商／複委託費率、30% 股息預扣稅、加碼攤平試算與基本面體檢防呆。',
           accent: 'green',
         },
         {

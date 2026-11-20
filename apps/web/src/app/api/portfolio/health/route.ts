@@ -8,10 +8,12 @@ import { taipeiTodayStr } from '../../../../lib/twse-calendar'
 import { computeYieldBreakdown, yieldDataYears, type YieldHistoryEntry } from '../../../../lib/portfolio-yield'
 import { resolveHoldingSector } from '../../../../lib/portfolio-risk'
 import {
+  evaluateHoldingHealth,
   evaluatePortfolioHealth,
   type HealthMarket,
   type HoldingHealthInput,
 } from '../../../../lib/portfolio-health'
+import { fetchLiveQuote } from '../../../../lib/portfolio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -114,15 +116,93 @@ async function mapWithConcurrency<T, R>(
 
 /**
  * GET /api/portfolio/health — 組合基本面健檢（純計算，零 LLM、不扣額度）。
- * - 與 /api/portfolio/risk 同口徑：支援登入用戶與 guest cookie，以每 (market, symbol) 最新一筆去重。
+ * - 無參數：支援登入用戶與 guest cookie，以每 (market, symbol) 最新一筆去重。
+ * - ?symbol=NVDA&market=us：單一標的即時健檢（不需預先持有，供美股試算器等頁面使用）。
  * - 單一標的取數失敗不導致整包 500，降級為 insufficient。
  */
 export async function GET(req: Request) {
-  return withApiAudit(req, '/api/portfolio/health', () => handleGet())
+  return withApiAudit(req, '/api/portfolio/health', () => handleGet(req))
 }
 
-async function handleGet() {
+async function handleSingleSymbol(rawSymbol: string, market: HealthMarket) {
+  const symbol = rawSymbol.trim().toUpperCase()
+  const [{ fundamentals, sector, quoteType }, liveQuote] = await Promise.all([
+    fetchFundamentalsForHolding(symbol, market),
+    fetchLiveQuote(symbol, market).catch(() => null),
+  ])
+
+  const currentPrice = liveQuote?.price ?? fundamentals?.currentPrice ?? 0
+  let twseAvgYield5y: number | null = null
+  let twseDividendYears5y: number | null = null
+
+  if (market === 'tw' && currentPrice > 0) {
+    await migrate()
+    const today = taipeiTodayStr()
+    const yearsToRead = yieldDataYears(today.slice(0, 4))
+    const clean = cleanSymbol(symbol)
+    const yearLists = await Promise.all(
+      yearsToRead.map((y) => getTwseDividendsByYear(y).catch(() => [])),
+    )
+    const entries: YieldHistoryEntry[] = []
+    for (const list of yearLists) {
+      for (const row of list) {
+        if (cleanSymbol(row.symbol) === clean) {
+          entries.push({
+            symbol: clean,
+            ex_date: row.ex_date,
+            cash_dividend: row.cash_dividend,
+            prev_close: row.prev_close ?? null,
+          })
+        }
+      }
+    }
+    if (entries.length > 0) {
+      const breakdown = computeYieldBreakdown(clean, entries, today, currentPrice)
+      if (breakdown.avg5.value != null) {
+        twseAvgYield5y = Math.round(breakdown.avg5.value * 100) / 100
+      }
+      twseDividendYears5y = breakdown.avg5.years.filter((y) => y.count > 0).length
+    }
+  }
+
+  const holding = evaluateHoldingHealth({
+    market,
+    symbol,
+    symbolName: liveQuote?.name ?? null,
+    shares: 0,
+    cost: 0,
+    currentPrice,
+    marketValue: 0,
+    unrealizedPnlPct: 0,
+    sector,
+    twseAvgYield5y,
+    twseDividendYears5y,
+    fundamentals: fundamentals
+      ? {
+          ...fundamentals,
+          quoteType: quoteType ?? fundamentals.quoteType,
+        }
+      : quoteType
+        ? { quoteType }
+        : null,
+  })
+
+  return NextResponse.json({
+    success: true,
+    asOf: new Date().toISOString(),
+    holding,
+  })
+}
+
+async function handleGet(req: Request) {
   try {
+    const url = new URL(req.url)
+    const singleSym = (url.searchParams.get('symbol') ?? '').trim()
+    if (singleSym) {
+      const m: HealthMarket = url.searchParams.get('market') === 'tw' ? 'tw' : 'us'
+      return await handleSingleSymbol(singleSym, m)
+    }
+
     await migrate()
     const user = await getCurrentUserFromCookies()
     let guestUid: string | null = null
