@@ -44,8 +44,15 @@ export interface Fundamentals {
   dividendYield?: number
   /** #34：Yahoo quoteSummary summaryDetail 既有欄位（小數，如 0.035＝3.5%）；缺值即 undefined。 */
   trailingAnnualDividendYield?: number
-  /** #34：Yahoo quoteSummary summaryDetail 既有欄位（每股配息金額，幣值）；用於 dividendRate/現價 推算。 */
+  /** #173：每股年配息（原幣） */
   dividendRate?: number
+  /** #177：近 1 / 2 / 3 年滾動年均每股配息與資料跨度（年） */
+  dividendRates?: {
+    avg1y?: number
+    avg2y?: number
+    avg3y?: number
+    spanYears?: number
+  }
   /** #173：配息發放率（小數，如 0.52＝52%） */
   payoutRatio?: number
   /** #173：股東權益報酬率 ROE（小數，如 0.25＝25%） */

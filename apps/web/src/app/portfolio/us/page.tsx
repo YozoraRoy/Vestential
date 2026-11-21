@@ -17,6 +17,7 @@ import {
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { TableSkeleton } from '@/components/table-skeleton'
 import { HealthVerdictBadge, VERDICT_META } from '@/components/portfolio-health-panel'
+import { DividendPaybackCard } from '@/components/dividend-payback-card'
 import type { DimensionResult, HoldingHealthResult, PortfolioHealthReport } from '@/lib/portfolio-health'
 import {
   computeUsFxBreakdown,
@@ -924,6 +925,21 @@ export default function UsPortfolioPage() {
                 )}
               </div>
             </div>
+
+            {simExistingHolding && (
+              <DividendPaybackCard
+                market="us"
+                symbol={simExistingHolding.symbol}
+                shares={simExistingHolding.shares}
+                cost={simExistingHolding.cost}
+                currentPrice={Number(simPrice) || simExistingHolding.current_price}
+                dividendRates={activeSimHealth.highlights.dividendRates}
+                fallbackDividendRate={activeSimHealth.highlights.dividendRate}
+                taxRate={brokerConfig.dividendTaxRate}
+                verdict={activeSimHealth.verdict}
+                payoutRatioPct={activeSimHealth.highlights.payoutRatioPct}
+              />
+            )}
           </div>
         )}
       </section>
@@ -1094,6 +1110,20 @@ export default function UsPortfolioPage() {
                                     </div>
                                   </div>
                                 ))}
+                              </div>
+                              <div className="mt-3">
+                                <DividendPaybackCard
+                                  market="us"
+                                  symbol={row.symbol}
+                                  shares={row.shares}
+                                  cost={row.cost}
+                                  currentPrice={row.current_price}
+                                  dividendRates={health.highlights.dividendRates}
+                                  fallbackDividendRate={health.highlights.dividendRate}
+                                  taxRate={brokerConfig.dividendTaxRate}
+                                  verdict={health.verdict}
+                                  payoutRatioPct={health.highlights.payoutRatioPct}
+                                />
                               </div>
                             </td>
                           </tr>

@@ -15,6 +15,8 @@ import {
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { HealthVerdictBadge, PortfolioHealthPanel } from '@/components/portfolio-health-panel'
+import { DividendPaybackCard } from '@/components/dividend-payback-card'
+import { computeRollingAvgDividendsFromEvents } from '@/lib/dividend-payback'
 import type { HoldingHealthResult, PortfolioHealthReport } from '@/lib/portfolio-health'
 import {
   computeMarketPortfolioStats,
@@ -2922,6 +2924,28 @@ export default function PortfolioPage() {
                                 ui={ui}
                                 helpText={ui.helpNet}
                               />
+                              {(() => {
+                                const hItem = healthByKey.get(`${item.market}:${item.symbol.toUpperCase()}`)
+                                const twRates = item.market === 'tw'
+                                  ? computeRollingAvgDividendsFromEvents(
+                                      divRows.filter((d) => d.symbol.trim().toUpperCase() === item.symbol.trim().toUpperCase()),
+                                      getTaiwanDateStrClient(),
+                                    )
+                                  : null
+                                return (
+                                  <DividendPaybackCard
+                                    market={item.market}
+                                    symbol={item.symbol}
+                                    shares={item.shares}
+                                    cost={item.cost}
+                                    currentPrice={item.current_price}
+                                    dividendRates={hItem?.highlights.dividendRates ?? twRates}
+                                    fallbackDividendRate={hItem?.highlights.dividendRate}
+                                    verdict={hItem?.verdict}
+                                    payoutRatioPct={hItem?.highlights.payoutRatioPct}
+                                  />
+                                )
+                              })()}
                               {item.summary && (
                                 <div className="col-span-2 md:col-span-4">
                                   <p className="text-xs text-[var(--text-secondary)]">{ui.detailAiSummary}</p>
@@ -3020,6 +3044,28 @@ export default function PortfolioPage() {
                           ui={ui}
                           helpText={ui.helpNet}
                         />
+                        {(() => {
+                          const hItem = healthByKey.get(`${item.market}:${item.symbol.toUpperCase()}`)
+                          const twRates = item.market === 'tw'
+                            ? computeRollingAvgDividendsFromEvents(
+                                divRows.filter((d) => d.symbol.trim().toUpperCase() === item.symbol.trim().toUpperCase()),
+                                getTaiwanDateStrClient(),
+                              )
+                            : null
+                          return (
+                            <DividendPaybackCard
+                              market={item.market}
+                              symbol={item.symbol}
+                              shares={item.shares}
+                              cost={item.cost}
+                              currentPrice={item.current_price}
+                              dividendRates={hItem?.highlights.dividendRates ?? twRates}
+                              fallbackDividendRate={hItem?.highlights.dividendRate}
+                              verdict={hItem?.verdict}
+                              payoutRatioPct={hItem?.highlights.payoutRatioPct}
+                            />
+                          )
+                        })()}
                         {/* #100：5 年平均殖利率已收進明細 modal（表格僅單欄 TTM，不留佔位欄）。 */}
                         <div className="col-span-2 md:col-span-4">
                           <p className="text-xs text-[var(--text-secondary)]">{ui.detailCreatedAt}</p>

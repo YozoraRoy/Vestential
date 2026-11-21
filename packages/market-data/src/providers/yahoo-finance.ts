@@ -189,30 +189,68 @@ async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
 }
 
 /**
- * Issue #176：從 Yahoo v8 chart `events=div` 彙總近 12 個月真實配息總和與 TTM 殖利率。
- * 解決 Yahoo quoteSummary 對美股 ETF（如 QQQI/JEPQ/QQQM/BITO）不填 dividendRate 且
- * trailingAnnualDividendYield 回 0 或 yield 失真之問題；無配息事件回 null。
+ * Issue #176 / #177：從 Yahoo v8 chart `events=div` 彙總近 1 / 2 / 3 年滾動年均每股配息與 TTM 殖利率。
+ * 一次請求 `range=3y&interval=1mo&events=div`，不增加額外 API 次數；無配息事件回 null。
  */
 async function fetchTtmDividendFromChart(
   symbol: string,
-): Promise<{ rate: number; yieldDecimal?: number } | null> {
+): Promise<{
+  rate: number
+  yieldDecimal?: number
+  rates: { avg1y?: number; avg2y?: number; avg3y?: number; spanYears: number }
+} | null> {
   try {
-    const data: any = await yahooFetch(`/chart/${encodeURIComponent(symbol)}?range=1y&interval=1mo&events=div`)
+    const data: any = await yahooFetch(`/chart/${encodeURIComponent(symbol)}?range=3y&interval=1mo&events=div`)
     const r = data?.chart?.result?.[0]
     const divsObj = r?.events?.dividends
     if (!divsObj || typeof divsObj !== 'object') return null
-    let total = 0
-    for (const d of Object.values(divsObj) as Array<{ amount?: number }>) {
-      if (typeof d?.amount === 'number' && Number.isFinite(d.amount) && d.amount > 0) {
-        total += d.amount
+
+    const nowSec = Math.floor(Date.now() / 1000)
+    const sec1y = nowSec - 365 * 86400
+    const sec2y = nowSec - 2 * 365 * 86400
+    const sec3y = nowSec - 3 * 365 * 86400
+
+    let sum1y = 0
+    let sum2y = 0
+    let sum3y = 0
+    let earliestSec = nowSec
+
+    for (const d of Object.values(divsObj) as Array<{ amount?: number; date?: number }>) {
+      const amt = Number(d?.amount)
+      const ts = Number(d?.date)
+      if (!Number.isFinite(amt) || amt <= 0) continue
+      if (Number.isFinite(ts) && ts > 0) {
+        if (ts < earliestSec) earliestSec = ts
+        if (ts >= sec1y) sum1y += amt
+        if (ts >= sec2y) sum2y += amt
+        if (ts >= sec3y) sum3y += amt
+      } else {
+        sum1y += amt
+        sum2y += amt
+        sum3y += amt
       }
     }
-    if (!(total > 0)) return null
-    const rate = Math.round(total * 10000) / 10000
+
+    if (!(sum1y > 0) && !(sum3y > 0)) return null
+
+    const spanYears = Math.max(0.25, Math.min(3, Math.round(((nowSec - earliestSec) / (365 * 86400)) * 10) / 10))
+    const round4 = (v: number) => Math.round(v * 10000) / 10000
+    const avg1y = sum1y > 0 ? round4(sum1y) : undefined
+    const avg2y = sum2y > 0 ? round4(sum2y / Math.min(2, Math.max(1, spanYears))) : undefined
+    const avg3y = sum3y > 0 ? round4(sum3y / Math.min(3, Math.max(1, spanYears))) : undefined
+
+    const rate = avg1y ?? avg2y ?? avg3y ?? 0
+    if (!(rate > 0)) return null
+
     const price = r?.meta?.regularMarketPrice
     const yieldDecimal =
       typeof price === 'number' && Number.isFinite(price) && price > 0 ? rate / price : undefined
-    return { rate, yieldDecimal }
+
+    return {
+      rate,
+      yieldDecimal,
+      rates: { avg1y, avg2y, avg3y, spanYears },
+    }
   } catch {
     return null
   }
@@ -313,19 +351,21 @@ export const yahooFinanceProvider: MarketDataProvider = {
     const isEtf = quoteType?.toUpperCase() === 'ETF'
 
     let dividendYield = pos(num(summary.dividendYield))
-    let trailingAnnualDividendYield = pos(num(summary.trailingAnnualDividendYield))
+    const trailingAnnualDividendYield = pos(num(summary.trailingAnnualDividendYield))
     let dividendRate = pos(num(summary.dividendRate)) ?? pos(num(summary.trailingAnnualDividendRate))
+    let dividendRates: Fundamentals['dividendRates']
 
-    if (isEtf || !dividendRate) {
-      const ttmDiv = await fetchTtmDividendFromChart(key)
-      if (ttmDiv) {
+    const ttmDiv = await fetchTtmDividendFromChart(key)
+    if (ttmDiv) {
+      dividendRates = ttmDiv.rates
+      if (isEtf || !dividendRate) {
         dividendRate = ttmDiv.rate
-        if (isEtf || !dividendYield) {
-          dividendYield = ttmDiv.yieldDecimal ?? pos(num(summary.yield))
-        }
-      } else if (isEtf) {
-        dividendYield = dividendYield ?? pos(num(summary.yield))
       }
+      if (isEtf || !dividendYield) {
+        dividendYield = ttmDiv.yieldDecimal ?? pos(num(summary.yield))
+      }
+    } else if (isEtf) {
+      dividendYield = dividendYield ?? pos(num(summary.yield))
     }
 
     const result: Fundamentals = {
@@ -339,6 +379,7 @@ export const yahooFinanceProvider: MarketDataProvider = {
       dividendYield,
       trailingAnnualDividendYield,
       dividendRate,
+      dividendRates,
       payoutRatio: num(summary.payoutRatio),
       returnOnEquity: num(fin.returnOnEquity),
       operatingMargins: num(fin.operatingMargins),

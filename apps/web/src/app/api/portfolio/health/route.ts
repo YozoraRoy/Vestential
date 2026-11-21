@@ -14,6 +14,7 @@ import {
   type HoldingHealthInput,
 } from '../../../../lib/portfolio-health'
 import { fetchLiveQuote } from '../../../../lib/portfolio'
+import { computeRollingAvgDividendsFromEvents, type RollingDividendRates } from '../../../../lib/dividend-payback'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -134,6 +135,7 @@ async function handleSingleSymbol(rawSymbol: string, market: HealthMarket) {
   const currentPrice = liveQuote?.price ?? fundamentals?.currentPrice ?? 0
   let twseAvgYield5y: number | null = null
   let twseDividendYears5y: number | null = null
+  let rollingDividendRates: RollingDividendRates | null = null
 
   if (market === 'tw' && currentPrice > 0) {
     await migrate()
@@ -162,6 +164,7 @@ async function handleSingleSymbol(rawSymbol: string, market: HealthMarket) {
         twseAvgYield5y = Math.round(breakdown.avg5.value * 100) / 100
       }
       twseDividendYears5y = breakdown.avg5.years.filter((y) => y.count > 0).length
+      rollingDividendRates = computeRollingAvgDividendsFromEvents(entries, today)
     }
   }
 
@@ -177,6 +180,7 @@ async function handleSingleSymbol(rawSymbol: string, market: HealthMarket) {
     sector,
     twseAvgYield5y,
     twseDividendYears5y,
+    rollingDividendRates,
     fundamentals: fundamentals
       ? {
           ...fundamentals,
@@ -276,6 +280,7 @@ async function handleGet(req: Request) {
 
       let twseAvgYield5y: number | null = null
       let twseDividendYears5y: number | null = null
+      let rollingDividendRates: RollingDividendRates | null = null
       if (market === 'tw') {
         const clean = cleanSymbol(symbol)
         const entries = dividendsBySymbol.get(clean) ?? []
@@ -285,6 +290,7 @@ async function handleGet(req: Request) {
             twseAvgYield5y = Math.round(breakdown.avg5.value * 100) / 100
           }
           twseDividendYears5y = breakdown.avg5.years.filter((y) => y.count > 0).length
+          rollingDividendRates = computeRollingAvgDividendsFromEvents(entries, today)
         }
       }
 
@@ -300,6 +306,7 @@ async function handleGet(req: Request) {
         sector,
         twseAvgYield5y,
         twseDividendYears5y,
+        rollingDividendRates,
         fundamentals: fundamentals
           ? {
               ...fundamentals,

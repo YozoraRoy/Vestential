@@ -11,6 +11,7 @@ import type {
   PortfolioHealthReport,
 } from '@/lib/portfolio-health'
 import { TableSkeleton } from '@/components/table-skeleton'
+import { DividendPaybackCard } from '@/components/dividend-payback-card'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 
@@ -550,6 +551,17 @@ export function PortfolioHealthPanel({
                                   )
                                 })}
                               </div>
+                              <DividendPaybackCard
+                                market={h.market}
+                                symbol={h.symbol}
+                                shares={h.shares}
+                                cost={h.cost}
+                                currentPrice={h.currentPrice}
+                                dividendRates={h.highlights.dividendRates}
+                                fallbackDividendRate={h.highlights.dividendRate}
+                                verdict={h.verdict}
+                                payoutRatioPct={h.highlights.payoutRatioPct}
+                              />
                             </div>
                           </td>
                         </tr>

@@ -12,6 +12,7 @@
 import { isEtfSymbol } from './portfolio-net'
 import { CORE_ETF_DIVIDEND_COMPOSITIONS } from './etf-dividend-composition'
 import { CORE_ETF_HOLDINGS_MAP } from './etf-holdings-radar'
+import type { RollingDividendRates } from './dividend-payback'
 
 export type HealthMarket = 'tw' | 'us'
 export type AssetCategory = 'equity' | 'financial' | 'etf'
@@ -45,6 +46,7 @@ export interface FundamentalsInput {
   dividendYield?: number
   trailingAnnualDividendYield?: number
   dividendRate?: number
+  dividendRates?: RollingDividendRates
   payoutRatio?: number
   returnOnEquity?: number
   operatingMargins?: number
@@ -79,6 +81,8 @@ export interface HoldingHealthInput {
   twseAvgYield5y?: number | null
   /** 台股 TWSE 近 5 年有配息的年份數（0~5） */
   twseDividendYears5y?: number | null
+  /** #177：近 1 / 2 / 3 年滾動年均每股配息（台股由 TWSE 計算、美股由 Yahoo 3Y 計算） */
+  rollingDividendRates?: RollingDividendRates | null
   fundamentals?: FundamentalsInput | null
 }
 
@@ -115,6 +119,10 @@ export interface HoldingHealthResult {
     dividendYieldPct: number | null
     /** 每股年配息（原幣，來自 Yahoo dividendRate；缺值為 null） */
     dividendRate: number | null
+    /** #177：近 1 / 2 / 3 年滾動年均每股配息 */
+    dividendRates: RollingDividendRates | null
+    /** 配息發放率（%） */
+    payoutRatioPct: number | null
   }
   /** 已評估的有效指標數 */
   evaluatedMetricCount: number
@@ -448,6 +456,8 @@ function evaluateEquity(
       fcfPositive: cashFlowVal != null ? cashFlowVal > 0 : null,
       dividendYieldPct: yld.value,
       dividendRate: finite(f.dividendRate),
+      dividendRates: input.rollingDividendRates ?? f.dividendRates ?? null,
+      payoutRatioPct: payoutPct,
     },
     evaluatedMetricCount,
   }
@@ -599,6 +609,8 @@ function evaluateFinancial(
       fcfPositive: null,
       dividendYieldPct: yld.value,
       dividendRate: finite(f.dividendRate),
+      dividendRates: input.rollingDividendRates ?? f.dividendRates ?? null,
+      payoutRatioPct: payoutPct,
     },
     evaluatedMetricCount,
   }
@@ -746,6 +758,8 @@ function evaluateEtf(
       fcfPositive: null,
       dividendYieldPct: yld.value,
       dividendRate: finite(input.fundamentals?.dividendRate),
+      dividendRates: input.rollingDividendRates ?? input.fundamentals?.dividendRates ?? null,
+      payoutRatioPct: null,
     },
     evaluatedMetricCount,
   }
