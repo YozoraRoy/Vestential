@@ -112,6 +112,8 @@ interface Props {
   onFocusHandled?: () => void
   /** 一鍵帶入巴菲特法則進行 AI 深度分析 */
   onDeepAnalyze?: (item: HoldingHealthResult) => void
+  /** #175：外層市場篩選連動（all / tw / us） */
+  marketFilter?: 'all' | 'tw' | 'us'
 }
 
 function DimDot({ dim }: { dim: DimensionResult }) {
@@ -134,6 +136,7 @@ export function PortfolioHealthPanel({
   focusKey,
   onFocusHandled,
   onDeepAnalyze,
+  marketFilter = 'all',
 }: Props) {
   const typo = useTableTypography()
   const [filter, setFilter] = useState<'all' | HealthVerdict>('all')
@@ -159,9 +162,13 @@ export function PortfolioHealthPanel({
     }
   }
 
-  const rows = useMemo(() => {
+  const marketHoldings = useMemo(() => {
     const base = report?.holdings ?? []
-    const filtered = filter === 'all' ? base : base.filter((h) => h.verdict === filter)
+    return marketFilter === 'all' ? base : base.filter((h) => h.market === marketFilter)
+  }, [report, marketFilter])
+
+  const rows = useMemo(() => {
+    const filtered = filter === 'all' ? marketHoldings : marketHoldings.filter((h) => h.verdict === filter)
     if (!sortKey) return filtered
 
     const getVal = (h: HoldingHealthResult): number | null => {
@@ -183,7 +190,7 @@ export function PortfolioHealthPanel({
       if (vb == null) return -1
       return sortDir === 'asc' ? va - vb : vb - va
     })
-  }, [report, filter, sortKey, sortDir])
+  }, [marketHoldings, filter, sortKey, sortDir])
 
   const renderSortTh = (key: SortKey, label: string, align: 'left' | 'right' = 'right') => {
     const active = sortKey === key
@@ -239,11 +246,17 @@ export function PortfolioHealthPanel({
     )
   }
 
-  if (!report || report.holdings.length === 0) {
+  if (!report || marketHoldings.length === 0) {
     return (
       <div className="bg-[var(--bg-card)] border border-white/10 rounded-2xl p-8 text-center space-y-2">
         <ShieldCheck className="w-8 h-8 text-[var(--text-secondary)] mx-auto" />
-        <p className="text-sm text-white font-medium">尚無持倉可進行基本面健檢</p>
+        <p className="text-sm text-white font-medium">
+          {marketFilter === 'us'
+            ? '尚無美股持倉可進行基本面健檢'
+            : marketFilter === 'tw'
+              ? '尚無台股持倉可進行基本面健檢'
+              : '尚無持倉可進行基本面健檢'}
+        </p>
         <p className="text-xs text-[var(--text-secondary)]">
           先在「持倉列表」新增或匯入持股後，系統會自動依財報與估值指標進行免費體檢。
         </p>
@@ -252,7 +265,12 @@ export function PortfolioHealthPanel({
   }
 
   const { tw, us } = report.summaryByMarket
-  const counts = report.overallCounts
+  const counts = marketFilter === 'all'
+    ? report.overallCounts
+    : {
+        total: marketHoldings.length,
+        ...(marketFilter === 'tw' ? tw.counts : us.counts),
+      }
 
   return (
     <div className="space-y-5">
@@ -286,13 +304,13 @@ export function PortfolioHealthPanel({
         <div className="bg-[var(--bg-card)] border border-white/10 rounded-xl p-4 space-y-1.5">
           <div className="text-xs text-[var(--text-secondary)]">體質健全市值佔比（分幣別）</div>
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            {tw.holdingCount > 0 && (
+            {marketFilter !== 'us' && tw.holdingCount > 0 && (
               <div className="tabular-nums">
                 <span className="text-xs text-[var(--text-secondary)] mr-1">台股</span>
                 <span className="text-2xl font-bold text-emerald-300">{tw.healthyValuePct.toFixed(1)}%</span>
               </div>
             )}
-            {us.holdingCount > 0 && (
+            {marketFilter !== 'tw' && us.holdingCount > 0 && (
               <div className="tabular-nums">
                 <span className="text-xs text-[var(--text-secondary)] mr-1">美股</span>
                 <span className="text-2xl font-bold text-sky-300">{us.healthyValuePct.toFixed(1)}%</span>

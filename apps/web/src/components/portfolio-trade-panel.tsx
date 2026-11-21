@@ -10,6 +10,7 @@ import {
   type TradeMarket,
   type TradeSide,
 } from '@/lib/portfolio-trade'
+import { summarizeTransactionsByMarket, type MarketFilter } from '@/lib/portfolio-market-split'
 
 export interface PortfolioTransactionItem {
   id: number
@@ -773,43 +774,114 @@ const TAB_COPY: Record<
 
 export function PortfolioTransactionsTab({
   transactions,
-  summary,
+  summary: _summary,
   loading,
   locale,
   onOpenTradeModal,
 }: PortfolioTransactionsTabProps) {
   const t = TAB_COPY[locale] ?? TAB_COPY['zh-TW']
+  const [txMarketFilter, setTxMarketFilter] = useState<MarketFilter>('all')
+
+  const byMarket = useMemo(() => summarizeTransactionsByMarket(transactions), [transactions])
+  const filteredTx = useMemo(() => {
+    if (txMarketFilter === 'all') return transactions
+    return transactions.filter((tx) => (tx.market === 'us' ? 'us' : 'tw') === txMarketFilter)
+  }, [transactions, txMarketFilter])
+
+  const twCount = byMarket.tw.buyCount + byMarket.tw.sellCount
+  const usCount = byMarket.us.buyCount + byMarket.us.sellCount
+
+  const fmtAmt = (n: number, m: 'tw' | 'us') =>
+    m === 'us'
+      ? `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : `NT$${Math.round(n).toLocaleString('en-US')}`
 
   return (
     <div className="space-y-5">
-      {/* 摘要 KPI */}
+      {/* 市場篩選膠囊 */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          {(
+            [
+              { id: 'all', label: `全部 (${transactions.length})` },
+              { id: 'tw', label: `🇹🇼 台股 (${twCount})` },
+              { id: 'us', label: `🇺🇸 美股 (${usCount})` },
+            ] as const
+          ).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setTxMarketFilter(f.id)}
+              className={`px-3 py-1 rounded-full text-xs border transition ${
+                txMarketFilter === f.id
+                  ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                  : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-white/10 hover:text-white'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 摘要 KPI（分幣別顯示，絕不混加） */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
+        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4 space-y-1">
           <div className="text-xs text-[var(--text-secondary)]">{t.realizedPnl}</div>
-          <div
-            className={`mt-1 text-xl font-bold tabular-nums ${
-              summary.totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
-            }`}
-          >
-            {summary.totalRealizedPnl >= 0 ? '+' : ''}
-            NT${Math.round(summary.totalRealizedPnl).toLocaleString('en-US')}
-          </div>
-          <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
-            {t.tradeCount(summary.buyCount, summary.sellCount)}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <div className="text-xs text-[var(--text-secondary)]">{t.buyTotal}</div>
-          <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
-            NT${Math.round(summary.totalBuyAmount).toLocaleString('en-US')}
-          </div>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4 flex items-center justify-between gap-2">
-          <div>
-            <div className="text-xs text-[var(--text-secondary)]">{t.sellTotal}</div>
-            <div className="mt-1 text-xl font-bold tabular-nums text-[var(--text-primary)]">
-              NT${Math.round(summary.totalSellAmount).toLocaleString('en-US')}
+          {txMarketFilter !== 'us' && (
+            <div className={`text-lg font-bold tabular-nums ${byMarket.tw.totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {txMarketFilter === 'all' && usCount > 0 ? '台股 ' : ''}
+              {byMarket.tw.totalRealizedPnl >= 0 ? '+' : ''}
+              {fmtAmt(byMarket.tw.totalRealizedPnl, 'tw')}
             </div>
+          )}
+          {txMarketFilter !== 'tw' && (usCount > 0 || txMarketFilter === 'us') && (
+            <div className={`text-lg font-bold tabular-nums ${byMarket.us.totalRealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {txMarketFilter === 'all' ? '美股 ' : ''}
+              {byMarket.us.totalRealizedPnl >= 0 ? '+' : ''}
+              {fmtAmt(byMarket.us.totalRealizedPnl, 'us')}
+            </div>
+          )}
+          <div className="text-[11px] text-[var(--text-secondary)]">
+            {txMarketFilter === 'tw'
+              ? t.tradeCount(byMarket.tw.buyCount, byMarket.tw.sellCount)
+              : txMarketFilter === 'us'
+                ? t.tradeCount(byMarket.us.buyCount, byMarket.us.sellCount)
+                : t.tradeCount(byMarket.tw.buyCount + byMarket.us.buyCount, byMarket.tw.sellCount + byMarket.us.sellCount)}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4 space-y-1">
+          <div className="text-xs text-[var(--text-secondary)]">{t.buyTotal}</div>
+          {txMarketFilter !== 'us' && (
+            <div className="text-lg font-bold tabular-nums text-[var(--text-primary)]">
+              {txMarketFilter === 'all' && usCount > 0 ? '台股 ' : ''}
+              {fmtAmt(byMarket.tw.totalBuyAmount, 'tw')}
+            </div>
+          )}
+          {txMarketFilter !== 'tw' && (usCount > 0 || txMarketFilter === 'us') && (
+            <div className="text-lg font-bold tabular-nums text-sky-300">
+              {txMarketFilter === 'all' ? '美股 ' : ''}
+              {fmtAmt(byMarket.us.totalBuyAmount, 'us')}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-[var(--bg-card)] p-4 flex items-center justify-between gap-2">
+          <div className="space-y-1">
+            <div className="text-xs text-[var(--text-secondary)]">{t.sellTotal}</div>
+            {txMarketFilter !== 'us' && (
+              <div className="text-lg font-bold tabular-nums text-[var(--text-primary)]">
+                {txMarketFilter === 'all' && usCount > 0 ? '台股 ' : ''}
+                {fmtAmt(byMarket.tw.totalSellAmount, 'tw')}
+              </div>
+            )}
+            {txMarketFilter !== 'tw' && (usCount > 0 || txMarketFilter === 'us') && (
+              <div className="text-lg font-bold tabular-nums text-sky-300">
+                {txMarketFilter === 'all' ? '美股 ' : ''}
+                {fmtAmt(byMarket.us.totalSellAmount, 'us')}
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -824,7 +896,7 @@ export function PortfolioTransactionsTab({
 
       {loading && transactions.length === 0 ? (
         <div className="h-40 rounded-2xl border border-white/5 bg-[var(--bg-card)] animate-pulse" />
-      ) : transactions.length === 0 ? (
+      ) : filteredTx.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-[var(--bg-card)] p-10 text-center space-y-3">
           <ReceiptText className="w-8 h-8 text-[var(--text-secondary)] mx-auto opacity-70" />
           <p className="text-sm text-[var(--text-secondary)]">{t.empty}</p>
@@ -846,7 +918,7 @@ export function PortfolioTransactionsTab({
               </tr>
             </thead>
             <tbody>
-              {transactions.map((tx) => {
+              {filteredTx.map((tx) => {
                 const mkt: TradeMarket = tx.market === 'us' ? 'us' : 'tw'
                 return (
                   <tr key={tx.id} className="border-b border-white/5 hover:bg-white/[0.02]">

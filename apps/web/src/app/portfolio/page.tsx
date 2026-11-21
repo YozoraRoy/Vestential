@@ -16,6 +16,12 @@ import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { HealthVerdictBadge, PortfolioHealthPanel } from '@/components/portfolio-health-panel'
 import type { HoldingHealthResult, PortfolioHealthReport } from '@/lib/portfolio-health'
+import {
+  computeMarketPortfolioStats,
+  computeTwCoreAssetStats,
+  type MarketFilter,
+  type MarketPortfolioStats,
+} from '@/lib/portfolio-market-split'
 import { computeNetPnL, DEFAULT_FEE_DISCOUNT } from '@/lib/portfolio-net'
 import { computePortfolioReviewStats, filterPortfolioReviewByMonth, PORTFOLIO_MIN_REVIEW_COUNT } from '@/lib/portfolio-review'
 import { type DividendYtdEntry } from '@/lib/portfolio-dividends'
@@ -293,6 +299,19 @@ export default function PortfolioPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [addMode, setAddMode] = useState<'manual' | 'ocr'>('manual')
   const [listTab, setListTab] = useState<'positions' | 'health' | 'risk'>('positions')
+  const [marketFilter, setMarketFilter] = useState<MarketFilter>('all')
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem('portfolio-market-filter')
+      if (saved === 'all' || saved === 'tw' || saved === 'us') setMarketFilter(saved)
+    } catch {}
+  }, [])
+  const handleMarketFilterChange = useCallback((next: MarketFilter) => {
+    setMarketFilter(next)
+    try {
+      window.localStorage.setItem('portfolio-market-filter', next)
+    } catch {}
+  }, [])
   // #173：基本面健檢（純數據零 LLM）page 層 state（切頁籤不重抓；持倉變動時可重新檢核）。
   const [healthReport, setHealthReport] = useState<PortfolioHealthReport | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
@@ -1393,50 +1412,28 @@ export default function PortfolioPage() {
     }
   }
 
-  const coreAssetStats = useMemo(() => {
-    let totalMarketValue = 0
-    let coreMarketValue = 0
-    let twCount = 0
-    let coreCount = 0
-
-    for (const r of history) {
-      const mv = Number(r.market_value) || 0
-      totalMarketValue += mv
-      if (r.market !== 'us') {
-        twCount += 1
-        const tier = getUniverseTier(r.symbol)
-        if (tier === 'ETF' || tier === 'TOP_50' || tier === 'TOP_100') {
-          coreMarketValue += mv
-          coreCount += 1
-        }
-      }
-    }
-
-    const ratioPct = totalMarketValue > 0 ? (coreMarketValue / totalMarketValue) * 100 : 0
-    return {
-      totalMarketValue,
-      coreMarketValue,
-      ratioPct,
-      coreCount,
-      twCount,
-    }
-  }, [history])
+  const coreAssetStats = useMemo(() => computeTwCoreAssetStats(history), [history])
 
   const holdingsRadar = useMemo(() => computeLookThroughRadar(history), [history])
 
-  const stats = useMemo(() => {
-    const byMarket: Record<Market, { count: number; pnl: number; cost: number }> = {
-      tw: { count: 0, pnl: 0, cost: 0 },
-      us: { count: 0, pnl: 0, cost: 0 },
-    }
-    for (const r of history) {
-      const m = r.market === 'us' ? 'us' : 'tw'
-      byMarket[m].count += 1
-      byMarket[m].pnl += r.unrealized_pnl
-      byMarket[m].cost += r.cost_basis
-    }
-    return { ...byMarket, totalCost: byMarket.tw.cost }
-  }, [history])
+  const stats = useMemo(() => computeMarketPortfolioStats(history, feeDiscount), [history, feeDiscount])
+
+  const twSortedHistory = useMemo(
+    () => sortedHistory.filter((r) => r.market !== 'us'),
+    [sortedHistory],
+  )
+  const usSortedHistory = useMemo(
+    () => sortedHistory.filter((r) => r.market === 'us'),
+    [sortedHistory],
+  )
+  const twHistory = useMemo(
+    () => history.filter((r) => r.market !== 'us'),
+    [history],
+  )
+  const usHistory = useMemo(
+    () => history.filter((r) => r.market === 'us'),
+    [history],
+  )
 
   const inputCls =
     'w-full bg-[var(--bg-secondary)] border border-white/10 rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent)] disabled:opacity-50'
@@ -2239,29 +2236,54 @@ export default function PortfolioPage() {
       ) : history.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
-            <p className="text-xs text-[var(--text-secondary)]">{ui.summaryHoldings}</p>
-            <p className="text-xl font-bold mt-1">{history.length}</p>
-          </div>
-          <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
-            <p className="text-xs text-[var(--text-secondary)]">{ui.summaryWithAi}</p>
-            <p className="text-xl font-bold mt-1">{aiAdviceCount}</p>
-          </div>
-          <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
-            <p className="text-xs text-[var(--text-secondary)]">{ui.summaryTwPnl}</p>
-            <p className={`text-lg font-bold mt-1 ${stats.tw.pnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>{formatMoney(stats.tw.pnl, 'tw')}</p>
-            {stats.us.count > 0 && (
-              <p className={`text-xs font-semibold mt-0.5 ${stats.us.pnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
-                美股 {formatMoney(stats.us.pnl, 'us')}
+            <p className="text-xs text-[var(--text-secondary)]">
+              {marketFilter === 'tw' ? '🇹🇼 台股持有檔數' : marketFilter === 'us' ? '🇺🇸 美股持有檔數' : ui.summaryHoldings}
+            </p>
+            <p className="text-xl font-bold mt-1 tabular-nums">
+              {marketFilter === 'tw' ? stats.tw.count : marketFilter === 'us' ? stats.us.count : stats.totalCount}
+            </p>
+            {marketFilter === 'all' && stats.tw.count > 0 && stats.us.count > 0 && (
+              <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                台股 {stats.tw.count} 檔 · 美股 {stats.us.count} 檔
               </p>
             )}
           </div>
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4">
-            <p className="text-xs text-[var(--text-secondary)]">{ui.summaryTotalCost}</p>
-            <p className="text-lg font-bold mt-1">{formatMoney(stats.tw.cost, 'tw')}</p>
-            {stats.us.count > 0 && (
-              <div className="flex items-center justify-between gap-2 mt-0.5">
-                <span className="text-xs font-semibold text-sky-300">
-                  美股 {formatMoney(stats.us.cost, 'us')}
+            <p className="text-xs text-[var(--text-secondary)]">{ui.summaryWithAi}</p>
+            <p className="text-xl font-bold mt-1 tabular-nums">{aiAdviceCount}</p>
+          </div>
+          <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4 space-y-1">
+            <p className="text-xs text-[var(--text-secondary)]">
+              {marketFilter === 'tw' ? '🇹🇼 台股未實現損益' : marketFilter === 'us' ? '🇺🇸 美股未實現損益' : '未實現損益（分幣別）'}
+            </p>
+            {marketFilter !== 'us' && (stats.tw.count > 0 || marketFilter === 'tw') && (
+              <p className={`text-base font-bold tabular-nums ${stats.tw.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                {marketFilter === 'all' && stats.us.count > 0 ? '台股 ' : ''}
+                {formatMoney(stats.tw.unrealizedPnl, 'tw')} ({formatPct(stats.tw.unrealizedPnlPct)})
+              </p>
+            )}
+            {marketFilter !== 'tw' && (stats.us.count > 0 || marketFilter === 'us') && (
+              <p className={`text-base font-bold tabular-nums ${stats.us.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}`}>
+                {marketFilter === 'all' ? '美股 ' : ''}
+                {formatMoney(stats.us.unrealizedPnl, 'us')} ({formatPct(stats.us.unrealizedPnlPct)})
+              </p>
+            )}
+          </div>
+          <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-4 space-y-1">
+            <p className="text-xs text-[var(--text-secondary)]">
+              {marketFilter === 'tw' ? '🇹🇼 台股投入成本' : marketFilter === 'us' ? '🇺🇸 美股投入成本' : '投資總成本（分幣別）'}
+            </p>
+            {marketFilter !== 'us' && (stats.tw.count > 0 || marketFilter === 'tw') && (
+              <p className="text-base font-bold tabular-nums">
+                {marketFilter === 'all' && stats.us.count > 0 ? '台股 ' : ''}
+                {formatMoney(stats.tw.totalCost, 'tw')}
+              </p>
+            )}
+            {marketFilter !== 'tw' && (stats.us.count > 0 || marketFilter === 'us') && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-base font-bold text-sky-300 tabular-nums">
+                  {marketFilter === 'all' ? '美股 ' : ''}
+                  {formatMoney(stats.us.totalCost, 'us')}
                 </span>
                 <Link
                   href={localizePath(locale, '/portfolio/us')}
@@ -2283,7 +2305,7 @@ export default function PortfolioPage() {
           </div>
           <div className="h-2 w-full rounded-full bg-white/10" />
         </div>
-      ) : history.length > 0 && coreAssetStats.twCount > 0 && (
+      ) : history.length > 0 && coreAssetStats.twCount > 0 && marketFilter !== 'us' && (
         <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5 mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
             <div className="flex items-center gap-2">
@@ -2330,8 +2352,8 @@ export default function PortfolioPage() {
       )}
 
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <History className="w-5 h-5 text-[var(--text-secondary)]" />
               {ui.historyTitle}
@@ -2352,6 +2374,31 @@ export default function PortfolioPage() {
                 </button>
               ))}
             </div>
+            {listTab !== 'risk' && (
+              <div className="flex items-center gap-1.5" role="group" aria-label="市場篩選">
+                {(
+                  [
+                    { id: 'all', label: `全部 (${stats.totalCount})` },
+                    { id: 'tw', label: `🇹🇼 台股 (${stats.tw.count})` },
+                    { id: 'us', label: `🇺🇸 美股 (${stats.us.count})` },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    aria-pressed={marketFilter === f.id}
+                    onClick={() => handleMarketFilterChange(f.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs border transition ${
+                      marketFilter === f.id
+                        ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
+                        : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border-white/10 hover:text-[var(--text-primary)]'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {/* #33：同步現價鈕（in-flight disabled＋旋轉，沿用 #25 守衛）＋ #28 紀錄檢視切換器 */}
           <div className="flex items-center gap-2">
@@ -2532,6 +2579,7 @@ export default function PortfolioPage() {
             focusKey={healthFocusKey}
             onFocusHandled={() => setHealthFocusKey(null)}
             onDeepAnalyze={handleDeepAnalyzeFromHealth}
+            marketFilter={marketFilter}
           />
         ) : listTab === 'risk' ? (
           <PortfolioRiskPanel
@@ -2568,86 +2616,169 @@ export default function PortfolioPage() {
               </button>
             )}
           </div>
-        ) : effectiveRecordsView === 'table' ? (
-          <div className="hidden md:block overflow-x-auto rounded-xl border border-white/5 bg-[var(--bg-card)]">
-            <table className={tableClass(typo, 'w-full min-w-[1500px]')}>
-              <thead>
-                <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
-                  <th className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap font-medium">{ui.colAction}</th>
-                  {visibleColumns.rating && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colRating}</th>}
-                  {visibleColumns.name && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('name')}>
-                      <RecordsSortHeader label={ui.colName} active={sortKey === 'name'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('name')} />
-                    </th>
-                  )}
-                  {visibleColumns.symbol && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colSymbol}</th>}
-                  {visibleColumns.shares && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('shares')}>
-                      <RecordsSortHeader label={ui.detailShares} active={sortKey === 'shares'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('shares')} />
-                    </th>
-                  )}
-                  {visibleColumns.cost && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('cost')}>
-                      <RecordsSortHeader label={ui.detailCost} active={sortKey === 'cost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('cost')} />
-                    </th>
-                  )}
-                  {visibleColumns.price && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('price')}>
-                      <RecordsSortHeader label={ui.detailPrice} active={sortKey === 'price'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('price')} />
-                    </th>
-                  )}
-                  {visibleColumns.totalCost && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('totalCost')}>
-                      <RecordsSortHeader label={ui.detailTotalCost} active={sortKey === 'totalCost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('totalCost')} />
-                    </th>
-                  )}
-                  {visibleColumns.marketValue && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('marketValue')}>
-                      <RecordsSortHeader label={ui.detailMarketValue} active={sortKey === 'marketValue'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('marketValue')} />
-                    </th>
-                  )}
-                  {visibleColumns.unrealized && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('unrealized')}>
-                      <RecordsSortHeader label={ui.detailUnrealizedPnl} active={sortKey === 'unrealized'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('unrealized')} />
-                    </th>
-                  )}
-                  {visibleColumns.return && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('returnRate')}>
-                      <RecordsSortHeader label={ui.resultTotalReturn} active={sortKey === 'returnRate'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('returnRate')} />
-                    </th>
-                  )}
-                  {/* #100：curYield＋avg5Yield 兩欄合併為單欄（近 12 個月 TTM；其餘口徑收進明細 modal）。 */}
-                  {visibleColumns.ttmYield && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('ttmYield')}>
-                      <span className="inline-flex items-center gap-1">
-                        <RecordsSortHeader label={ui.colYieldTtm} active={sortKey === 'ttmYield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('ttmYield')} />
-                        <FieldHelp text={ui.helpYieldTtm} />
+        ) : (
+          <div className="space-y-6">
+            {((marketFilter === 'all'
+              ? (['tw', 'us'] as const).filter((m) => (m === 'tw' ? twHistory.length > 0 : usHistory.length > 0))
+              : ([marketFilter] as const))
+            ).map((mkt) => {
+              const tableRows = mkt === 'tw' ? twSortedHistory : usSortedHistory
+              const cardRows = mkt === 'tw' ? twHistory : usHistory
+              const mktStats = mkt === 'tw' ? stats.tw : stats.us
+              const showTtmYield = mkt !== 'us' && visibleColumns.ttmYield
+              const effectiveColSpan = visibleColumnCount + 1 - (mkt === 'us' && visibleColumns.ttmYield ? 1 : 0)
+
+              if (cardRows.length === 0) {
+                return (
+                  <div key={mkt} className="bg-[var(--bg-card)] rounded-xl border border-white/5 p-8 text-center space-y-3">
+                    <p className="text-sm text-[var(--text-secondary)]">
+                      {mkt === 'us' ? '尚無美股持倉紀錄' : '尚無台股持倉紀錄'}
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMarket(mkt)
+                          setShowAdd(true)
+                        }}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition"
+                      >
+                        <Plus className="w-4 h-4" />
+                        {mkt === 'us' ? '新增美股持股' : '新增台股持股'}
+                      </button>
+                      {mkt === 'us' && (
+                        <Link
+                          href={localizePath(locale, '/portfolio/us')}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-500/15 border border-sky-500/40 text-sky-300 text-xs font-medium hover:bg-sky-500/25 transition"
+                        >
+                          🇺🇸 前往美股試算與健檢專區 →
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                )
+              }
+
+              return (
+                <div key={mkt} className="space-y-2.5">
+                  {/* 分市場標題與小計條 */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">
+                        {mkt === 'tw' ? '🇹🇼 台股明細' : '🇺🇸 美股明細'}
                       </span>
-                    </th>
-                  )}
-                  {visibleColumns.net && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('net')}>
-                      <span className="inline-flex items-center gap-1">
-                        <RecordsSortHeader label={ui.netTitle} active={sortKey === 'net'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('net')} />
-                        <FieldHelp text={ui.helpNet} />
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-[var(--text-secondary)] tabular-nums">
+                        {mktStats.count} 檔
                       </span>
-                    </th>
-                  )}
-                  {visibleColumns.created && (
-                    <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('created')}>
-                      <RecordsSortHeader label={ui.detailCreatedAt} active={sortKey === 'created'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('created')} />
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {sortedHistory.map(item => {
-                  const open = expandedId === item.id
-                  // #28：淨損益單欄沿用 computeNetPnL（與 NetPnlView 同邏輯）；明細放在展開列的 NetPnlView。
-                  const net = computeNetPnL({ market: item.market, symbol: item.symbol, shares: item.shares, cost: item.cost, currentPrice: item.current_price, discount: feeDiscount })
-                  return (
-                    <Fragment key={item.id}>
-                      <tr onClick={() => expandHistory(item)} className="border-b border-white/5 hover:bg-white/5 transition cursor-pointer">
+                      {mkt === 'us' && (
+                        <Link
+                          href={localizePath(locale, '/portfolio/us')}
+                          className="text-xs text-sky-300 hover:underline ml-1"
+                        >
+                          匯率／複委託／攤平試算 →
+                        </Link>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums">
+                      <span className="text-[var(--text-secondary)]">
+                        成本 <strong className="text-white">{formatMoney(mktStats.totalCost, mkt)}</strong>
+                      </span>
+                      <span className="text-[var(--text-secondary)]">
+                        市值 <strong className="text-white">{formatMoney(mktStats.totalMarketValue, mkt)}</strong>
+                      </span>
+                      <span className="text-[var(--text-secondary)]">
+                        未實現{' '}
+                        <strong className={mktStats.unrealizedPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}>
+                          {formatMoney(mktStats.unrealizedPnl, mkt)} ({formatPct(mktStats.unrealizedPnlPct)})
+                        </strong>
+                      </span>
+                      <span className="text-[var(--text-secondary)]">
+                        含費淨損益{' '}
+                        <strong className={mktStats.netPnl >= 0 ? 'text-[var(--accent-green)]' : 'text-[var(--accent-red)]'}>
+                          {formatMoney(mktStats.netPnl, mkt)} ({formatPct(mktStats.netPnlPct)})
+                        </strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  {effectiveRecordsView === 'table' ? (
+                    <div className="hidden md:block overflow-x-auto rounded-xl border border-white/5 bg-[var(--bg-card)]">
+                      <table className={tableClass(typo, 'w-full min-w-[1400px]')}>
+                        <thead>
+                          <tr className={headTrClass(typo, 'text-left text-[var(--text-secondary)] border-b border-white/10')}>
+                            <th className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap font-medium">{ui.colAction}</th>
+                            {visibleColumns.rating && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colRating}</th>}
+                            {visibleColumns.name && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('name')}>
+                                <RecordsSortHeader label={ui.colName} active={sortKey === 'name'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('name')} />
+                              </th>
+                            )}
+                            {visibleColumns.symbol && <th className="px-3 py-2 whitespace-nowrap font-medium">{ui.colSymbol}</th>}
+                            {visibleColumns.shares && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('shares')}>
+                                <RecordsSortHeader label={ui.detailShares} active={sortKey === 'shares'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('shares')} />
+                              </th>
+                            )}
+                            {visibleColumns.cost && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('cost')}>
+                                <RecordsSortHeader label={ui.detailCost} active={sortKey === 'cost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('cost')} />
+                              </th>
+                            )}
+                            {visibleColumns.price && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('price')}>
+                                <RecordsSortHeader label={ui.detailPrice} active={sortKey === 'price'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('price')} />
+                              </th>
+                            )}
+                            {visibleColumns.totalCost && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('totalCost')}>
+                                <RecordsSortHeader label={ui.detailTotalCost} active={sortKey === 'totalCost'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('totalCost')} />
+                              </th>
+                            )}
+                            {visibleColumns.marketValue && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('marketValue')}>
+                                <RecordsSortHeader label={ui.detailMarketValue} active={sortKey === 'marketValue'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('marketValue')} />
+                              </th>
+                            )}
+                            {visibleColumns.unrealized && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('unrealized')}>
+                                <RecordsSortHeader label={ui.detailUnrealizedPnl} active={sortKey === 'unrealized'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('unrealized')} />
+                              </th>
+                            )}
+                            {visibleColumns.return && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('returnRate')}>
+                                <RecordsSortHeader label={ui.resultTotalReturn} active={sortKey === 'returnRate'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('returnRate')} />
+                              </th>
+                            )}
+                            {showTtmYield && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('ttmYield')}>
+                                <span className="inline-flex items-center gap-1">
+                                  <RecordsSortHeader label={ui.colYieldTtm} active={sortKey === 'ttmYield'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('ttmYield')} />
+                                  <FieldHelp text={ui.helpYieldTtm} />
+                                </span>
+                              </th>
+                            )}
+                            {visibleColumns.net && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium text-right" aria-sort={ariaSortFor('net')}>
+                                <span className="inline-flex items-center gap-1">
+                                  <RecordsSortHeader label={ui.netTitle} active={sortKey === 'net'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('net')} />
+                                  <FieldHelp text={ui.helpNet} />
+                                </span>
+                              </th>
+                            )}
+                            {visibleColumns.created && (
+                              <th className="px-3 py-2 whitespace-nowrap font-medium" aria-sort={ariaSortFor('created')}>
+                                <RecordsSortHeader label={ui.detailCreatedAt} active={sortKey === 'created'} dir={sortDir} ascLabel={ui.sortAsc} descLabel={ui.sortDesc} onToggle={() => toggleSort('created')} />
+                              </th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map(item => {
+                            const open = expandedId === item.id
+                            const net = computeNetPnL({ market: item.market, symbol: item.symbol, shares: item.shares, cost: item.cost, currentPrice: item.current_price, discount: feeDiscount })
+                            return (
+                              <Fragment key={item.id}>
+                                <tr onClick={() => expandHistory(item)} className="border-b border-white/5 hover:bg-white/5 transition cursor-pointer">
                         <td className="sticky left-0 z-10 bg-[var(--bg-card)] px-3 py-2 whitespace-nowrap">
                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                             <button
@@ -2753,25 +2884,21 @@ export default function PortfolioPage() {
                             {formatMoney(item.total_return, item.market)} {formatPct(item.total_return_pct)}
                           </td>
                         )}
-                        {/* #100：單欄殖利率＝TTM；點欄位開明細 modal（stopPropagation 不觸發列展開）；美股無真源顯示 —。 */}
-                        {visibleColumns.ttmYield && (
+                        {/* #100：單欄殖利率＝TTM（美股表格已隱藏此台股專用欄）。 */}
+                        {showTtmYield && (
                           <td className="px-3 py-2 whitespace-nowrap text-right tabular-nums">
-                            {item.market === 'us' ? (
-                              <span className="text-[var(--text-secondary)]">—</span>
-                            ) : (
-                              <button
-                                type="button"
-                                aria-haspopup="dialog"
-                                aria-label={`${ui.yieldOpenModal} ${item.symbol}`}
-                                title={ui.yieldOpenModal}
-                                onClick={(e) => openYieldModal(e, item.id)}
-                                className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:bg-white/10 hover:decoration-current transition cursor-pointer"
-                              >
-                                {divLoading && divRows.length === 0 ? (
-                                  <span className="inline-block h-4 w-12 animate-pulse rounded bg-white/10 align-middle" />
-                                ) : ttmYieldText(item.id)}
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              aria-haspopup="dialog"
+                              aria-label={`${ui.yieldOpenModal} ${item.symbol}`}
+                              title={ui.yieldOpenModal}
+                              onClick={(e) => openYieldModal(e, item.id)}
+                              className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-[var(--accent)] underline decoration-dotted decoration-[var(--text-secondary)]/50 underline-offset-2 hover:bg-white/10 hover:decoration-current transition cursor-pointer"
+                            >
+                              {divLoading && divRows.length === 0 ? (
+                                <span className="inline-block h-4 w-12 animate-pulse rounded bg-white/10 align-middle" />
+                              ) : ttmYieldText(item.id)}
+                            </button>
                           </td>
                         )}
                         {visibleColumns.net && (
@@ -2783,7 +2910,7 @@ export default function PortfolioPage() {
                       </tr>
                       {open && (
                         <tr className="border-b border-white/5">
-                          <td colSpan={visibleColumnCount + 1} className="px-4 pb-4 pt-2 bg-white/[0.02]">
+                          <td colSpan={effectiveColSpan} className="px-4 pb-4 pt-2 bg-white/[0.02]">
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                               <NetPnlView
                                 market={item.market}
@@ -2814,7 +2941,7 @@ export default function PortfolioPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {history.map(item => {
+            {cardRows.map(item => {
               const open = expandedId === item.id
               return (
                 <div key={item.id} className="bg-[var(--bg-card)] rounded-xl border border-white/5 overflow-hidden">
@@ -2928,6 +3055,11 @@ export default function PortfolioPage() {
                         </div>
                       )}
                     </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
                   )}
                 </div>
               )
