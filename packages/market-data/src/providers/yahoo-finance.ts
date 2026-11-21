@@ -188,6 +188,36 @@ async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
   return null
 }
 
+/**
+ * Issue #176：從 Yahoo v8 chart `events=div` 彙總近 12 個月真實配息總和與 TTM 殖利率。
+ * 解決 Yahoo quoteSummary 對美股 ETF（如 QQQI/JEPQ/QQQM/BITO）不填 dividendRate 且
+ * trailingAnnualDividendYield 回 0 或 yield 失真之問題；無配息事件回 null。
+ */
+async function fetchTtmDividendFromChart(
+  symbol: string,
+): Promise<{ rate: number; yieldDecimal?: number } | null> {
+  try {
+    const data: any = await yahooFetch(`/chart/${encodeURIComponent(symbol)}?range=1y&interval=1mo&events=div`)
+    const r = data?.chart?.result?.[0]
+    const divsObj = r?.events?.dividends
+    if (!divsObj || typeof divsObj !== 'object') return null
+    let total = 0
+    for (const d of Object.values(divsObj) as Array<{ amount?: number }>) {
+      if (typeof d?.amount === 'number' && Number.isFinite(d.amount) && d.amount > 0) {
+        total += d.amount
+      }
+    }
+    if (!(total > 0)) return null
+    const rate = Math.round(total * 10000) / 10000
+    const price = r?.meta?.regularMarketPrice
+    const yieldDecimal =
+      typeof price === 'number' && Number.isFinite(price) && price > 0 ? rate / price : undefined
+    return { rate, yieldDecimal }
+  } catch {
+    return null
+  }
+}
+
 export const yahooFinanceProvider: MarketDataProvider = {
   name: 'yahoo-finance',
 
@@ -276,6 +306,27 @@ export const yahooFinanceProvider: MarketDataProvider = {
       const raw = typeof v === 'object' && v !== null ? v.raw : v
       return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined
     }
+    const pos = (v: number | undefined): number | undefined =>
+      v != null && v > 0 ? v : undefined
+
+    const quoteType = typeof price.quoteType === 'string' ? price.quoteType : undefined
+    const isEtf = quoteType?.toUpperCase() === 'ETF'
+
+    let dividendYield = pos(num(summary.dividendYield))
+    let trailingAnnualDividendYield = pos(num(summary.trailingAnnualDividendYield))
+    let dividendRate = pos(num(summary.dividendRate)) ?? pos(num(summary.trailingAnnualDividendRate))
+
+    if (isEtf || !dividendRate) {
+      const ttmDiv = await fetchTtmDividendFromChart(key)
+      if (ttmDiv) {
+        dividendRate = ttmDiv.rate
+        if (isEtf || !dividendYield) {
+          dividendYield = ttmDiv.yieldDecimal ?? pos(num(summary.yield))
+        }
+      } else if (isEtf) {
+        dividendYield = dividendYield ?? pos(num(summary.yield))
+      }
+    }
 
     const result: Fundamentals = {
       symbol,
@@ -285,9 +336,9 @@ export const yahooFinanceProvider: MarketDataProvider = {
       priceToBook: num(stats.priceToBook),
       pegRatio: num(stats.pegRatio),
       eps: num(stats.trailingEps) ?? num(summary.trailingEps),
-      dividendYield: num(summary.dividendYield),
-      trailingAnnualDividendYield: num(summary.trailingAnnualDividendYield),
-      dividendRate: num(summary.dividendRate),
+      dividendYield,
+      trailingAnnualDividendYield,
+      dividendRate,
       payoutRatio: num(summary.payoutRatio),
       returnOnEquity: num(fin.returnOnEquity),
       operatingMargins: num(fin.operatingMargins),
@@ -302,7 +353,7 @@ export const yahooFinanceProvider: MarketDataProvider = {
       fiftyTwoWeekHigh: num(summary.fiftyTwoWeekHigh),
       fiftyTwoWeekLow: num(summary.fiftyTwoWeekLow),
       currentPrice: num(fin.currentPrice) ?? num(price.regularMarketPrice),
-      quoteType: typeof price.quoteType === 'string' ? price.quoteType : undefined,
+      quoteType,
       revenue: num(fin.totalRevenue),
       netIncome: num(stats.netIncomeToCommon),
       sector: price.sector,

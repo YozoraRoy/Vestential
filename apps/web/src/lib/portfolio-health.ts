@@ -242,15 +242,22 @@ export function computeDrawdownFrom52wHigh(
 }
 
 function resolveYieldPct(input: HoldingHealthInput): { value: number | null; source: string } {
-  if (input.market === 'tw' && finite(input.twseAvgYield5y) != null) {
+  if (input.market === 'tw' && finite(input.twseAvgYield5y) != null && (input.twseAvgYield5y as number) > 0) {
     return { value: input.twseAvgYield5y as number, source: 'TWSE 5年均' }
   }
   const f = input.fundamentals
-  const raw = finite(f?.dividendYield) ?? finite(f?.trailingAnnualDividendYield)
-  if (raw != null && raw >= 0) {
+  const dYield = finite(f?.dividendYield)
+  const tYield = finite(f?.trailingAnnualDividendYield)
+  const raw = dYield != null && dYield > 0 ? dYield : tYield != null && tYield > 0 ? tYield : null
+  if (raw != null) {
     // Yahoo summaryDetail.dividendYield 為小數（如 0.032 = 3.2%），防禦異常值 > 1
     const pct = raw > 1 ? raw : raw * 100
-    return { value: Math.round(pct * 100) / 100, source: 'Yahoo' }
+    return { value: Math.round(pct * 100) / 100, source: 'Yahoo TTM' }
+  }
+  const dRate = finite(f?.dividendRate)
+  const price = finite(input.currentPrice) ?? finite(f?.currentPrice)
+  if (dRate != null && dRate > 0 && price != null && price > 0) {
+    return { value: Math.round((dRate / price) * 10000) / 100, source: 'Yahoo TTM' }
   }
   return { value: null, source: '' }
 }

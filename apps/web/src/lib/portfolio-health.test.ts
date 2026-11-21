@@ -194,6 +194,42 @@ describe('evaluateHoldingHealth — 金融股與 ETF 專屬分流', () => {
     expect(res.highlights.roePct).toBeNull()
     expect(res.highlights.dividendYieldPct).toBe(6.2)
   })
+
+  it('美股 ETF trailingAnnualDividendYield=0 時不誤顯 0.00%，無配息回 null、有 dividendRate 則自動推算', () => {
+    const noDiv = evaluateHoldingHealth({
+      market: 'us',
+      symbol: 'IBIT',
+      shares: 10,
+      cost: 40,
+      currentPrice: 33,
+      marketValue: 330,
+      unrealizedPnlPct: -17.5,
+      fundamentals: {
+        quoteType: 'ETF',
+        trailingAnnualDividendYield: 0,
+        fiftyTwoWeekHigh: 55,
+      },
+    })
+    expect(noDiv.highlights.dividendYieldPct).toBeNull()
+
+    const withRate = evaluateHoldingHealth({
+      market: 'us',
+      symbol: 'QQQI',
+      shares: 10,
+      cost: 50,
+      currentPrice: 45,
+      marketValue: 450,
+      unrealizedPnlPct: -10,
+      fundamentals: {
+        quoteType: 'ETF',
+        trailingAnnualDividendYield: 0,
+        dividendRate: 7.5,
+        fiftyTwoWeekHigh: 57,
+      },
+    })
+    expect(withRate.highlights.dividendYieldPct).toBeCloseTo(16.67, 1)
+    expect(withRate.highlights.dividendRate).toBe(7.5)
+  })
 })
 
 describe('evaluatePortfolioHealth — 組合市值加權摘要與零守衛', () => {
