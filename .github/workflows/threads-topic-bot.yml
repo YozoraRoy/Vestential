@@ -17,14 +17,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: 觸發 Vestential 第 2 小編全自動海巡
         env:
-          SYNC_TOKEN: ${{ secrets.VESTENTIAL_SYNC_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: |
+          SYNC_TOKEN=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-SYNC-TOKEN \
+            --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to read VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
+
           BODY=$(printf '{"dryRun":%s,"maxReplies":1}' "$DRY_RUN")
           RES=$(curl -sS -w "\n%{http_code}" --max-time 60 \
-            -X POST "https://stock-platform-roy.azurewebsites.net/api/social/topic-bot" \
+            -X POST "https://vestential.com/api/social/topic-bot" \
             -H "Authorization: Bearer ${SYNC_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "$BODY")
