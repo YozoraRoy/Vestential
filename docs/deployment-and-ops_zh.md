@@ -15,9 +15,14 @@
 
 ---
 
-## 2. GitHub Secrets 與 Azure App Settings 對應表
+## 2. Azure Key Vault 集中託管與 GitHub Secrets 對應表
 
-在 GitHub 倉庫的 **Settings → Secrets and variables → Actions** 設定下列金鑰：
+> **必要規則（AI / LLM 與開發人員必讀）**：本專案所有 Token、API Key 與機密之標準託管來源為 **Azure Key Vault `kv-aicontrol-roy`**（資源群組：`rg-yuzora_roy_ai`，URI：`https://kv-aicontrol-roy.vault.azure.net/`），Secret 命名採全大寫與連字號 `-`（如 `VESTENTIAL-SYNC-TOKEN`、`VESTENTIAL-BRIGHTDATA-ZONE`）。
+>
+> - **新增或修改排程／腳本**：一律透過 `azure/login@v2`（`${{ secrets.AZURE_CREDENTIALS }}`）登入後，使用 `az keyvault secret show --vault-name kv-aicontrol-roy --name <SECRET-NAME> --query value -o tsv` 讀取（並搭配 `echo "::add-mask::$VAR"`），例如 `.github/workflows/threads-topic-bot.yml`。
+> - **既有舊排程**：下表列出的舊有 GitHub Secrets 係歷史遺留配置，後續將逐步遷移至 `kv-aicontrol-roy`；**嚴禁**再新增未定義的 GitHub Secrets 或在無日誌證據下臆測 Secret 名稱。
+
+在 GitHub 倉庫的 **Settings → Secrets and variables → Actions** 設定下列既有金鑰：
 
 | GitHub Secret 名稱 | 說明與來源 | 對應 Azure App Setting |
 | :--- | :--- | :--- |

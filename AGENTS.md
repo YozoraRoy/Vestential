@@ -1,5 +1,21 @@
 # AGENTS.md — 專案規則
 
+## 必要紅線規則：所有 Token / API Key 必須從 Azure Key Vault 讀取
+
+任何 AI / LLM（包含自動故障診斷、自動修復補丁與人工輔助開發）在處理本專案時，**必須遵守以下金鑰管理規範**：
+
+1. **唯一集中託管來源**：所有 Token、API Key、憑證與機密一律存放並讀取自 **Azure Key Vault `kv-aicontrol-roy`**（資源群組：`rg-yuzora_roy_ai`，URI：`https://kv-aicontrol-roy.vault.azure.net/`）。
+2. **禁止憑空假設或新增 GitHub Secrets**：
+   - 嚴禁在新增或修改 GitHub Actions workflow、腳本或自動修復補丁時，假設或使用未在 repo 定義的 GitHub Secrets（例如禁止臆測 `secrets.THREADS_ACCESS_TOKEN`、`secrets.VESTENTIAL_SYNC_TOKEN` 等）。
+   - 新增或遷移之 Token / API Key 一律存入 `kv-aicontrol-roy`，不新增零散的 GitHub Secrets。
+3. **Secret 命名規範**：
+   - Azure Key Vault Secret 名稱僅允許英數字與連字號 `-`（不可使用底線 `_`），採全大寫並加 `VESTENTIAL-` 前綴（例如 `VESTENTIAL-SYNC-TOKEN`、`VESTENTIAL-BRIGHTDATA-ZONE`）。
+4. **GitHub Actions 標準讀取方式**：
+   - 先透過 `azure/login@v2`（使用 `${{ secrets.AZURE_CREDENTIALS }}`）登入 Azure。
+   - 再以 `az keyvault secret show --vault-name kv-aicontrol-roy --name <SECRET-NAME> --query value -o tsv` 讀取，並立即加上 `echo "::add-mask::$VAR"` 遮罩。
+   - 參考範例：`.github/workflows/threads-topic-bot.yml`。
+5. **不外洩原則**：嚴禁在對話、Commit、Issue/PR 內文或日誌中輸出任何 Secret 明文。
+
 ## 跑測試 / 冒煙前：Dev Server 檢查（必做）
 
 任何 QA 驗證、冒煙測試、E2E 之前，**先確認 dev server 狀態**，再決定是否要清理：
