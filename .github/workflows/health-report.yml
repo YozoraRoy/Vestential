@@ -50,13 +50,24 @@ jobs:
           echo "::notice::health GET final HTTP $CODE"
           [ "$CODE" = "200" ] || echo "::error::health GET failed persistently (HTTP $CODE)"
 
+      - name: Azure Login (on anomaly)
+        if: steps.get.outputs.code != '200'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: POST /api/health/repair on anomaly
         id: repair
         if: steps.get.outputs.code != '200'
         env:
           KIND: ${{ steps.kind.outputs.kind }}
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
+          SYNC_TOKEN=$(az keyvault secret show --vault-name kv-aicontrol-roy --name VESTENTIAL-SYNC-TOKEN --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to load VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
           export LC_ALL=C.UTF-8
           CODE="000"
           for i in 1 2 3; do

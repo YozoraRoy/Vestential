@@ -34,12 +34,21 @@ jobs:
 
       - name: Deploy Logic App
         run: |
+          SYNC_TOKEN=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-SYNC-TOKEN \
+            --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to load VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
           az deployment group create \
             --name "market-focus-scheduler-$(date +%Y%m%d%H%M%S)" \
             --resource-group rg-yuzora_roy_ai \
             --template-file infra/market-focus-scheduler.bicep \
             --parameters \
-              syncToken="${{ secrets.SYNC_TOKEN }}" \
+              syncToken="$SYNC_TOKEN" \
               siteBaseUrl="https://vestential.com" \
               runKind="${{ inputs.run_kind }}" \
             --output none

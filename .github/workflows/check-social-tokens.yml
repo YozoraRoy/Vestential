@@ -14,10 +14,28 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Load SYNC_TOKEN from Azure Key Vault
+        run: |
+          SYNC_TOKEN=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-SYNC-TOKEN \
+            --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to load VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
+          echo "SYNC_TOKEN=$SYNC_TOKEN" >> "$GITHUB_ENV"
+
       - name: Ping token-health endpoint
         run: |
           CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 30 \
-            -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
+            -H "Authorization: Bearer $SYNC_TOKEN" \
             "https://vestential.com/api/social/token-health")
           echo "token-health HTTP $CODE"
           echo "---"
