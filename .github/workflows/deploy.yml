@@ -50,26 +50,26 @@ jobs:
             --name stock-platform-roy \
             --resource-group rg-yuzora_roy_ai \
             --settings \
-              OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+              OPENAI_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-OPENAI-API-KEY)" \
               LLM_PROVIDER=google \
               LLM_BACKEND_URL="" \
               DEEP_THINK_MODEL=gemini-2.5-flash \
               QUICK_THINK_MODEL=gemini-2.5-flash \
-              GOOGLE_GENERATIVE_AI_API_KEY="${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}" \
+              GOOGLE_GENERATIVE_AI_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-GOOGLE-GENERATIVE-AI-API-KEY)" \
               FALLBACK_LLM_PROVIDER=openai \
               FALLBACK_DEEP_THINK_MODEL=qwen/qwen3.8-27b \
               FALLBACK_QUICK_THINK_MODEL=qwen/qwen3.8-27b \
               FALLBACK_DEEP_LLM_BACKEND_URL="https://api.groq.com/openai/v1" \
-              FALLBACK_DEEP_LLM_API_KEY="${{ secrets.FALLBACK_DEEP_LLM_API_KEY }}" \
+              FALLBACK_DEEP_LLM_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-FALLBACK-DEEP-LLM-API-KEY)" \
               FALLBACK_QUICK_LLM_BACKEND_URL="https://api.groq.com/openai/v1" \
-              FALLBACK_QUICK_LLM_API_KEY="${{ secrets.FALLBACK_QUICK_LLM_API_KEY }}" \
+              FALLBACK_QUICK_LLM_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-FALLBACK-QUICK-LLM-API-KEY)" \
               FALLBACK2_LLM_PROVIDER=openai \
               FALLBACK2_DEEP_THINK_MODEL=qwen/qwen3.8-27b \
               FALLBACK2_QUICK_THINK_MODEL=qwen/qwen3.8-27b \
               FALLBACK2_DEEP_LLM_BACKEND_URL="https://api.groq.com/openai/v1" \
-              FALLBACK2_DEEP_LLM_API_KEY="${{ secrets.FALLBACK2_DEEP_LLM_API_KEY }}" \
+              FALLBACK2_DEEP_LLM_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-FALLBACK2-DEEP-LLM-API-KEY)" \
               FALLBACK2_QUICK_LLM_BACKEND_URL="https://api.groq.com/openai/v1" \
-              FALLBACK2_QUICK_LLM_API_KEY="${{ secrets.FALLBACK2_QUICK_LLM_API_KEY }}" \
+              FALLBACK2_QUICK_LLM_API_KEY="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-FALLBACK2-QUICK-LLM-API-KEY)" \
               LLM_TEMPERATURE=0.7 \
               LLM_DISABLE_THINKING=true \
               LLM_TIMEOUT_MS=180000 \
@@ -81,25 +81,25 @@ jobs:
               WEBSITES_ENABLE_APP_SERVICE_STORAGE=true \
               WEBSITE_RUN_FROM_PACKAGE=0 \
               WEBSITES_CONTAINER_START_TIME_LIMIT=600 \
-              DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              DATABASE_URL="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-DATABASE-URL)" \
               DATABASE_PATH=/home/data/stock.db \
-              AUTH_SECRET="${{ secrets.AUTH_SECRET }}" \
+              AUTH_SECRET="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-AUTH-SECRET)" \
               AUTH_BASE_URL=https://vestential.com \
-              GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}" \
-              GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-              LINE_CLIENT_ID="${{ secrets.LINE_CLIENT_ID }}" \
-              LINE_CLIENT_SECRET="${{ secrets.LINE_CLIENT_SECRET }}" \
-              SYNC_TOKEN="${{ secrets.SYNC_TOKEN }}" \
+              GOOGLE_CLIENT_ID="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-GOOGLE-CLIENT-ID)" \
+              GOOGLE_CLIENT_SECRET="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-GOOGLE-CLIENT-SECRET)" \
+              LINE_CLIENT_ID="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-LINE-CLIENT-ID)" \
+              LINE_CLIENT_SECRET="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-LINE-CLIENT-SECRET)" \
+              SYNC_TOKEN="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-SYNC-TOKEN)" \
               SMTP_HOST=smtp.gmail.com \
               SMTP_PORT=587 \
-              SMTP_USER="${{ secrets.SMTP_USER }}" \
-              SMTP_PASS="${{ secrets.SMTP_PASS }}" \
+              SMTP_USER="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-SMTP-USER)" \
+              SMTP_PASS="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-SMTP-PASS)" \
               NOTIFY_FROM=vestential.com \
-              NOTIFY_TO="${{ secrets.NOTIFY_TO }}" \
-              THREADS_ACCESS_TOKEN="${{ secrets.THREADS_ACCESS_TOKEN }}" \
-              THREADS_USER_ID="${{ secrets.THREADS_USER_ID }}" \
-              THREADS_APP_ID="${{ secrets.THREADS_APP_ID }}" \
-              THREADS_APP_SECRET="${{ secrets.THREADS_APP_SECRET }}" \
+              NOTIFY_TO="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-NOTIFY-TO)" \
+              THREADS_ACCESS_TOKEN="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-THREADS-ACCESS-TOKEN)" \
+              THREADS_USER_ID="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-THREADS-USER-ID)" \
+              THREADS_APP_ID="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-THREADS-APP-ID)" \
+              THREADS_APP_SECRET="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-THREADS-APP-SECRET)" \
               ADMIN_LINE_USER_IDS=U992bf6b74efcd58e3dc5d3f8d356e880 \
               ADMIN_EMAILS=yuzora_roy@hotmail.com,yozora.sc@gmail.com \
               ARENA_CRON_ENABLED=false
