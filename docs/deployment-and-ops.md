@@ -15,9 +15,14 @@ The platform is always deployed to Azure App Service through a **GitHub Actions 
 
 ---
 
-## 2. GitHub Secrets and Azure App Settings Mapping
+## 2. Azure Key Vault Central Management and GitHub Secrets Mapping
 
-Set the following keys under **Settings → Secrets and variables → Actions** in the GitHub repository:
+> **Mandatory Rule (for all AI / LLMs and developers)**: The canonical secret store for all tokens, API keys, and credentials in this project is **Azure Key Vault `kv-aicontrol-roy`** (Resource Group: `rg-yuzora_roy_ai`, URI: `https://kv-aicontrol-roy.vault.azure.net/`). Secret names use uppercase letters and hyphens `-` (e.g., `VESTENTIAL-SYNC-TOKEN`, `VESTENTIAL-BRIGHTDATA-ZONE`).
+>
+> - **New or updated workflows/scripts**: Sign in via `azure/login@v2` (`${{ secrets.AZURE_CREDENTIALS }}`) and read secrets with `az keyvault secret show --vault-name kv-aicontrol-roy --name <SECRET-NAME> --query value -o tsv` (followed by `echo "::add-mask::$VAR"`), as demonstrated in `.github/workflows/threads-topic-bot.yml`.
+> - **Legacy workflows**: The GitHub Secrets listed below are legacy configurations to be gradually migrated to `kv-aicontrol-roy`. **Do not** introduce new ad-hoc GitHub Secrets or assume undocumented secret names.
+
+Set the following legacy keys under **Settings → Secrets and variables → Actions** in the GitHub repository:
 
 | GitHub Secret name | Description and source | Corresponding Azure App Setting |
 | :--- | :--- | :--- |
