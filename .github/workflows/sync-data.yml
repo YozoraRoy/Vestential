@@ -14,9 +14,26 @@ jobs:
     timeout-minutes: 90
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Load DATABASE_URL from Azure Key Vault
+        run: |
+          DATABASE_URL=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-DATABASE-URL \
+            --query value -o tsv)
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Failed to load VESTENTIAL-DATABASE-URL from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$DATABASE_URL"
+          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
