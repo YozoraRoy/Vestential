@@ -31,6 +31,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Load SYNC_TOKEN from Azure Key Vault
+        run: |
+          SYNC_TOKEN=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-SYNC-TOKEN \
+            --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to load VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
+          echo "SYNC_TOKEN=$SYNC_TOKEN" >> "$GITHUB_ENV"
+
       - name: Determine phase params
         id: phase
         run: |
@@ -83,7 +101,7 @@ jobs:
           CODE=$(curl -s -o /tmp/arena_tick.json -w "%{http_code}" \
             --max-time 90 \
             -X POST \
-            -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
+            -H "Authorization: Bearer $SYNC_TOKEN" \
             -H "Content-Type: application/json" \
             "https://vestential.com/api/agent-arena/tick?${QUERY}")
           echo "HTTP $CODE"
@@ -114,7 +132,7 @@ jobs:
           for i in $(seq 1 150); do
             sleep 10
             LAST=$(curl -s --max-time 30 \
-              -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
+              -H "Authorization: Bearer $SYNC_TOKEN" \
               "https://vestential.com/api/agent-arena/tick/status?jobId=${JOB_ID}")
             STATUS=$(printf '%s' "$LAST" | jq -r '.status // empty')
             echo "poll#$i status=${STATUS}"

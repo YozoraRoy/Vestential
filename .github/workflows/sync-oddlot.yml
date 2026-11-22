@@ -29,13 +29,31 @@ jobs:
           echo "target=$TARGET"
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Load SYNC_TOKEN from Azure Key Vault
+        run: |
+          SYNC_TOKEN=$(az keyvault secret show \
+            --vault-name kv-aicontrol-roy \
+            --name VESTENTIAL-SYNC-TOKEN \
+            --query value -o tsv)
+          if [ -z "$SYNC_TOKEN" ]; then
+            echo "::error::Failed to load VESTENTIAL-SYNC-TOKEN from Azure Key Vault kv-aicontrol-roy"
+            exit 1
+          fi
+          echo "::add-mask::$SYNC_TOKEN"
+          echo "SYNC_TOKEN=$SYNC_TOKEN" >> "$GITHUB_ENV"
+
       - name: Trigger odd-lot refresh on Azure
         run: |
           echo "Refreshing odd-lot for ${{ steps.date.outputs.target }}"
           CODE=$(curl -s -o /tmp/oddlot_resp.json -w "%{http_code}" \
             --max-time 300 \
             -X POST \
-            -H "Authorization: Bearer ${{ secrets.SYNC_TOKEN }}" \
+            -H "Authorization: Bearer $SYNC_TOKEN" \
             -H "Content-Type: application/json" \
             "https://vestential.com/api/odd-lot/refresh?date=${{ steps.date.outputs.target }}")
           echo "HTTP $CODE"
