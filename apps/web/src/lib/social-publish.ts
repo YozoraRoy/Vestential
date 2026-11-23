@@ -91,9 +91,26 @@ export async function clearSocialPost(platform: SocialPostPlatform, editionKey: 
 }
 
 /**
+ * 淨化 Threads `topic_tag`（Meta Graph API 規範：1–50 字元，不可含 `.` 與 `&`）。
+ * 同時移除前導 `#` 與換行；若淨化後為空則回傳 `undefined`。
+ */
+export function sanitizeThreadsTopicTag(raw?: string | null): string | undefined {
+  if (!raw) return undefined
+  const cleaned = raw
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[.&]/g, '')
+    .trim()
+    .replace(/^#+/, '')
+    .trim()
+  if (!cleaned) return undefined
+  return Array.from(cleaned).slice(0, 50).join('').trim() || undefined
+}
+
+/**
  * 發布單一平台。若該 edition 已發布過則直接回傳既有狀態。
  * @param imageUrl 圖卡公開 URL（IG/Threads 需要公開可下載的圖片）。
  * @param dryRun 只寫紀錄不動 Meta API。
+ * @param topicTag Threads 貼文主題標籤（選填，僅 Threads 使用）。
  */
 export async function publishSocialPost(
   platform: SocialPostPlatform,
@@ -102,6 +119,7 @@ export async function publishSocialPost(
   imageUrl: string | null,
   dryRun = false,
   force = false,
+  topicTag?: string | null,
 ): Promise<PublishResult> {
   // dry-run 純模擬：不讀去重、不寫 DB、不動 Meta API。去重（force 清理）只屬發布流程。
   if (dryRun) {
@@ -131,7 +149,7 @@ export async function publishSocialPost(
     if (platform === 'facebook') {
       return await publishFacebook(row, env as NonNullable<PublishConfig['facebook']>, imageUrl)
     }
-    return await publishThreads(row, env as NonNullable<PublishConfig['threads']>, imageUrl)
+    return await publishThreads(row, env as NonNullable<PublishConfig['threads']>, imageUrl, topicTag)
   } catch (e: any) {
     const msg = e?.message || String(e)
     console.error(`[Social/${platform}] publish error:`, msg)
@@ -393,6 +411,7 @@ async function publishThreads(
   row: SocialPostRow,
   env: NonNullable<PublishConfig['threads']>,
   imageUrl: string | null,
+  topicTag?: string | null,
 ): Promise<PublishResult> {
   const { accessToken: thAccessToken, userId: threadsUserId } = env
   if (!thAccessToken) throw new Error('THREADS_ACCESS_TOKEN 未設定')
@@ -404,6 +423,10 @@ async function publishThreads(
     createBody.media_type = 'IMAGE'
   }
   createBody.text = row.content
+  const cleanTopic = sanitizeThreadsTopicTag(topicTag)
+  if (cleanTopic) {
+    createBody.topic_tag = cleanTopic
+  }
 
   const created = await graphPost(`${THREADS_API}/${threadsUserId}/threads`, createBody)
   const containerId = String(created.id ?? '')

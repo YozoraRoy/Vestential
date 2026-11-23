@@ -153,8 +153,21 @@ describe('generateSocialCaptions｜成功路徑', () => {
     expect(userPrompts[2]).toContain('請撰寫本期 Facebook 文案。')
 
     // 三欄位齊備
-    const expected: SocialCaptions = { instagram: 'ok', threads: 'ok' + DRIVE_CTA, facebook: 'ok' + DRIVE_CTA }
+    const expected: SocialCaptions = { instagram: 'ok', threads: 'ok' + DRIVE_CTA, facebook: 'ok' + DRIVE_CTA, threadsTopic: '台股' }
     expect(out).toEqual(expected)
+  })
+
+  it('Threads AI 回傳 JSON 含 threadsTopic 時正確萃取，並淨化禁止字元', async () => {
+    const generate = stubLlm()
+    generate
+      .mockResolvedValueOnce('IG 文案')
+      .mockResolvedValueOnce('```json\n{"threads":"半導體今天大爆發！","threadsTopic":"#半導體 & AI."}\n```')
+      .mockResolvedValueOnce('FB 文案')
+
+    const out = await generateSocialCaptions(meta, items)
+
+    expect(out.threads).toBe('半導體今天大爆發！' + DRIVE_CTA)
+    expect(out.threadsTopic).toBe('半導體  AI')
   })
 
   it('容錯：模型回傳 ```json 單欄位時仍可萃取', async () => {

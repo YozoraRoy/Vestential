@@ -10,7 +10,7 @@ interface DryRunResult {
   cardStyle?: SocialCardStyle
   igCardStyle?: 'ai' | 'meme'
   cards?: { classic: string; meme: string; ai: string }
-  captions?: { instagram: string; threads: string; facebook: string }
+  captions?: { instagram: string; threads: string; facebook: string; threadsTopic?: string }
   meme?: { title: string; punchline: string } | null
   /** 發布時會自動貼上 IG 的第一則留言（導流）。 */
   igDriveComment?: string
@@ -54,6 +54,7 @@ export function SocialClient() {
   const [platforms] = useState<SocialPlatform[]>(['threads'])
   const [threadsCardStyle, setThreadsCardStyle] = useState<SocialCardStyle>('ai')
   const [draftThreads, setDraftThreads] = useState('')
+  const [draftThreadsTopic, setDraftThreadsTopic] = useState('台股')
   const [bgPreset, setBgPreset] = useState('auto')
   const [bgCustomPrompt, setBgCustomPrompt] = useState('')
   const [generatingBg, setGeneratingBg] = useState(false)
@@ -75,7 +76,7 @@ export function SocialClient() {
   const [festivalPreview, setFestivalPreview] = useState<{
     editionKey?: string | null
     card?: string
-    captions?: { instagram: string; threads: string; facebook: string }
+    captions?: { instagram: string; threads: string; facebook: string; threadsTopic?: string }
     message?: string
     skipped?: boolean
     triggered?: boolean
@@ -119,6 +120,7 @@ export function SocialClient() {
         setPreview(r.body as DryRunResult)
         setThreadsCardStyle('ai')
         setDraftThreads(r.body.captions?.threads ?? '')
+        setDraftThreadsTopic(r.body.captions?.threadsTopic ?? '台股')
         setResult({
           ok: true,
           message: r.body.triggered ? `乾跑完成（edition ${r.body.editionKey}）` : `${r.body.message ?? 'skipped'}（${r.body.error ?? ''}）`,
@@ -246,6 +248,7 @@ export function SocialClient() {
         imageUrls,
         // IG／FB 已停用，仍帶空字串以符合 API 的 SocialCaptions 型別。
         captions: { instagram: '', threads: draftThreads, facebook: '' },
+        topicTag: draftThreadsTopic,
       },
       180000,
     )
@@ -445,6 +448,24 @@ export function SocialClient() {
                 </div>
 
                 <div>
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-[var(--text-secondary)]">
+                        Threads 主題（Topic Tag，選填）
+                      </label>
+                      <span className="text-[11px] text-[var(--text-muted)]">
+                        {Array.from(draftThreadsTopic).length}/50（不可含 . 或 &amp;，留空則不加主題）
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      className={input}
+                      maxLength={50}
+                      placeholder="例如：台股、ETF、AI（由 AI 依新聞自動挑選）"
+                      value={draftThreadsTopic}
+                      onChange={(e) => setDraftThreadsTopic(e.target.value)}
+                    />
+                  </div>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-semibold text-[var(--accent)]">Threads 文案</h3>
                     <span className={`text-xs ${overTh ? 'text-[var(--accent-red)]' : 'text-[var(--text-secondary)]'}`}>

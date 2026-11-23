@@ -387,4 +387,46 @@ describe('graphPost｜Issue #58 節流', () => {
       expect(calledUrl).toContain('fields=status,error_message')
     })
   })
+
+  describe('sanitizeThreadsTopicTag & publishSocialPost topic_tag', () => {
+    it('淨化前導 #、禁止字元 (. &)、換行並限制 50 字元', async () => {
+      const { sanitizeThreadsTopicTag } = await import('./social-publish')
+      expect(sanitizeThreadsTopicTag('  #台股 & ETF.  ')).toBe('台股  ETF')
+      expect(sanitizeThreadsTopicTag('   ')).toBeUndefined()
+      expect(sanitizeThreadsTopicTag('.&')).toBeUndefined()
+      expect(sanitizeThreadsTopicTag('長'.repeat(60))).toBe('長'.repeat(50))
+    })
+
+    it('publishSocialPost(threads) 將淨化後的 topic_tag 送入 container 建立請求', async () => {
+      const db = await import('@stock/database')
+      vi.mocked(db.hasSocialPosted).mockResolvedValue(false)
+      vi.mocked(db.createSocialPost).mockResolvedValue({ id: 99, content: '測試貼文' } as any)
+      vi.mocked(db.updateSocialPost).mockResolvedValue(undefined as any)
+
+      process.env.THREADS_ACCESS_TOKEN = 'th_tok'
+      process.env.THREADS_USER_ID = 'th_uid'
+
+      const calls: { url: string; body: string }[] = []
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+          calls.push({ url, body: String(init?.body ?? '') })
+          if (url.includes('/threads_publish')) return fakeRes(200, { id: 'pub_1' })
+          if (url.includes('fields=status')) return fakeRes(200, { status: 'FINISHED' })
+          return fakeRes(200, { id: 'c_1' })
+        }),
+      )
+
+      const { publishSocialPost } = await import('./social-publish')
+      const out = await publishSocialPost('threads', 'ed-topic-1', '測試貼文', null, false, false, '#台股.')
+
+      delete process.env.THREADS_ACCESS_TOKEN
+      delete process.env.THREADS_USER_ID
+
+      expect(out.status).toBe('published')
+      const createCall = calls.find((c) => c.url.endsWith('/th_uid/threads'))
+      expect(createCall).toBeDefined()
+      expect(JSON.parse(createCall!.body).topic_tag).toBe('台股')
+    })
+  })
 })
