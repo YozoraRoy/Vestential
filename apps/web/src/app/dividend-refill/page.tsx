@@ -236,11 +236,25 @@ interface EventRow {
   matured: boolean
 }
 
+interface DividendPolicySummary {
+  frequency: 'monthly' | 'quarterly' | 'semi-annual' | 'annual' | 'irregular' | 'unknown'
+  exMonths: number[]
+  ttmCashDividend: number
+  ttmYieldPct: number | null
+  latestClose: number | null
+  taxable54cRatio: number
+  taxFreeRatio: number
+  taxNote: string | null
+  upcoming: Array<{ exDate: string; payDate: string | null; cashDividend: number }>
+  annualTotals: Array<{ year: string; totalCash: number; count: number }>
+}
+
 interface RefillResponse {
   symbol: string
   name: string | null
   asset_kind: 'etf' | 'stock' | 'unknown'
   asset_label: string
+  dividend_policy?: DividendPolicySummary
   stats: {
     eventCount: number
     skippedCount: number
@@ -288,6 +302,85 @@ function fmtPct(v: number | null): string {
 function fmtNum(v: number | null, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return '—'
   return v.toFixed(digits)
+}
+
+function getPolicyCopy(locale: Locale) {
+  if (locale === 'en') {
+    return {
+      title: 'Dividend Policy & Tax Profile',
+      freqLabel: 'Payout Frequency',
+      freqMap: {
+        monthly: 'Monthly',
+        quarterly: 'Quarterly',
+        'semi-annual': 'Semi-Annual',
+        annual: 'Annual',
+        irregular: 'Irregular / Partial Year',
+        unknown: 'No Full-Year Record Yet',
+      },
+      exMonthsLabel: 'Typical Ex-Dividend Months',
+      noMonths: 'Pending full cycle',
+      monthSuffix: (m: number) => `M${m}`,
+      ttmLabel: 'Trailing 12M Cash Dividend',
+      yieldSub: (yld: number | null, close: number | null) =>
+        yld != null && close != null ? `Est. yield ${yld.toFixed(2)}% (Ref. ${close.toFixed(2)})` : 'Ref. price N/A',
+      taxLabel: '54C Taxable / Tax-Free Ratio',
+      taxSub: (taxable: number, taxFree: number) =>
+        `54C ${Math.round(taxable * 100)}% · Equalization/Cap Gain ${Math.round(taxFree * 100)}%`,
+      upcomingTitle: 'Announced Upcoming Ex-Dividend',
+      annualTitle: 'Annual Cash Dividend Totals (Recent Years)',
+      timesUnit: 'payouts',
+    }
+  }
+  if (locale === 'ja') {
+    return {
+      title: '配当方針・税制区分',
+      freqLabel: '配当頻度',
+      freqMap: {
+        monthly: '毎月分配',
+        quarterly: '四半期分配',
+        'semi-annual': '年2回分配',
+        annual: '年1回分配',
+        irregular: '不定期／データ蓄積中',
+        unknown: '通年実績なし',
+      },
+      exMonthsLabel: '主な権利落月',
+      noMonths: '履歴蓄積中',
+      monthSuffix: (m: number) => `${m}月`,
+      ttmLabel: '直近12ヶ月 現金配当合計',
+      yieldSub: (yld: number | null, close: number | null) =>
+        yld != null && close != null ? `参考利回り ${yld.toFixed(2)}%（終値 ${close.toFixed(2)}）` : '参考終値なし',
+      taxLabel: '54C 課税・非課税比率',
+      taxSub: (taxable: number, taxFree: number) =>
+        `54C ${Math.round(taxable * 100)}%・収益平準金等 ${Math.round(taxFree * 100)}%`,
+      upcomingTitle: '発表済み次回権利落日',
+      annualTitle: '年別 現金配当合計（直近）',
+      timesUnit: '回',
+    }
+  }
+  return {
+    title: '股利政策與稅務口徑',
+    freqLabel: '配息頻率',
+    freqMap: {
+      monthly: '月配息',
+      quarterly: '季配息',
+      'semi-annual': '半年配',
+      annual: '年配息',
+      irregular: '不定期／掛牌未滿完整年度',
+      unknown: '尚無完整年度配息紀錄',
+    },
+    exMonthsLabel: '常見除息月份',
+    noMonths: '紀錄累積中',
+    monthSuffix: (m: number) => `${m} 月`,
+    ttmLabel: '近 12 個月現金股利合計',
+    yieldSub: (yld: number | null, close: number | null) =>
+      yld != null && close != null ? `估算殖利率 ${yld.toFixed(2)}%（參考價 ${close.toFixed(2)}）` : '尚無參考收盤價',
+    taxLabel: '54C 應稅／免扣補充保費佔比',
+    taxSub: (taxable: number, taxFree: number) =>
+      `54C ${Math.round(taxable * 100)}% · 平準金/資本利得 ${Math.round(taxFree * 100)}%`,
+    upcomingTitle: '已公告即將除息',
+    annualTitle: '近年年度現金股利彙總',
+    timesUnit: '次',
+  }
 }
 
 export default function DividendRefillPage() {
@@ -575,6 +668,80 @@ export default function DividendRefillPage() {
               <span>{t.insufficientBanner(data.stats.eventCount)}</span>
             </div>
           )}
+
+          {/* 股利政策摘要卡 */}
+          {data.dividend_policy && (() => {
+            const p = data.dividend_policy
+            const pc = getPolicyCopy(locale)
+            return (
+              <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-4 sm:p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">{pc.title}</h3>
+                  {p.taxNote && (
+                    <span className="text-[11px] text-[var(--text-muted)]">{p.taxNote}</span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                    <div className="text-xs text-[var(--text-muted)]">{pc.freqLabel}</div>
+                    <div className="mt-1 text-base font-bold text-[var(--text-primary)]">
+                      {pc.freqMap[p.frequency]}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                    <div className="text-xs text-[var(--text-muted)]">{pc.exMonthsLabel}</div>
+                    <div className="mt-1 text-base font-bold text-[var(--text-primary)]">
+                      {p.exMonths.length > 0 ? p.exMonths.map(pc.monthSuffix).join('、') : pc.noMonths}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                    <div className="text-xs text-[var(--text-muted)]">{pc.ttmLabel}</div>
+                    <div className="mt-1 text-base font-bold tabular-nums text-emerald-400">
+                      {p.ttmCashDividend > 0 ? `${p.ttmCashDividend.toFixed(4).replace(/\.?0+$/, '')} 元` : '—'}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-[var(--text-secondary)]">
+                      {pc.yieldSub(p.ttmYieldPct, p.latestClose)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                    <div className="text-xs text-[var(--text-muted)]">{pc.taxLabel}</div>
+                    <div className="mt-1 text-sm font-semibold text-[var(--text-primary)]">
+                      {pc.taxSub(p.taxable54cRatio, p.taxFreeRatio)}
+                    </div>
+                  </div>
+                </div>
+
+                {(p.upcoming.length > 0 || p.annualTotals.length > 0) && (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-white/5 text-xs">
+                    {p.upcoming.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[var(--text-muted)] font-medium">{pc.upcomingTitle}：</span>
+                        {p.upcoming.map((u) => (
+                          <span key={u.exDate} className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 tabular-nums">
+                            {u.exDate} ({u.cashDividend})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {p.annualTotals.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[var(--text-muted)] font-medium">{pc.annualTitle}：</span>
+                        {p.annualTotals.map((a) => (
+                          <span key={a.year} className="px-2 py-0.5 rounded bg-white/5 text-[var(--text-secondary)] tabular-nums">
+                            {a.year}: {a.totalCash} ({a.count}{pc.timesUnit})
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )
+          })()}
 
           {/* 4 張統計卡 */}
           <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">

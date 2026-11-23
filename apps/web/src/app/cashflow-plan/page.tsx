@@ -727,7 +727,15 @@ export default function CashflowPlanPage() {
                     {evaluation.months[activeMonth - 1]!.items.map((it, i) => (
                       <div key={i} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2">
                         <span>
-                          <b>{it.symbol}</b> {getPlanAssetDisplayName(it.symbol, it.name, it.names, locale)}（{it.lots} {t.lotsUnit}）
+                          <a
+                            href={localizePath(locale, `/dividend-refill?symbol=${encodeURIComponent(it.symbol)}`)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-bold text-[var(--accent)] hover:underline"
+                          >
+                            {it.symbol}
+                          </a>{' '}
+                          {getPlanAssetDisplayName(it.symbol, it.name, it.names, locale)}（{it.lots} {t.lotsUnit}）
                         </span>
                         <span className="tabular-nums font-semibold text-emerald-300">{fmtNtd(it.net)}</span>
                       </div>
@@ -777,7 +785,15 @@ export default function CashflowPlanPage() {
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold text-sm text-[var(--text-primary)]">
-                        {a.symbol} {getPlanAssetDisplayName(a.symbol, a.name, a.names, locale)}
+                        <a
+                          href={localizePath(locale, `/dividend-refill?symbol=${encodeURIComponent(a.symbol)}`)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--accent)] hover:underline"
+                        >
+                          {a.symbol}
+                        </a>{' '}
+                        {getPlanAssetDisplayName(a.symbol, a.name, a.names, locale)}
                       </span>
                       <span className="text-xs text-[var(--text-secondary)] tabular-nums">
                         {t.refPrice} {a.price.toFixed(2)}
