@@ -17,6 +17,8 @@ interface TokenCheck {
   platform: ActiveSocialPlatform | 'instagram' | 'facebook'
   ok: boolean
   configured: boolean
+  /** 暫態網路/逾時/5xx/429 錯誤（非 Token 本身失效，不觸發 Token 失效告警信）。 */
+  transient?: boolean
   user?: string | null
   error?: string
   daysRemaining?: number | null
@@ -49,11 +51,18 @@ export async function GET(req: Request) {
     }
 
     const broken = checks.filter((c) => !c.ok && c.configured)
-    if (broken.length > 0) {
+    const invalid = broken.filter((c) => !c.transient)
+    if (invalid.length > 0) {
       await sendMarketFocusAlert(
         '社群 Token 失效告警',
-        broken.map((c) => `${c.platform}: ${c.error}`).join('\n'),
+        invalid.map((c) => `${c.platform}: ${c.error}`).join('\n'),
       )
+    } else if (broken.length > 0) {
+      console.warn(
+        `[TokenHealth] 暫態錯誤略過 Token 失效告警發信：${broken.map((c) => `${c.platform}: ${c.error}`).join('; ')}`,
+      )
+    }
+    if (broken.length > 0) {
       return NextResponse.json({ success: false, brokenCount: broken.length, checks }, { status: 503 })
     }
 
@@ -86,26 +95,36 @@ async function checkThreads(): Promise<TokenCheck> {
     }
   }
   try {
+    const retryDelayMs = Number(process.env.TOKEN_HEALTH_RETRY_DELAY_MS ?? '1500')
     let res: Response | null = null
+    let json: any = null
     let lastErr: unknown = null
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         res = await fetch(
           `https://graph.threads.net/v1.0/me?fields=id,username&access_token=${encodeURIComponent(token)}`,
           { headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000) },
         )
-        break
+        json = await res.json().catch(() => ({}))
+        const isTransientHttp = res.status >= 500 || res.status === 429
+        if (!isTransientHttp || attempt === 3) break
       } catch (err) {
         lastErr = err
+        res = null
+        if (attempt === 3) break
+      }
+      if (retryDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, retryDelayMs))
       }
     }
     if (!res) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'Threads API timeout'))
-    const json = await res.json()
     if (!res.ok || !json?.id) {
+      const isTransientHttp = res.status >= 500 || res.status === 429
       return {
         platform: 'threads',
         ok: false,
         configured: true,
+        transient: isTransientHttp,
         error: json?.error?.message || `HTTP ${res.status}`,
         isPermanent: false,
         canRefresh: false,
@@ -154,6 +173,7 @@ async function checkThreads(): Promise<TokenCheck> {
       platform: 'threads',
       ok: false,
       configured: true,
+      transient: true,
       error: e?.message || 'network error',
       isPermanent: false,
       canRefresh: false,
