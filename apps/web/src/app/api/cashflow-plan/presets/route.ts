@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server'
+import { isLikelyEnglishStockName, resolveStockDisplayName, type StockMultilingualName } from '@stock/core'
+import { resolveStockName } from '@stock/cycle-entry'
 import { fetchBatchQuotes, yahooFinanceProvider } from '@stock/market-data'
-import { getStockNameById, getTwseDividendsByYear, migrate, taipeiTodayStr } from '@stock/database'
+import {
+  ensureTwStockNamesSynced,
+  getStockMultilingualNames,
+  getTwseDividendsByYear,
+  migrate,
+  taipeiTodayStr,
+  upsertStockNames,
+} from '@stock/database'
 import { buildAssetProfile, type PlanAssetProfile } from '@/lib/cashflow-plan'
 import { syncFinMindDividendsForSymbols } from '@/lib/finmind-dividends'
 
@@ -29,6 +38,7 @@ export async function GET() {
     }
 
     await migrate()
+    await ensureTwStockNamesSynced().catch(() => 0)
     const currentYear = Number(today.slice(0, 4))
     const years = [String(currentYear - 1), String(currentYear)]
 
@@ -74,20 +84,43 @@ export async function GET() {
       }),
     )
 
+    const dbNamesMap = await getStockMultilingualNames([...CORE_PLAN_SYMBOLS]).catch(
+      () => ({}) as Awaited<ReturnType<typeof getStockMultilingualNames>>,
+    )
+    const toUpsert: Array<{ symbol: string; nameZh?: string | null; nameEn?: string | null; market: 'TW'; source: string }> = []
     const profiles: Record<string, PlanAssetProfile> = {}
+
     for (const sym of CORE_PLAN_SYMBOLS) {
-      const dbName = await getStockNameById(sym).catch(() => null)
+      const dbNames = dbNamesMap[sym]
       const qInfo = priceMap.get(sym)
-      const name = dbName || qInfo?.name || DEFAULT_FALLBACK_NAMES[sym] || sym
+      const qEn = qInfo?.name && isLikelyEnglishStockName(qInfo.name) ? qInfo.name : null
+      const fallbackZh = resolveStockName(sym)
+      const nameZh = dbNames?.nameZh || (fallbackZh !== sym ? fallbackZh : null) || DEFAULT_FALLBACK_NAMES[sym] || null
+      const nameEn = dbNames?.nameEn || qEn || null
+      const names: StockMultilingualName = {
+        nameZh,
+        nameEn,
+        nameJa: dbNames?.nameJa ?? null,
+        market: 'TW',
+      }
+      if ((nameZh && !dbNames?.nameZh) || (nameEn && !dbNames?.nameEn)) {
+        toUpsert.push({ symbol: sym, nameZh, nameEn, market: 'TW', source: 'cashflow_presets' })
+      }
+      const name = resolveStockDisplayName(sym, names, 'zh-TW')
       const price = qInfo?.price ?? 0
       const symRows = rows.filter((r) => r.symbol.toUpperCase() === sym)
       profiles[sym] = buildAssetProfile({
         symbol: sym,
         name,
+        names,
         price,
         rawDividends: symRows,
         today,
       })
+    }
+
+    if (toUpsert.length > 0) {
+      await upsertStockNames(toUpsert).catch(() => 0)
     }
 
     memCache = { expiresAt: Date.now() + CACHE_TTL_MS, today, profiles }

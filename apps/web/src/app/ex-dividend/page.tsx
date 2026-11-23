@@ -22,6 +22,7 @@ import { computeHealthTaxSafety } from '@/lib/etf-dividend-composition'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Locale } from '@/i18n/config'
+import { displayStockName, type StockMultilingualName } from '@/lib/stock-display'
 
 const EXDIV_COPY = {
   'zh-TW': {
@@ -352,6 +353,7 @@ interface ExDividendStats {
 interface ExDividendItem {
   symbol: string
   name: string | null
+  names?: StockMultilingualName
   ex_date: string
   ex_last_buy_date: string
   days_to_ex: number | null
@@ -368,6 +370,7 @@ interface ExDividendItem {
 interface ExDividendTrackingItem {
   symbol: string
   name: string | null
+  names?: StockMultilingualName
   ex_date: string
   cash_dividend: number
   prev_close: number
@@ -808,11 +811,14 @@ export default function ExDividendPage() {
                                 >
                                   {item.symbol}
                                 </Link>
-                                {item.name && (
-                                  <span className="text-xs text-[var(--text-primary)] max-w-[110px] truncate" title={item.name}>
-                                    {item.name}
-                                  </span>
-                                )}
+                                {(() => {
+                                  const dName = displayStockName(item.symbol, locale, { fallbackName: item.name, names: item.names })
+                                  return dName && dName !== item.symbol ? (
+                                    <span className="text-xs text-[var(--text-primary)] max-w-[110px] truncate" title={dName}>
+                                      {dName}
+                                    </span>
+                                  ) : null
+                                })()}
                                 <span className="text-[10px] px-1 py-px rounded border border-white/10 text-[var(--text-secondary)]">
                                   {label}
                                 </span>
@@ -917,9 +923,12 @@ export default function ExDividendPage() {
                             >
                               {item.symbol}
                             </Link>
-                            {item.name && (
-                              <span className="text-xs text-[var(--text-secondary)] truncate">{item.name}</span>
-                            )}
+                            {(() => {
+                              const dName = displayStockName(item.symbol, locale, { fallbackName: item.name, names: item.names })
+                              return dName && dName !== item.symbol ? (
+                                <span className="text-xs text-[var(--text-secondary)] truncate">{dName}</span>
+                              ) : null
+                            })()}
                             <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-[var(--text-secondary)]">
                               {label}
                             </span>
@@ -1068,11 +1077,14 @@ export default function ExDividendPage() {
                                   >
                                     {item.symbol}
                                   </Link>
-                                  {item.name && (
-                                    <span className="text-xs text-[var(--text-primary)] max-w-[120px] truncate" title={item.name}>
-                                      {item.name}
-                                    </span>
-                                  )}
+                                  {(() => {
+                                    const dName = displayStockName(item.symbol, locale, { fallbackName: item.name, names: item.names })
+                                    return dName && dName !== item.symbol ? (
+                                      <span className="text-xs text-[var(--text-primary)] max-w-[120px] truncate" title={dName}>
+                                        {dName}
+                                      </span>
+                                    ) : null
+                                  })()}
                                   <span className="text-[10px] px-1 py-px rounded border border-white/10 text-[var(--text-secondary)]">
                                     {label}
                                   </span>
@@ -1217,9 +1229,12 @@ export default function ExDividendPage() {
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0 flex-wrap">
                               <span className="font-bold font-mono text-[var(--text-primary)]">{item.symbol}</span>
-                              {item.name && (
-                                <span className="text-xs text-[var(--text-secondary)] truncate">{item.name}</span>
-                              )}
+                              {(() => {
+                                const dName = displayStockName(item.symbol, locale, { fallbackName: item.name, names: item.names })
+                                return dName && dName !== item.symbol ? (
+                                  <span className="text-xs text-[var(--text-secondary)] truncate">{dName}</span>
+                                ) : null
+                              })()}
                               <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-[var(--text-secondary)]">
                                 {label}
                               </span>

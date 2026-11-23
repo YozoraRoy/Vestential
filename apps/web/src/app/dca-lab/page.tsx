@@ -31,6 +31,9 @@ import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import { searchStocks, StockCandidateList, type StockCandidate } from '@/components/stock-search'
 import { CORE_ETF_UNIVERSE, resolveStockName, getUniverseTier } from '@stock/cycle-entry'
+import { normalizeStockCode } from '@stock/core'
+import { displayStockName } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 
 
 const POPULAR_ETFS = [
@@ -116,9 +119,14 @@ export default function DcaLabPage() {
     }
   }
 
+  const dcaNames = useStockNames(symbol ? [symbol] : [])
   const stockName = useMemo(() => {
-    return resolveStockName(symbol) || POPULAR_ETFS.find(p => p.symbol === symbol)?.name || ''
-  }, [symbol])
+    const zhFallback = resolveStockName(symbol) || POPULAR_ETFS.find(p => p.symbol === symbol)?.name || ''
+    return displayStockName(symbol, locale, {
+      fallbackName: zhFallback,
+      names: dcaNames[normalizeStockCode(symbol)],
+    })
+  }, [symbol, locale, dcaNames])
 
   // 圖表格式化資料
   const chartData = useMemo(() => {

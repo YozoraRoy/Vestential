@@ -31,6 +31,9 @@ import {
   formatTradingDayWithWeekday,
 } from '@/utils/taiwan-calendar'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { normalizeStockCode } from '@stock/core'
+import { displayStockName } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 import { getOddLotRestriction, type RestrictionStatus } from '@/lib/odd-lot-restriction'
@@ -399,6 +402,11 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
   const { dict, locale } = useI18n()
   const ui = dict.oddLot
   const typo = useTableTypography()
+  const oddLotQuerySymbols = useMemo(
+    () => (locale === 'zh-TW' ? [] : initialItems.slice(0, 100).map((i) => i.stock_id)),
+    [locale, initialItems],
+  )
+  const oddLotNames = useStockNames(oddLotQuerySymbols)
 
   const [selectedCategory, setSelectedCategory] = useState<GiftCategory>('ALL')
   const [selectedIndustry, setSelectedIndustry] = useState<string>(INDUSTRY_ALL)
@@ -1181,7 +1189,10 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                           title={ui.yahooLinkTitle.replace('{name}', item.stock_name).replace('{id}', item.stock_id)}
                         >
                           <span className="font-bold text-white text-base group-hover:text-[var(--accent)] group-hover:underline transition-colors">
-                            {item.stock_name}
+                            {displayStockName(item.stock_id, locale, {
+                              fallbackName: item.stock_name,
+                              names: oddLotNames[normalizeStockCode(item.stock_id)],
+                            })}
                           </span>
                           <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-[var(--accent)] font-mono group-hover:bg-[var(--accent)] group-hover:text-white transition-colors inline-flex items-center gap-1">
                             <span>{item.stock_id}</span>
@@ -1447,7 +1458,11 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
               </div>
               <div>
                 <h3 className="text-lg font-bold text-white">
-                  {historyModalStock.stock_name} ({historyModalStock.stock_id})
+                  {displayStockName(historyModalStock.stock_id, locale, {
+                    fallbackName: historyModalStock.stock_name,
+                    names: oddLotNames[normalizeStockCode(historyModalStock.stock_id)],
+                  })}{' '}
+                  ({historyModalStock.stock_id})
                 </h3>
                 <p className="text-xs text-[var(--text-secondary)]">{ui.historyModalSubtitle}</p>
               </div>

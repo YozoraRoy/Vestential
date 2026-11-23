@@ -110,3 +110,13 @@ export type { TwseMeeting } from './fetchers/twse-meetings.js'
 
 
 export { logApiError, listApiErrorLogs, pruneOldApiErrorLogs } from './db.js'
+export {
+  upsertStockNames,
+  getStockMultilingualName,
+  getStockMultilingualNames,
+} from './db.js'
+export type { StockNameRow, StockNameUpsertInput } from './db.js'
+export {
+  syncTwseAndTpexStockNames,
+  ensureTwStockNamesSynced,
+} from './fetchers/twse-stock-names.js'

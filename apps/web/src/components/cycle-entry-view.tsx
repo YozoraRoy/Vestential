@@ -2,8 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import { LayoutGrid, LayoutList, LineChart, Sparkles, HelpCircle, Layers, TrendingUp, Building2 } from 'lucide-react'
+import { normalizeStockCode } from '@stock/core'
 import type { CycleEntrySignalRow } from '@stock/database'
 import { resolveStockName, getUniverseTier, type UniverseTier } from '@stock/cycle-entry'
+import { useI18n } from '@/i18n/LanguageProvider'
+import { displayStockName } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 
@@ -192,10 +196,16 @@ interface Props {
 }
 
 export function CycleEntryView({ signals, dict, onSelect }: Props) {
+  const { locale } = useI18n()
   const [activeTab, setActiveTab] = useState<TabCategory>('etf')
   const [mode, setMode] = useState<ViewMode>('list')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
   const typo = useTableTypography()
+  const signalQuerySymbols = useMemo(
+    () => (locale === 'zh-TW' ? [] : signals.map((s) => s.symbol)),
+    [locale, signals],
+  )
+  const cycleNames = useStockNames(signalQuerySymbols)
 
   // 統計各分頁數量
   const counts = useMemo(() => {
@@ -363,7 +373,11 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
               {sortedSignals.map((s) => {
                 const rules = ruleList(s.matchedRules, dict)
                 const tier = getUniverseTier(s.symbol)
-                const detailTitle = `${shortSymbol(s.symbol)} ${resolveStockName(s.symbol, s.name)} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
+                const sigDisplayName = displayStockName(s.symbol, locale, {
+                  fallbackName: resolveStockName(s.symbol, s.name),
+                  names: cycleNames[normalizeStockCode(s.symbol)],
+                })
+                const detailTitle = `${shortSymbol(s.symbol)} ${sigDisplayName} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
                 return (
                   <tr key={s.symbol} className="border-b border-white/5 last:border-b-0 align-top hover:bg-white/[0.03]">
                     <td className="px-3 py-3 text-[var(--text-secondary)]">#{s.signalRank ?? '—'}</td>
@@ -380,7 +394,7 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                           <LineChart className="w-3 h-3 text-[var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
                         <div className="text-xs text-[var(--text-secondary)] mt-0.5 group-hover:text-[var(--text-primary)] transition-colors">
-                          {resolveStockName(s.symbol, s.name)}
+                          {sigDisplayName}
                         </div>
                       </button>
                     </td>
@@ -448,7 +462,11 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
           {sortedSignals.map((s) => {
             const rules = ruleList(s.matchedRules, dict)
             const tier = getUniverseTier(s.symbol)
-            const detailTitle = `${shortSymbol(s.symbol)} ${resolveStockName(s.symbol, s.name)} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
+            const sigDisplayName = displayStockName(s.symbol, locale, {
+              fallbackName: resolveStockName(s.symbol, s.name),
+              names: cycleNames[normalizeStockCode(s.symbol)],
+            })
+            const detailTitle = `${shortSymbol(s.symbol)} ${sigDisplayName} — ${dict.viewBacktestChart ?? '曲線圖與詳情'}`
             return (
               <li key={s.symbol} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
                 <div className="flex items-start justify-between gap-3 mb-3">
@@ -470,7 +488,7 @@ export function CycleEntryView({ signals, dict, onSelect }: Props) {
                         ) : null}
                       </div>
                       <div className="text-xs text-[var(--text-secondary)] mt-0.5 group-hover:text-[var(--text-primary)] transition-colors">
-                        {resolveStockName(s.symbol, s.name)}
+                        {sigDisplayName}
                       </div>
                     </button>
                   </div>

@@ -13,6 +13,7 @@ import {
   type TradeModalInitialPreset,
 } from '@/components/portfolio-trade-panel'
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
+import { displayStockName, type StockMultilingualName } from '@/lib/stock-display'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
 import { HealthVerdictBadge, PortfolioHealthPanel } from '@/components/portfolio-health-panel'
 import { DividendPaybackCard } from '@/components/dividend-payback-card'
@@ -127,6 +128,7 @@ interface HistoryItem {
   market: Market
   symbol: string
   symbol_name: string | null
+  names?: StockMultilingualName
   shares: number
   cost: number
   current_price: number
@@ -2832,7 +2834,15 @@ export default function PortfolioPage() {
                             </span>
                           </td>
                         )}
-                        {visibleColumns.name && <td className="px-3 py-2 whitespace-nowrap font-medium">{item.symbol_name || item.symbol}</td>}
+                        {visibleColumns.name && (
+                          <td className="px-3 py-2 whitespace-nowrap font-medium">
+                            {displayStockName(item.symbol, locale, {
+                              fallbackName: item.symbol_name,
+                              names: item.names,
+                              market: item.market,
+                            })}
+                          </td>
+                        )}
                         {visibleColumns.symbol && (
                           <td className="px-3 py-2 whitespace-nowrap text-xs text-[var(--text-secondary)]">
                             <span className="inline-flex items-center gap-1.5">
@@ -2975,7 +2985,13 @@ export default function PortfolioPage() {
                         style={item.recommendation ? { backgroundColor: `${RATING_STYLE[item.recommendation]?.bg || 'rgba(255,255,255,0.08)'}22` } : undefined}>
                         {item.recommendation || '—'}
                       </span>
-                      <span className="font-medium truncate">{item.symbol_name || item.symbol}</span>
+                      <span className="font-medium truncate">
+                        {displayStockName(item.symbol, locale, {
+                          fallbackName: item.symbol_name,
+                          names: item.names,
+                          market: item.market,
+                        })}
+                      </span>
                       <span className="text-xs text-[var(--text-secondary)] shrink-0">{item.symbol}</span>
                       {item.market !== 'us' && (() => {
                         const badge = getTierBadgeInfo(item.symbol, ui)

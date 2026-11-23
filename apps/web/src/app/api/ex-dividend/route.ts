@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { resolveStockDisplayName, type StockMultilingualName } from '@stock/core'
 import { registry } from '@stock/market-data'
-import { getStockNameById, getTwseDividendsByYear, migrate } from '@stock/database'
+import { getTwseDividendsByYear, migrate } from '@stock/database'
+import { resolveServerStockNames } from '@/lib/stock-names-server'
 import { getLastCompletedTradingDay, isTwseTradingDay, taipeiTodayStr } from '../../../lib/twse-calendar'
 import { getDividendsCacheInfo } from '../../../lib/twse-dividends'
 import {
@@ -63,6 +65,7 @@ function toTaipeiDate(ts: number): string {
 export interface ExDividendItem {
   symbol: string
   name: string | null
+  names?: StockMultilingualName
   ex_date: string
   ex_last_buy_date: string
   days_to_ex: number | null
@@ -79,6 +82,7 @@ export interface ExDividendItem {
 export interface ExDividendTrackingItem {
   symbol: string
   name: string | null
+  names?: StockMultilingualName
   ex_date: string
   cash_dividend: number
   prev_close: number
@@ -204,16 +208,23 @@ export async function GET(req: NextRequest) {
       console.error('[ExDividend] batch quotes failed (non-blocking):', e)
     }
 
+    const yahooNameMap = new Map<string, string | null>()
+    for (const [k, v] of quoteMap.entries()) {
+      yahooNameMap.set(k, v.name)
+    }
+    const resolvedNamesMap = await resolveServerStockNames(picked, {
+      yahooNames: yahooNameMap,
+      marketHint: 'TW',
+      source: 'ex_dividend',
+    }).catch(() => ({} as Record<string, StockMultilingualName>))
+
     const fiveYearsAgo = `${todayYear - HISTORY_YEARS}-${today.slice(5)}`
     const items = await mapPool(picked, HISTORY_CONCURRENCY, async (symbol): Promise<ExDividendItem> => {
       const upcoming = upcomingBySymbol.get(symbol)!
       const q = quoteMap.get(symbol.toUpperCase())
       const quoteType = q?.quoteType ?? ''
-      let displayName = q?.name ?? null
-      try {
-        const zh = await getStockNameById(symbol)
-        if (zh) displayName = zh
-      } catch {}
+      const names = resolvedNamesMap[symbol.toUpperCase()]
+      const displayName = names ? resolveStockDisplayName(symbol, names, 'zh-TW') : (q?.name ?? null)
       const assetKind = classifyAssetKind(quoteType, symbol, displayName)
       const yahooSymbol = `${symbol}.TW`
       const start = `${todayYear - HISTORY_YEARS}-${today.slice(5)}`
@@ -252,6 +263,7 @@ export async function GET(req: NextRequest) {
       return {
         symbol,
         name: displayName,
+        names,
         ex_date: upcoming.ex_date,
         ex_last_buy_date: computeExLastBuyDate(upcoming.ex_date, isTwseTradingDay),
         days_to_ex: daysUntilEx(today, upcoming.ex_date),
@@ -340,13 +352,15 @@ export async function GET(req: NextRequest) {
           const barsAfterEx = bars.filter((b) => b.date >= ev.ex_date)
           const progress = computeLiveFillProgress(prevClose, ev.cash_dividend, currentPrice, barsAfterEx)
 
-          let displayName = quoteMap.get(ev.symbol)?.name ?? null
-          try {
-            const zh = await getStockNameById(ev.symbol)
-            if (zh) displayName = zh
-          } catch {}
-
           const q = quoteMap.get(ev.symbol)
+          const names = resolvedNamesMap[ev.symbol.toUpperCase()] ?? (await resolveServerStockNames([ev.symbol], {
+            yahooNames: new Map([[ev.symbol.toUpperCase(), q?.name ?? null]]),
+            marketHint: 'TW',
+            source: 'ex_dividend_track',
+            syncIfNeeded: false,
+          }).catch(() => ({} as Record<string, StockMultilingualName>)))[ev.symbol.toUpperCase()]
+          const displayName = names ? resolveStockDisplayName(ev.symbol, names, 'zh-TW') : (q?.name ?? null)
+
           const assetKind = classifyAssetKind(q?.quoteType ?? '', ev.symbol, displayName)
 
           const histEvents = (historyBySymbol.get(ev.symbol) ?? [])
@@ -365,6 +379,7 @@ export async function GET(req: NextRequest) {
           return {
             symbol: ev.symbol,
             name: displayName,
+            names,
             ex_date: ev.ex_date,
             cash_dividend: ev.cash_dividend,
             prev_close: progress.prevClose,

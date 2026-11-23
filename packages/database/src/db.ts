@@ -583,6 +583,17 @@ CREATE TABLE IF NOT EXISTS market_focus_subscribers (
       CREATE INDEX IF NOT EXISTS idx_sync_jobs_type_status ON sync_jobs(job_type, status);
       CREATE INDEX IF NOT EXISTS idx_sync_jobs_updated ON sync_jobs(updated_at);
 
+      CREATE TABLE IF NOT EXISTS stock_names (
+        symbol     TEXT PRIMARY KEY,
+        name_zh    TEXT,
+        name_en    TEXT,
+        name_ja    TEXT,
+        market     TEXT NOT NULL DEFAULT 'TW',
+        source     TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_stock_names_market ON stock_names(market);
+
       CREATE TABLE IF NOT EXISTS llm_usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project TEXT DEFAULT 'vestential',
@@ -1329,6 +1340,20 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
         );
         CREATE INDEX idx_sync_jobs_type_status ON sync_jobs(job_type, status);
         CREATE INDEX idx_sync_jobs_updated ON sync_jobs(updated_at);
+      END
+
+      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'stock_names')
+      BEGIN
+        CREATE TABLE stock_names (
+          symbol     NVARCHAR(32) PRIMARY KEY,
+          name_zh    NVARCHAR(200),
+          name_en    NVARCHAR(200),
+          name_ja    NVARCHAR(200),
+          market     NVARCHAR(16) NOT NULL DEFAULT 'TW',
+          source     NVARCHAR(64),
+          updated_at NVARCHAR(40) NOT NULL
+        );
+        CREATE INDEX idx_stock_names_market ON stock_names(market);
       END
 
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'social_posts')
@@ -5892,11 +5917,21 @@ export async function searchStocksByName(keyword: string): Promise<Array<{ stock
  * - 查無／DB 異常一律回 `null`（呼叫端 fail-open，不擋分析）。
  */
 export async function getStockNameById(stockId: string): Promise<string | null> {
-  const id = (stockId ?? '').trim().toUpperCase()
+  const id = (stockId ?? '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
   if (!id) return null
   const clean = (raw: unknown): string | null => {
     const t = typeof raw === 'string' ? raw.trim().replace(/\*+$/, '').trim() : ''
     return t && t.toUpperCase() !== id ? t : null
+  }
+  try {
+    const master = await dbQueryFirst<{ name_zh: string | null }>(
+      `SELECT name_zh FROM stock_names WHERE symbol = @id`,
+      { id },
+    )
+    const hitMaster = clean(master?.name_zh)
+    if (hitMaster) return hitMaster
+  } catch {
+    // 落回零股成交表
   }
   try {
     const rows = await dbQueryAll<{ stock_name: string }>(
@@ -8737,4 +8772,168 @@ export async function listApiErrorLogs(opts?: {
   }
 
   return { logs, summary }
+}
+
+// ─── Stock Names 主檔（Issue #190：全站多語系股票名稱） ────────────────────
+
+export interface StockNameRow {
+  symbol: string
+  name_zh: string | null
+  name_en: string | null
+  name_ja: string | null
+  market: string
+  source: string | null
+  updated_at: string
+}
+
+export interface StockNameUpsertInput {
+  symbol: string
+  nameZh?: string | null
+  nameEn?: string | null
+  nameJa?: string | null
+  market?: 'TW' | 'US' | string
+  source?: string | null
+}
+
+function normalizeNameSymbol(symbol: string): string {
+  return (symbol ?? '').trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+}
+
+function cleanStockNameField(val: string | null | undefined, code: string): string | null {
+  const t = typeof val === 'string' ? val.trim().replace(/\*+$/, '').trim() : ''
+  if (!t || t.toUpperCase() === code) return null
+  return t
+}
+
+/** 批次寫入或補齊多語系股票名稱（保留既有非空欄位，不以 null 覆蓋） */
+export async function upsertStockNames(items: StockNameUpsertInput[]): Promise<number> {
+  if (!items.length) return 0
+  const now = new Date().toISOString()
+  const normalized = new Map<string, {
+    symbol: string
+    nameZh: string | null
+    nameEn: string | null
+    nameJa: string | null
+    market: string
+    source: string | null
+  }>()
+
+  for (const item of items) {
+    const sym = normalizeNameSymbol(item.symbol)
+    if (!sym) continue
+    const prev = normalized.get(sym)
+    const nameZh = cleanStockNameField(item.nameZh, sym) ?? prev?.nameZh ?? null
+    const nameEn = cleanStockNameField(item.nameEn, sym) ?? prev?.nameEn ?? null
+    const nameJa = cleanStockNameField(item.nameJa, sym) ?? prev?.nameJa ?? null
+    if (!nameZh && !nameEn && !nameJa) continue
+    const market = (item.market ?? prev?.market ?? (/^\d/.test(sym) ? 'TW' : 'US')).toUpperCase()
+    normalized.set(sym, {
+      symbol: sym,
+      nameZh,
+      nameEn,
+      nameJa,
+      market,
+      source: item.source ?? prev?.source ?? null,
+    })
+  }
+
+  const rows = [...normalized.values()]
+  if (!rows.length) return 0
+
+  const pool = await getAzurePool()
+  if (pool) {
+    let written = 0
+    for (const r of rows) {
+      const req = pool.request()
+      req.input('symbol', r.symbol)
+      req.input('nameZh', r.nameZh)
+      req.input('nameEn', r.nameEn)
+      req.input('nameJa', r.nameJa)
+      req.input('market', r.market)
+      req.input('source', r.source)
+      req.input('updatedAt', now)
+      await req.query(`
+        MERGE stock_names AS t
+        USING (SELECT @symbol AS symbol) AS s ON t.symbol = s.symbol
+        WHEN MATCHED THEN
+          UPDATE SET
+            name_zh = COALESCE(@nameZh, t.name_zh),
+            name_en = COALESCE(@nameEn, t.name_en),
+            name_ja = COALESCE(@nameJa, t.name_ja),
+            market  = COALESCE(NULLIF(@market, ''), t.market),
+            source  = COALESCE(@source, t.source),
+            updated_at = @updatedAt
+        WHEN NOT MATCHED THEN
+          INSERT (symbol, name_zh, name_en, name_ja, market, source, updated_at)
+          VALUES (@symbol, @nameZh, @nameEn, @nameJa, @market, @source, @updatedAt);
+      `)
+      written++
+    }
+    return written
+  }
+
+  const db = getDb()
+  if (!db) return 0
+  const stmt = db.prepare(`
+    INSERT INTO stock_names (symbol, name_zh, name_en, name_ja, market, source, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(symbol) DO UPDATE SET
+      name_zh = COALESCE(excluded.name_zh, stock_names.name_zh),
+      name_en = COALESCE(excluded.name_en, stock_names.name_en),
+      name_ja = COALESCE(excluded.name_ja, stock_names.name_ja),
+      market  = COALESCE(NULLIF(excluded.market, ''), stock_names.market),
+      source  = COALESCE(excluded.source, stock_names.source),
+      updated_at = excluded.updated_at
+  `)
+  const tx = db.transaction((list: typeof rows) => {
+    for (const r of list) {
+      stmt.run(r.symbol, r.nameZh, r.nameEn, r.nameJa, r.market, r.source, now)
+    }
+  })
+  tx(rows)
+  return rows.length
+}
+
+/** 查詢單一標的之多語系名稱（自動 fallback 既有 odd_lot_trades / shareholder_gifts 補齊中文） */
+export async function getStockMultilingualName(symbol: string): Promise<{
+  symbol: string
+  nameZh: string | null
+  nameEn: string | null
+  nameJa: string | null
+  market: string
+} | null> {
+  const code = normalizeNameSymbol(symbol)
+  if (!code) return null
+  const row = await dbQueryFirst<StockNameRow>(
+    `SELECT symbol, name_zh, name_en, name_ja, market, source, updated_at
+     FROM stock_names WHERE symbol = @code`,
+    { code },
+  ).catch(() => null)
+
+  let nameZh = cleanStockNameField(row?.name_zh, code)
+  const nameEn = cleanStockNameField(row?.name_en, code)
+  const nameJa = cleanStockNameField(row?.name_ja, code)
+  const market = row?.market ?? (/^\d/.test(code) ? 'TW' : 'US')
+
+  if (!nameZh && market === 'TW') {
+    nameZh = await getStockNameById(code).catch(() => null)
+  }
+
+  if (!row && !nameZh) return null
+  return { symbol: code, nameZh, nameEn, nameJa, market }
+}
+
+/** 批次查詢多檔標的之多語系名稱（供列表與 API 批次組裝用） */
+export async function getStockMultilingualNames(symbols: string[]): Promise<
+  Record<string, { symbol: string; nameZh: string | null; nameEn: string | null; nameJa: string | null; market: string }>
+> {
+  const codes = [...new Set(symbols.map(normalizeNameSymbol).filter(Boolean))]
+  const out: Record<string, { symbol: string; nameZh: string | null; nameEn: string | null; nameJa: string | null; market: string }> = {}
+  if (!codes.length) return out
+
+  const rows = await Promise.all(codes.map((c) => getStockMultilingualName(c).catch(() => null)))
+  for (const r of rows) {
+    if (r) out[r.symbol] = r
+  }
+  return out
 }

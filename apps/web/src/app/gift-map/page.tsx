@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Locale } from '@/i18n/config'
+import { displayStockName } from '@/lib/stock-display'
 import {
   GiftCalendarItem,
   GiftCalendarSummary,
@@ -443,7 +444,8 @@ export default function GiftMapPage() {
                             href={localizePath(locale, `/odd-lot?symbol=${item.stockId}`)}
                             className="font-bold text-base text-zinc-100 hover:text-emerald-400 transition"
                           >
-                            {item.stockId} {item.stockName}
+                            {item.stockId}{' '}
+                            {displayStockName(item.stockId, locale, { fallbackName: item.stockName })}
                           </Link>
                           {item.isPopular && (
                             <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-400 border border-amber-800 font-medium">

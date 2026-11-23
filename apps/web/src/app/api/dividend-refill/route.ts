@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { resolveStockDisplayName, type StockMultilingualName } from '@stock/core'
 import { registry } from '@stock/market-data'
-import { getStockNameById, getTwseDividendsByYear, migrate } from '@stock/database'
+import { getTwseDividendsByYear, migrate } from '@stock/database'
+import { resolveServerStockNames } from '@/lib/stock-names-server'
 import { taipeiTodayStr } from '../../../lib/twse-calendar'
 import {
   analyzeExDividendEvents,
@@ -78,13 +80,7 @@ export async function GET(req: NextRequest) {
 
     // 2. 取得名稱、quoteType 與還原股價 bars（先 .TW，無資料再試 .TWO）
     const provider = registry.get('yahoo-finance')
-    let displayName: string | null = null
-    try {
-      displayName = await getStockNameById(rawSymbol)
-    } catch {
-      displayName = null
-    }
-
+    let yahooName: string | null = null
     let quoteType = ''
     let bars: Array<{ date: string; close: number }> = []
     for (const suffix of ['.TW', '.TWO']) {
@@ -94,7 +90,7 @@ export async function GET(req: NextRequest) {
         const q = batch?.[0]
         if (q) {
           if (!quoteType && q.quoteType) quoteType = q.quoteType
-          if (!displayName && q.name) displayName = q.name
+          if (!yahooName && q.name) yahooName = q.name
         }
       } catch {}
 
@@ -114,6 +110,14 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
+    const namesMap = await resolveServerStockNames([rawSymbol], {
+      yahooNames: { [rawSymbol]: yahooName },
+      marketHint: 'TW',
+      source: 'dividend_refill',
+    }).catch(() => ({} as Record<string, StockMultilingualName>))
+    const names = namesMap[rawSymbol]
+    const displayName = names ? resolveStockDisplayName(rawSymbol, names, 'zh-TW') : yahooName
+
     if (bars.length === 0 && histEvents.length === 0 && !displayName) {
       return NextResponse.json(
         { error: `查無代號 ${rawSymbol} 的行情或除息資料` },
@@ -132,6 +136,7 @@ export async function GET(req: NextRequest) {
     const payload = {
       symbol: rawSymbol,
       name: displayName,
+      names,
       asset_kind: assetKind,
       asset_label: assetKindLabel(assetKind),
       stats: stats.insufficient

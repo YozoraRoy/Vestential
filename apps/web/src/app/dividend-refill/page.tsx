@@ -19,6 +19,7 @@ import type { FillDaysHistogram } from '@/lib/ex-dividend-engine'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Locale } from '@/i18n/config'
+import { displayStockLabel, type StockMultilingualName } from '@/lib/stock-display'
 
 const REFILL_COPY: Record<
   Locale,
@@ -550,7 +551,10 @@ export default function DividendRefillPage() {
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <div className="flex items-baseline gap-2">
               <h2 className="text-lg font-bold text-[var(--text-primary)]">
-                {data.symbol} {data.name ?? ''}
+                {displayStockLabel(data.symbol, locale, {
+                  fallbackName: data.name,
+                  names: (data as { names?: StockMultilingualName }).names,
+                })}
               </h2>
               <span className="text-xs text-[var(--text-muted)]">
                 {t.periodLabel(data.data_period.from, data.data_period.to, data.stats.eventCount)}

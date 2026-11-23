@@ -1,9 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Calculator, HelpCircle, Download, Share2, Save, PiggyBank, TrendingUp, Info } from 'lucide-react'
+import { normalizeStockCode } from '@stock/core'
 import { DCA_PRESET_SYMBOLS } from '@/lib/dca'
+import { displayStockLabel } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Locale } from '@/i18n/config'
@@ -348,6 +351,11 @@ export default function DcaPage() {
   const [plans, setPlans] = useState<DcaPlan[]>([])
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const dcaAllSymbols = useMemo(
+    () => [...DCA_PRESET_SYMBOLS, ...plans.map((p) => p.symbol)],
+    [plans],
+  )
+  const stockNames = useStockNames(dcaAllSymbols)
 
   useEffect(() => {
     track('dca_page_view')
@@ -475,7 +483,7 @@ export default function DcaPage() {
                   onClick={() => setSymbol(s)}
                   className={`h-11 px-4 rounded-xl border text-sm font-medium transition ${symbol === s ? 'bg-[var(--accent)]/15 border-[var(--accent)] text-[var(--accent)]' : 'border-white/10 bg-[var(--bg-secondary)] text-[var(--text-secondary)]'}`}
                 >
-                  {s}
+                  {displayStockLabel(s, locale, { names: stockNames[normalizeStockCode(s)] })}
                 </button>
               ))}
             </div>
@@ -663,7 +671,9 @@ export default function DcaPage() {
               <div className="space-y-2 text-sm">
                 {plans.map((p) => (
                   <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-white/[0.02] border border-white/5">
-                    <span className="font-mono font-bold">{p.symbol}</span>
+                    <span className="font-mono font-bold">
+                      {displayStockLabel(p.symbol, locale, { names: stockNames[normalizeStockCode(p.symbol)] })}
+                    </span>
                     <span className="text-[var(--text-secondary)]">{t.planSummary(fmtTWD(p.monthly_amount), p.years, p.dividend_mode === 'cash')}</span>
                   </div>
                 ))}

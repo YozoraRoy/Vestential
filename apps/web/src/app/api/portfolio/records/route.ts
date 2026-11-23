@@ -1,7 +1,21 @@
 import { NextResponse } from 'next/server'
+import { normalizeStockCode } from '@stock/core'
 import { getCurrentUserFromCookies } from '../../../../lib/auth'
 import { applyGuestCookie, getCurrentGuestFromCookies, newGuestUid } from '../../../../lib/guest'
-import { deletePortfolioRecord, getPortfolioRecords, getPortfolioRecordsByGuest } from '@stock/database'
+import { deletePortfolioRecord, getPortfolioRecords, getPortfolioRecordsByGuest, type PortfolioRecord } from '@stock/database'
+import { resolveServerStockNames } from '../../../../lib/stock-names-server'
+
+async function attachMultilingualNames(records: PortfolioRecord[]) {
+  if (!records.length) return records
+  const namesMap = await resolveServerStockNames(
+    records.map((r) => r.symbol),
+    { syncIfNeeded: false, source: 'portfolio_records' },
+  ).catch(() => ({} as Record<string, unknown>))
+  return records.map((r) => ({
+    ...r,
+    names: namesMap[normalizeStockCode(r.symbol)] ?? undefined,
+  }))
+}
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -10,14 +24,14 @@ export async function GET(req: Request) {
   try {
     const user = await getCurrentUserFromCookies()
     if (user) {
-      const records = await getPortfolioRecords(user.id, limit)
+      const records = await attachMultilingualNames(await getPortfolioRecords(user.id, limit))
       return NextResponse.json({ success: true, records, mode: 'user' })
     }
 
     // 訪客模式：無 cookie 則建立一個 workspace（不回 401）。
     let gid = await getCurrentGuestFromCookies()
     if (!gid) gid = newGuestUid()
-    const records = await getPortfolioRecordsByGuest(gid, limit)
+    const records = await attachMultilingualNames(await getPortfolioRecordsByGuest(gid, limit))
     const res = NextResponse.json({ success: true, records, mode: 'guest' })
     await applyGuestCookie(res, gid)
     return res

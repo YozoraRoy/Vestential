@@ -1,6 +1,8 @@
+import { normalizeStockCode, resolveStockDisplayName, type StockMultilingualName } from '@stock/core'
 import { yahooFinanceProvider, fetchBatchQuotes } from '@stock/market-data'
 import { searchStocksByName, fuzzySearchStocksByName } from '@stock/database'
 import { Converter } from 'opencc-js'
+import { resolveServerStockNames } from './stock-names-server'
 
 // 簡→繁轉換：OCR 常把繁體讀成簡體（chi_sim），DB（TWSE）名稱是繁體。
 // opencc cn→t 會多做區域偏好（臺/羣），TWSE 慣用「台/群」，故再 de-regional 回去。
@@ -144,6 +146,7 @@ export interface LiveQuote {
   symbol: string
   price: number
   name: string | null
+  names?: StockMultilingualName
 }
 
 /** 抓取即時報價；失敗回 null（呼叫端自行決定是否以手輸值取代）。 */
@@ -152,12 +155,21 @@ export async function fetchLiveQuote(rawSymbol: string, market: Market): Promise
     const symbol = await resolveYahooSymbol(rawSymbol, market)
     const quote = await yahooFinanceProvider.getQuote(symbol, market === 'tw' ? 'TW' : 'US')
     if (!quote.price || quote.price <= 0) return null
-    let name: string | null = null
+    let yahooName: string | null = null
     try {
       const profile = await yahooFinanceProvider.getProfile(symbol, market === 'tw' ? 'TW' : 'US')
-      name = profile.name && profile.name !== symbol ? profile.name : null
+      yahooName = profile.name && profile.name !== symbol ? profile.name : null
     } catch (_) {}
-    return { symbol, price: quote.price, name }
+    const code = normalizeStockCode(symbol)
+    const namesMap = await resolveServerStockNames([code], {
+      yahooNames: { [code]: yahooName },
+      marketHint: market === 'tw' ? 'TW' : 'US',
+      source: 'portfolio_live_quote',
+    }).catch(() => ({} as Record<string, StockMultilingualName>))
+    const names = namesMap[code]
+    const resolvedName = names ? resolveStockDisplayName(code, names, 'zh-TW') : yahooName
+    const name = resolvedName && resolvedName !== code ? resolvedName : yahooName
+    return { symbol, price: quote.price, name, names }
   } catch (e) {
     console.error('[Portfolio] fetchLiveQuote failed:', e)
     return null
@@ -301,6 +313,7 @@ function normalizeSearchSymbol(symbol: string): string {
 export interface StockCandidate {
   symbol: string
   name: string
+  names?: StockMultilingualName
   market: Market
 }
 
@@ -372,27 +385,68 @@ async function probeTwSymbolById(id: string): Promise<StockCandidate[]> {
  *   Yahoo 對中文名稱搜尋極不可靠（實測 "星宇航空" 回空）；DB 沒有結果才 fallback 到 Yahoo。
  * - 美股：Yahoo searchSymbols。
  */
+async function enrichCandidatesWithNames(list: StockCandidate[], market: Market): Promise<StockCandidate[]> {
+  if (!list.length) return list
+  const yahooNames = new Map<string, string>()
+  const knownZh = new Map<string, string>()
+  for (const c of list) {
+    const code = normalizeStockCode(c.symbol)
+    if (!code || !c.name || c.name.toUpperCase() === code) continue
+    if (/[\u4e00-\u9fff]/.test(c.name)) knownZh.set(code, c.name)
+    else yahooNames.set(code, c.name)
+  }
+  const namesMap = await resolveServerStockNames(
+    list.map((c) => c.symbol),
+    {
+      yahooNames,
+      knownZhNames: knownZh,
+      marketHint: market === 'tw' ? 'TW' : 'US',
+      source: 'stock_search',
+      syncIfNeeded: market === 'tw',
+    },
+  ).catch(() => ({} as Record<string, StockMultilingualName>))
+
+  return list.map((c) => {
+    const code = normalizeStockCode(c.symbol)
+    const names = namesMap[code]
+    const resolved = names ? resolveStockDisplayName(code, names, 'zh-TW') : c.name
+    return {
+      ...c,
+      name: resolved || c.name,
+      names,
+    }
+  })
+}
+
 export async function searchStockCandidates(q: string, market: Market): Promise<StockCandidate[]> {
   const query = q.trim()
   if (!query) return []
   try {
     if (market === 'tw') {
       const { candidates } = await dbSearchTw(query)
-      if (candidates.length) return candidates
+      if (candidates.length) return enrichCandidatesWithNames(candidates, 'tw')
 
       // 純台股代號字形：先 probe 報價端（比 Yahoo search 對 OTC 代號可靠），再掉回 search。
       if (/^\d{4}[A-Z0-9]{0,2}$/i.test(query)) {
         const probed = await probeTwSymbolById(query)
-        if (probed.length) return probed
+        if (probed.length) return enrichCandidatesWithNames(probed, 'tw')
       }
 
       const y = await yahooFinanceProvider.searchSymbols(query)
       const tw = y.filter(r => /\.(TW|TWO)$/i.test(r.symbol))
-      if (tw.length) return tw.map(r => ({ symbol: normalizeSearchSymbol(r.symbol), name: r.name, market: 'tw' as Market }))
+      if (tw.length) {
+        return enrichCandidatesWithNames(
+          tw.map(r => ({ symbol: normalizeSearchSymbol(r.symbol), name: r.name, market: 'tw' as Market })),
+          'tw',
+        )
+      }
       return []
     }
     const y = await yahooFinanceProvider.searchSymbols(query)
-    return y.map(r => ({ symbol: r.symbol, name: r.name, market: 'us' as Market })).slice(0, 10)
+    return enrichCandidatesWithNames(
+      y.map(r => ({ symbol: r.symbol, name: r.name, market: 'us' as Market })).slice(0, 10),
+      'us',
+    )
   } catch {
     return []
   }

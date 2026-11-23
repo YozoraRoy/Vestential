@@ -13,6 +13,7 @@ import {
   CASHFLOW_TARGET_PRESETS,
   DEFAULT_CASHFLOW_TARGET,
   evaluateCashflowPlan,
+  getPlanAssetDisplayName,
   solveTargetLots,
   type CashflowStyleId,
   type PlanAllocationInput,
@@ -726,7 +727,7 @@ export default function CashflowPlanPage() {
                     {evaluation.months[activeMonth - 1]!.items.map((it, i) => (
                       <div key={i} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2">
                         <span>
-                          <b>{it.symbol}</b> {it.name}（{it.lots} {t.lotsUnit}）
+                          <b>{it.symbol}</b> {getPlanAssetDisplayName(it.symbol, it.name, it.names, locale)}（{it.lots} {t.lotsUnit}）
                         </span>
                         <span className="tabular-nums font-semibold text-emerald-300">{fmtNtd(it.net)}</span>
                       </div>
@@ -776,7 +777,7 @@ export default function CashflowPlanPage() {
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold text-sm text-[var(--text-primary)]">
-                        {a.symbol} {a.name}
+                        {a.symbol} {getPlanAssetDisplayName(a.symbol, a.name, a.names, locale)}
                       </span>
                       <span className="text-xs text-[var(--text-secondary)] tabular-nums">
                         {t.refPrice} {a.price.toFixed(2)}

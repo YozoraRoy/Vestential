@@ -1,11 +1,14 @@
 'use client'
 
 import { RefreshCw } from 'lucide-react'
+import { useI18n } from '@/i18n/LanguageProvider'
 import type { Market } from '@/lib/portfolio'
+import { displayStockName, type StockMultilingualName } from '@/lib/stock-display'
 
 export interface StockCandidate {
   symbol: string
   name: string
+  names?: StockMultilingualName
   market?: string
 }
 
@@ -22,7 +25,7 @@ export async function searchStocks(q: string, market: Market): Promise<StockCand
     const data = await res.json()
     return (data.results ?? [])
       .filter((r: any) => r?.symbol && r?.name)
-      .map((r: any) => ({ symbol: r.symbol, name: r.name, market: r.market ?? market }))
+      .map((r: any) => ({ symbol: r.symbol, name: r.name, names: r.names, market: r.market ?? market }))
   } catch {
     return []
   }
@@ -49,6 +52,7 @@ export function StockCandidateList({
   emptyText = '查無相符股票',
   className = '',
 }: StockCandidateListProps) {
+  const { locale } = useI18n()
   if (loading) {
     return (
       <div className={`flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] ${className}`}>
@@ -70,7 +74,9 @@ export function StockCandidateList({
             className="px-2.5 py-1 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-xs hover:border-[var(--accent)] transition text-left"
           >
             <span className="font-mono text-[var(--accent)]">{c.symbol}</span>
-            <span className="text-[var(--text-primary)] ml-1.5">{c.name}</span>
+            <span className="text-[var(--text-primary)] ml-1.5">
+              {displayStockName(c.symbol, locale, { fallbackName: c.name, names: c.names, market: c.market })}
+            </span>
           </button>
         ))}
       </div>
@@ -86,7 +92,9 @@ export function StockCandidateList({
           className="w-full text-left px-3 py-2.5 text-sm hover:bg-white/5 transition flex items-center gap-2"
         >
           <span className="font-mono text-[var(--accent)] w-20 shrink-0">{c.symbol}</span>
-          <span className="text-[var(--text-primary)] truncate">{c.name}</span>
+          <span className="text-[var(--text-primary)] truncate">
+            {displayStockName(c.symbol, locale, { fallbackName: c.name, names: c.names, market: c.market })}
+          </span>
         </button>
       ))}
     </div>

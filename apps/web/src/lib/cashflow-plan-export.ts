@@ -3,7 +3,7 @@
  */
 
 import type { Locale } from '@/i18n/config'
-import type { CashflowPlanEvaluation } from './cashflow-plan'
+import { getPlanAssetDisplayName, type CashflowPlanEvaluation } from './cashflow-plan'
 
 export interface CashflowPlanExportParams {
   evaluation: CashflowPlanEvaluation
@@ -296,7 +296,7 @@ export function buildCashflowPlanExportHtml({
         <tr>
           <td>
             <div class="sym">${escapeHtml(a.symbol)}</div>
-            <div class="sub">${escapeHtml(a.name)}</div>
+            <div class="sub">${escapeHtml(getPlanAssetDisplayName(a.symbol, a.name, a.names, locale))}</div>
           </td>
           <td class="num">${fmtNtd(a.price)}</td>
           <td class="num">

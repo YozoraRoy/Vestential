@@ -1,9 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { normalizeStockCode } from '@stock/core'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { computeJournalPnl } from '@/lib/journal'
+import { displayStockLabel } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 
 interface JournalEntry {
   id: number
@@ -46,12 +49,18 @@ const cardCls = 'bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5'
 
 export default function JournalPage() {
   const router = useRouter()
-  const { dict } = useI18n()
+  const { dict, locale } = useI18n()
   const t = dict.journal
 
   const [month, setMonth] = useState(currentMonth())
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [stats, setStats] = useState<JournalStats | null>(null)
+  const journalSymbols = useMemo(() => {
+    const syms = entries.map((e) => e.symbol)
+    if (stats?.maxLossEntry?.symbol) syms.push(stats.maxLossEntry.symbol)
+    return syms
+  }, [entries, stats])
+  const stockNames = useStockNames(journalSymbols)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -245,7 +254,9 @@ export default function JournalPage() {
                     {stats.maxLossEntry ? `#${stats.maxLossEntry.id} ${fmt(stats.maxLossEntry.pnl)}` : t.statNoMaxLoss}
                   </div>
                   {stats.maxLossEntry && (
-                    <div className="text-xs text-[var(--text-secondary)] mt-1">{stats.maxLossEntry.symbol}｜{stats.maxLossEntry.tradeDate}</div>
+                    <div className="text-xs text-[var(--text-secondary)] mt-1">
+                      {displayStockLabel(stats.maxLossEntry.symbol, locale, { names: stockNames[normalizeStockCode(stats.maxLossEntry.symbol)] })}｜{stats.maxLossEntry.tradeDate}
+                    </div>
                   )}
                 </div>
               </div>
@@ -294,7 +305,7 @@ export default function JournalPage() {
                     <li key={e.id} className="rounded-xl bg-white/5 p-3 text-sm">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="font-medium">
-                          #{e.id}｜{e.trade_date.slice(0, 10)}｜{e.symbol}｜{e.direction === 'short' ? t.directionShort : t.directionLong}
+                          #{e.id}｜{e.trade_date.slice(0, 10)}｜{displayStockLabel(e.symbol, locale, { names: stockNames[normalizeStockCode(e.symbol)] })}｜{e.direction === 'short' ? t.directionShort : t.directionLong}
                           <span className={pnl >= 0 ? 'text-[var(--accent-green)]' : 'text-red-400'}>｜{fmt(pnl)}</span>
                         </div>
                         <div className="flex gap-2">

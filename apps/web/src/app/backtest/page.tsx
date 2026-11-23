@@ -16,6 +16,7 @@ import { Search as SearchIcon, TrendingDown, Target, Repeat, Clock, AlertTriangl
 import { searchStocks, StockCandidateList, type StockCandidate } from '@/components/stock-search'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { buildBacktestInsight } from '@/lib/backtest-interpret'
+import { displayStockName } from '@/lib/stock-display'
 import { isCoreEtf } from '@stock/cycle-entry'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
@@ -667,7 +668,7 @@ export default function BacktestPage() {
                 {stockName && (
                   <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--accent)]/15 border border-[var(--accent)]/30 text-xs font-semibold text-[var(--accent)] shadow-sm pointer-events-auto animate-in fade-in zoom-in-95 duration-150">
                     <CheckCircle2 className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
-                    <span className="truncate max-w-[130px]">{stockName}</span>
+                    <span className="truncate max-w-[130px]">{displayStockName(symbol, locale, { fallbackName: stockName })}</span>
                   </span>
                 )}
                 {symbol && (
@@ -724,7 +725,7 @@ export default function BacktestPage() {
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[var(--accent)]/10 border border-[var(--accent)]/25 text-xs text-[var(--accent)] shadow-sm">
                 <span className="font-mono font-bold text-[var(--text-primary)]">{symbol.toUpperCase()}</span>
                 <span className="w-1 h-1 rounded-full bg-[var(--accent)]/50" />
-                <span className="font-semibold text-[var(--accent)]">{stockName}</span>
+                <span className="font-semibold text-[var(--accent)]">{displayStockName(symbol, locale, { fallbackName: stockName })}</span>
                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-white/5 text-[var(--text-secondary)] uppercase font-normal">
                   台股
                 </span>
@@ -891,7 +892,7 @@ export default function BacktestPage() {
               <span className="font-mono text-xl font-bold text-[var(--accent)]">{symbol.toUpperCase()}</span>
               {stockName && (
                 <span className="text-base font-semibold text-[var(--text-primary)]">
-                  {stockName}
+                  {displayStockName(symbol, locale, { fallbackName: stockName })}
                 </span>
               )}
               <span className="text-xs px-2 py-0.5 rounded-md bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30 font-medium">
@@ -924,7 +925,7 @@ export default function BacktestPage() {
                     {ui.newEtfBadge ?? '🌱 新掛牌 ETF 觀察卡'}
                   </span>
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-semibold">
-                    {symbol.toUpperCase()} {stockName}
+                    {symbol.toUpperCase()} {displayStockName(symbol, locale, { fallbackName: stockName })}
                   </span>
                 </div>
                 <div className="text-xs text-[var(--text-secondary)]">
@@ -1622,7 +1623,7 @@ export default function BacktestPage() {
                           {item.symbol}
                         </span>
                         <span className="col-span-4 font-medium text-sm text-[var(--text-primary)] truncate">
-                          {item.name}
+                          {displayStockName(item.symbol, locale, { fallbackName: item.name })}
                         </span>
                         <div className="col-span-2 text-right text-sm text-[var(--text-primary)] font-medium tabular-nums">
                           {fmtVolume(item.volume, ui.volumeUnitBillion, ui.volumeUnitTenThousand)}

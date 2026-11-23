@@ -6,6 +6,12 @@
  * - 二代健保補充保費（2.11%）：串接 `getTaxable54cRatio` 僅針對 54C >= 20,000 元扣繳
  */
 
+import {
+  isLikelyEnglishStockName,
+  isTwStockSymbol,
+  resolveStockDisplayName,
+  type StockMultilingualName,
+} from '@stock/core'
 import { computeNhiSupplementFee, DEFAULT_PAY_LAG_DAYS, NHI_SUPPLEMENT_THRESHOLD } from './dividend-calendar'
 import { getTaxable54cRatio } from './etf-dividend-composition'
 
@@ -64,6 +70,7 @@ export interface PlanDividendEvent {
 export interface PlanAssetProfile {
   symbol: string
   name: string
+  names?: StockMultilingualName
   price: number
   dividend54cRatio: number
   /** 最近 12 個月（實際領息分布）配息事件；不依賴猜測捏造未發放紀錄 */
@@ -88,6 +95,7 @@ export interface PlanMonthDetail {
   items: Array<{
     symbol: string
     name: string
+    names?: StockMultilingualName
     lots: number
     cashDividend: number
     gross: number
@@ -100,6 +108,7 @@ export interface PlanMonthDetail {
 export interface PlanAssetEvaluation {
   symbol: string
   name: string
+  names?: StockMultilingualName
   price: number
   lots: number
   capital: number
@@ -132,10 +141,26 @@ function addDays(isoDate: string, days: number): string {
   return new Date(ts + days * 86_400_000).toISOString().slice(0, 10)
 }
 
+/** 依當前語系解析顯示名稱（相容舊 localStorage 僅存單一英文 name 的紀錄） */
+export function getPlanAssetDisplayName(
+  symbol: string,
+  fallbackName: string | undefined,
+  names: StockMultilingualName | undefined,
+  locale: string,
+): string {
+  const effectiveNames: StockMultilingualName = names ?? (
+    isLikelyEnglishStockName(fallbackName)
+      ? { nameEn: fallbackName, market: isTwStockSymbol(symbol) ? 'TW' : 'US' }
+      : { nameZh: fallbackName, market: isTwStockSymbol(symbol) ? 'TW' : 'US' }
+  )
+  return resolveStockDisplayName(symbol, effectiveNames, locale)
+}
+
 /** 將近 12 個月原始配息列整理成 PlanAssetProfile（不自行乘倍捏造）。 */
 export function buildAssetProfile(params: {
   symbol: string
   name: string
+  names?: StockMultilingualName
   price: number
   rawDividends: Array<{ ex_date: string; pay_date?: string | null; cash_dividend: number }>
   today: string
@@ -169,6 +194,7 @@ export function buildAssetProfile(params: {
   return {
     symbol: sym,
     name: params.name || sym,
+    names: params.names,
     price: params.price,
     dividend54cRatio: ratio,
     events,
@@ -227,6 +253,7 @@ export function evaluateCashflowPlan(
       m.items.push({
         symbol: asset.symbol,
         name: asset.name,
+        names: asset.names,
         lots: safeLots,
         cashDividend: ev.cashDividend,
         gross,
@@ -247,6 +274,7 @@ export function evaluateCashflowPlan(
     return {
       symbol: asset.symbol,
       name: asset.name,
+      names: asset.names,
       price: asset.price,
       lots: safeLots,
       capital,

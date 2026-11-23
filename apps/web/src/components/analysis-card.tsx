@@ -4,6 +4,9 @@ import { TrendingUp, AlertTriangle, Newspaper, BarChart3, Target, Gauge, Languag
 import { AGENT_KEYS } from '@stock/core'
 import { getUniverseTier, type UniverseTier } from '@stock/cycle-entry'
 import { useI18n } from '@/i18n/LanguageProvider'
+import { normalizeStockCode } from '@stock/core'
+import { displayStockLabel } from '@/lib/stock-display'
+import { useStockNames } from '@/lib/use-stock-names'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 
@@ -109,7 +112,7 @@ const SECTION_LABELS: Record<'market' | 'sentiment' | 'news' | 'fundamentals', '
 }
 
 export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
-  const { dict } = useI18n()
+  const { dict, locale } = useI18n()
   const ui = dict.analysisCard
   const typo = useTableTypography()
   const color = RATING_COLORS[analysis.signal] ?? 'text-[var(--text-primary)]'
@@ -117,6 +120,10 @@ export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
   const reportLang = analysis.language === 'en' ? dict.ai.en : analysis.language === 'ja' ? dict.ai.ja : dict.ai.zhTW
   const enabledCount = analysis.enabledAgents?.length ?? 0
   const currentTicker = ticker || analysis.ticker
+  const stockNames = useStockNames(currentTicker ? [currentTicker] : [])
+  const currentTickerLabel = currentTicker
+    ? displayStockLabel(currentTicker, locale, { names: stockNames[normalizeStockCode(currentTicker)] })
+    : ''
   const tier: UniverseTier | null = currentTicker ? getUniverseTier(currentTicker) : null
 
   return (
@@ -133,8 +140,13 @@ export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
         </div>
       )}
 
-      {(analysis.language || analysis.enabledAgents || tier) && (
+      {(currentTickerLabel || analysis.language || analysis.enabledAgents || tier) && (
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-secondary)]">
+          {currentTickerLabel && (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full font-semibold bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30">
+              {currentTickerLabel}
+            </span>
+          )}
           {tier && (
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium border ${

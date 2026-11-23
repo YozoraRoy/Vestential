@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { getStockNameById, getTwseDividendsByYear, migrate, taipeiTodayStr } from '@stock/database'
+import { resolveStockDisplayName } from '@stock/core'
+import { getTwseDividendsByYear, migrate, taipeiTodayStr } from '@stock/database'
+import { resolveServerStockNames } from '@/lib/stock-names-server'
 import { authorizeSync } from '@/lib/sync-auth'
 import { computeExLastBuyDate } from '@/lib/ex-dividend-engine'
 import { alertExLastBuyCountdown } from '@/lib/ex-dividend-alerts'
@@ -44,14 +46,26 @@ export async function POST(req: Request) {
       }
     }
 
-    const matched: { symbol: string; name: string | null; ex_date: string; ex_last_buy_date: string }[] = []
+    const matchedSymbols: { symbol: string; ex_date: string; ex_last_buy_date: string }[] = []
     for (const [symbol, exDate] of upcomingBySymbol.entries()) {
       const lastBuy = computeExLastBuyDate(exDate, isTwseTradingDay)
       if (lastBuy === today) {
-        const name = await getStockNameById(symbol).catch(() => null)
-        matched.push({ symbol, name: name ?? null, ex_date: exDate, ex_last_buy_date: lastBuy })
+        matchedSymbols.push({ symbol, ex_date: exDate, ex_last_buy_date: lastBuy })
       }
     }
+
+    const namesMap = await resolveServerStockNames(
+      matchedSymbols.map((m) => m.symbol),
+      { marketHint: 'TW', source: 'cron_ex_dividend_remind' },
+    ).catch(() => ({} as Record<string, { nameZh?: string | null; nameEn?: string | null; nameJa?: string | null; market?: string | null }>))
+
+    const matched: { symbol: string; name: string | null; ex_date: string; ex_last_buy_date: string }[] = matchedSymbols.map((m) => {
+      const resolved = resolveStockDisplayName(m.symbol, namesMap[m.symbol.toUpperCase()], 'zh-TW')
+      return {
+        ...m,
+        name: resolved && resolved !== m.symbol ? resolved : null,
+      }
+    })
 
     matched.sort((a, b) => a.symbol.localeCompare(b.symbol))
 
