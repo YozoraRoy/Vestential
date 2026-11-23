@@ -426,7 +426,7 @@ describe('graphPost｜Issue #58 節流', () => {
       expect(out.status).toBe('published')
       const createCall = calls.find((c) => c.url.endsWith('/th_uid/threads'))
       expect(createCall).toBeDefined()
-      expect(new URLSearchParams(createCall!.body).get('topic_tag')).toBe('台股')
+      expect(JSON.parse(createCall!.body).topic_tag).toBe('台股')
     })
   })
 })
