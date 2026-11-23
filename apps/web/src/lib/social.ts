@@ -32,7 +32,7 @@ export interface SocialCaptions {
 
 const DEFAULT_THREADS_TOPIC = '台股'
 
-type PlatformKey = keyof SocialCaptions
+type PlatformKey = SocialPostPlatform
 
 const PLATFORM_LABELS: Record<PlatformKey, string> = {
   instagram: 'Instagram',
