@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
     imageUrl?: string | null
     imageUrls?: Partial<Record<SocialPostPlatform, string | null>>
     captions?: SocialCaptions
+    topicTag?: string | null
   } = {}
   try {
     body = await req.json()
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
       imageUrl: body.imageUrl ?? null,
       imageUrls: body.imageUrls,
       captions: body.captions ?? undefined,
+      topicTag: body.topicTag,
     })
     return NextResponse.json({ success: true, ...outcome })
   } catch (e: any) {

@@ -144,6 +144,8 @@ export async function triggerSocialPublish(
     imageUrl?: string | null
     imageUrls?: Partial<Record<SocialPostPlatform, string | null>>
     captions?: SocialCaptions
+    /** Threads 貼文主題標籤（選填；手動發布可覆寫，未傳時使用 AI 挑選結果或預設 '台股'）。 */
+    topicTag?: string | null
     /** Issue #79：執行時刻（預設 now；單測可注入任意 UTC 時刻＋mock 當日已發紀錄）。 */
     now?: Date
   } = {},
@@ -343,7 +345,13 @@ export async function triggerSocialPublish(
       options.imageUrl ??
       buildCardImageUrl(editionKey!, defaultStyle)
 
-    const res = await publishSocialPost(platform, editionKey!, content, imageUrl, false, force)
+    const threadsTopic =
+      platform === 'threads'
+        ? options.topicTag !== undefined
+          ? options.topicTag
+          : (contentByPlatform.threadsTopic ?? '台股')
+        : undefined
+    const res = await publishSocialPost(platform, editionKey!, content, imageUrl, false, force, threadsTopic)
     // #31 主文發完後串首回覆（best-effort：失敗記狀態＋告警，不動主文 status）。
     let firstReplyStatus: string | null = null
     if (firstReply && res.status === 'published' && res.externalId) {

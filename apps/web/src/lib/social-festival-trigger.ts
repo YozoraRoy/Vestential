@@ -107,7 +107,15 @@ export async function triggerFestivalPublish(
   const results: NonNullable<FestivalPublishOutcome['results']> = []
   for (const { platform } of unresolved) {
     const content = platform === 'instagram' ? captions.instagram : platform === 'facebook' ? captions.facebook : captions.threads
-    const res = await publishSocialPost(platform, editionKey, content, imageUrl, false, force)
+    const res = await publishSocialPost(
+      platform,
+      editionKey,
+      content,
+      imageUrl,
+      false,
+      force,
+      platform === 'threads' ? '台股' : undefined,
+    )
     results.push({ platform, status: res.status, error: res.error })
   }
 
