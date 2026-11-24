@@ -31,8 +31,12 @@ jobs:
           mkdir -p apps/web/.next/standalone/apps/web/.next
           cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
           if [ -d apps/web/public ]; then cp -r apps/web/public/. apps/web/.next/standalone/apps/web/public/; fi
-          echo "Standalone entry:"
+          BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "BUILD_TIME=$BUILT_AT" >> "$GITHUB_ENV"
+          printf '{"version":"%s","builtAt":"%s"}\n' "${{ github.sha }}" "$BUILT_AT" > apps/web/.next/standalone/apps/web/.build-version
+          echo "Standalone entry & build stamp:"
           ls apps/web/.next/standalone/apps/web/server.js
+          cat apps/web/.next/standalone/apps/web/.build-version
 
       - name: Create deployment zip (standalone only, small)
         run: |
@@ -102,6 +106,8 @@ jobs:
               THREADS_APP_SECRET="@Microsoft.KeyVault(VaultName=kv-aicontrol-roy;SecretName=VESTENTIAL-THREADS-APP-SECRET)" \
               ADMIN_LINE_USER_IDS=U992bf6b74efcd58e3dc5d3f8d356e880 \
               ADMIN_EMAILS=yuzora_roy@hotmail.com,yozora.sc@gmail.com \
+              BUILD_VERSION="${{ github.sha }}" \
+              BUILD_TIME="${{ env.BUILD_TIME }}" \
               ARENA_CRON_ENABLED=false
 
       - name: Set startup command
@@ -155,20 +161,29 @@ jobs:
 
       - name: Check app health
         run: |
-          echo "Waiting for app to start from standalone build..."
+          EXPECTED_VERSION="${{ github.sha }}"
+          echo "Waiting for app to start from standalone build (expected build.version=$EXPECTED_VERSION)..."
           HEALTHY=0
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
             BODY=$(curl -s --max-time 15 "https://vestential.com/api/health" 2>/dev/null || echo "")
-            MS=$(echo "$BODY" | jq -r '.checks.marketFocusLogs.retentionDays // empty' 2>/dev/null)
-            if [ "$MS" = "7" ] && [ "$(echo "$BODY" | jq -r '.ok // false' 2>/dev/null)" = "true" ]; then
-              echo "App healthy (new build confirmed: marketFocusLogs.retentionDays=7) after attempt $i"
+            MATCHED=$(BODY="$BODY" EXPECTED="$EXPECTED_VERSION" node --experimental-strip-types -e '
+              import { isNewBuildServed } from "./apps/web/src/lib/deploy-build-check.ts";
+              const raw = process.env.BODY || "";
+              let parsed = null;
+              try { parsed = JSON.parse(raw); } catch {}
+              const ok = !!(parsed && parsed.ok === true && isNewBuildServed(parsed, process.env.EXPECTED || ""));
+              process.stdout.write(ok ? "true" : "false");
+            ' 2>/dev/null || echo "false")
+            SERVED_VER=$(echo "$BODY" | jq -r '.build.version // "absent"' 2>/dev/null || echo "absent")
+            if [ "$MATCHED" = "true" ]; then
+              echo "App healthy (confirmed build.version=$EXPECTED_VERSION) after attempt $i"
               HEALTHY=1
               break
             fi
-            echo "Attempt $i: not ready (marketFocusLogs check absent) - waiting..."
+            echo "Attempt $i: not ready (served build.version=$SERVED_VER, expected=$EXPECTED_VERSION) - waiting..."
             sleep 15
           done
           if [ "$HEALTHY" = "0" ]; then
-            echo "::error::App did not become healthy after deployment (new build marker marketFocusLogs not served)"
+            echo "::error::App did not become healthy after deployment (expected build.version=$EXPECTED_VERSION not served)"
             exit 1
           fi
