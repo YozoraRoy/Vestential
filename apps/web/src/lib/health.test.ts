@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { beforeOddLotSyncDeadline, classifyOddLotFreshness, ODD_LOT_EXPECTED_SYNC_DEADLINE_TW } from './health'
+import { beforeOddLotSyncDeadline, classifyOddLotFreshness, ODD_LOT_EXPECTED_SYNC_DEADLINE_TW, resolveBuildInfo } from './health'
 
 /** 以「台灣時間牆鐘」建構 UTC ms（TW = UTC+8，台灣無日光節約，偏移恆為 8h）。 */
 function twMs(year: number, month: number, day: number, hour: number, minute: number): number {
@@ -76,5 +76,42 @@ describe('classifyOddLotFreshness｜Issue #65 最新日期不得超前預期交�
   it('無資料 → empty', () => {
     expect(classifyOddLotFreshness(null, '20261008')).toBe('empty')
     expect(classifyOddLotFreshness(undefined, '20261008')).toBe('empty')
+  })
+})
+
+describe('resolveBuildInfo (#157)', () => {
+  it('未注入 env 且無 .build-version 檔時，version 回傳 unknown 且不拋錯', () => {
+    const prevBuild = process.env.BUILD_VERSION
+    const prevSha = process.env.GITHUB_SHA
+    const prevTime = process.env.BUILD_TIME
+    delete process.env.BUILD_VERSION
+    delete process.env.GITHUB_SHA
+    delete process.env.BUILD_TIME
+    try {
+      const info = resolveBuildInfo('C:/non-existent-dir-for-test')
+      expect(info.version).toBe('unknown')
+      expect(typeof info.builtAt).toBe('string')
+      expect(info.builtAt.length).toBeGreaterThan(0)
+    } finally {
+      if (prevBuild !== undefined) process.env.BUILD_VERSION = prevBuild
+      if (prevSha !== undefined) process.env.GITHUB_SHA = prevSha
+      if (prevTime !== undefined) process.env.BUILD_TIME = prevTime
+    }
+  })
+
+  it('注入 BUILD_VERSION 與 BUILD_TIME 時回傳對應值', () => {
+    const prevBuild = process.env.BUILD_VERSION
+    const prevTime = process.env.BUILD_TIME
+    process.env.BUILD_VERSION = 'sha-test-123'
+    process.env.BUILD_TIME = '2026-11-24T06:00:00Z'
+    try {
+      const info = resolveBuildInfo('C:/non-existent-dir-for-test')
+      expect(info).toEqual({ version: 'sha-test-123', builtAt: '2026-11-24T06:00:00Z' })
+    } finally {
+      if (prevBuild !== undefined) process.env.BUILD_VERSION = prevBuild
+      else delete process.env.BUILD_VERSION
+      if (prevTime !== undefined) process.env.BUILD_TIME = prevTime
+      else delete process.env.BUILD_TIME
+    }
   })
 })

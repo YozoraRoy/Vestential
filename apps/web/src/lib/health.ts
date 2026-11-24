@@ -1,6 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { dbQueryFirst, getMarketFocusMeta, getLatestCycleEntryMeta, cleanupMarketFocusLogs } from '@stock/database'
 import { getLastMarketTradingDay, isTaiwanMarketTradingDay, formatDateIso } from '@/utils/taiwan-calendar'
 import { FALLBACK_SUMMARY_PREFIX } from '@/lib/email'
+import type { BuildInfo } from '@/lib/deploy-build-check'
 
 export interface HealthIssue {
   code: string
@@ -11,9 +14,52 @@ export interface HealthIssue {
 export interface HealthReport {
   ok: boolean
   generatedAt: string
+  build: BuildInfo
   total: number
   issues: HealthIssue[]
   checks: Record<string, any>
+}
+
+/**
+ * 解析目前運行中的 build 身分（#148 / #157）：
+ * 1. 優先讀取 `BUILD_VERSION` / `GITHUB_SHA` 環境變數；
+ * 2. Fallback 讀取 standalone 根目錄 `.build-version`（容忍容器重啟或 env 漂移）；
+ * 3. 本機未注入時明確回傳 `'unknown'`，且不影響 `ok` 計算。
+ */
+export function resolveBuildInfo(cwd: string = process.cwd()): BuildInfo {
+  const envVersion = process.env.BUILD_VERSION?.trim() || process.env.GITHUB_SHA?.trim()
+  const envBuiltAt = process.env.BUILD_TIME?.trim()
+  let fileVersion: string | undefined
+  let fileBuiltAt: string | undefined
+
+  if (!envVersion || !envBuiltAt) {
+    const candidates = [
+      path.resolve(cwd, '.build-version'),
+      path.resolve(cwd, 'apps/web/.build-version'),
+    ]
+    for (const p of candidates) {
+      try {
+        if (!fs.existsSync(p)) continue
+        const raw = fs.readFileSync(p, 'utf8').trim()
+        if (!raw) continue
+        try {
+          const parsed = JSON.parse(raw) as { version?: unknown; builtAt?: unknown }
+          if (typeof parsed.version === 'string' && parsed.version.trim()) fileVersion = parsed.version.trim()
+          if (typeof parsed.builtAt === 'string' && parsed.builtAt.trim()) fileBuiltAt = parsed.builtAt.trim()
+        } catch {
+          fileVersion = raw.split(/\r?\n/)[0]?.trim() || undefined
+        }
+        if (fileVersion) break
+      } catch {
+        // 讀取失敗忽略，繼續 fallback
+      }
+    }
+  }
+
+  return {
+    version: envVersion || fileVersion || 'unknown',
+    builtAt: envBuiltAt || fileBuiltAt || new Date().toISOString(),
+  }
 }
 
 export const MARKET_FOCUS_STALE_MS = 5 * 60 * 60 * 1000
@@ -232,6 +278,7 @@ export async function runHealthChecks(): Promise<HealthReport> {
   return {
     ok: !issues.some((i) => i.severity === 'error'),
     generatedAt: new Date().toISOString(),
+    build: resolveBuildInfo(),
     total: issues.length,
     issues,
     checks,
