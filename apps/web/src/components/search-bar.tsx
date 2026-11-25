@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import { Search, Loader2 } from 'lucide-react'
 import { useI18n } from '@/i18n/LanguageProvider'
 import { isTaiwanSymbol, normalizeTaiwanSymbol } from '@/lib/taiwan-symbol'
@@ -8,13 +8,20 @@ import { isTaiwanSymbol, normalizeTaiwanSymbol } from '@/lib/taiwan-symbol'
 interface SearchBarProps {
   onSearch: (symbol: string) => void
   loading: boolean
+  initialSymbol?: string
 }
 
 /** `/analyze` 專用搜尋框：僅接受台股代號（4~6 碼數字，可附 .TW / .TWO）。 */
-export function SearchBar({ onSearch, loading }: SearchBarProps) {
-  const [symbol, setSymbol] = useState('')
+export function SearchBar({ onSearch, loading, initialSymbol = '' }: SearchBarProps) {
+  const [symbol, setSymbol] = useState(initialSymbol)
   const [formatError, setFormatError] = useState<string | null>(null)
   const { dict } = useI18n()
+
+  useEffect(() => {
+    if (initialSymbol) {
+      setSymbol(initialSymbol)
+    }
+  }, [initialSymbol])
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()

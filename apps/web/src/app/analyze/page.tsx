@@ -14,6 +14,7 @@ import { useI18n } from '@/i18n/LanguageProvider'
 import { localizePath } from '@/i18n/paths'
 import type { Dict } from '@/i18n/dictionaries'
 import { isTaiwanSymbol, normalizeTaiwanSymbol } from '@/lib/taiwan-symbol'
+import { findLatestRecentRecordForSymbol } from '@/lib/analyze-history'
 
 function formatLLMError(raw: string, dict: Dict): string {
   const ui = dict.analyzePage
@@ -31,6 +32,9 @@ interface AnalysisRecord {
   full_report_json: string
   model_usage?: string
   fallback_count?: number
+  user_id?: number | null
+  is_mine?: boolean
+  can_delete?: boolean
   created_at: string
 }
 
@@ -51,6 +55,10 @@ function AnalyzeContent() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [selectedRecordId, setSelectedRecordId] = useState<number | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [activeTab, setActiveTab] = useState<'analyze' | 'history'>('analyze')
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'mine'>('all')
+  const [historyLoadedForSymbol, setHistoryLoadedForSymbol] = useState<string | null>(null)
+  const [recentCachedRecord, setRecentCachedRecord] = useState<AnalysisRecord | null>(null)
   const [enabledAgents, setEnabledAgents] = useState<string[]>([...AGENT_KEYS])
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
   const [assetType, setAssetType] = useState<string | null>(null)
@@ -61,6 +69,7 @@ function AnalyzeContent() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const autoAnalyzedSymbolRef = useRef<string | null>(null)
 
   // C 軟閘門：未登入停留本頁（歷史清單＋全文對匿名開放），跑分析動作才導登入。
   // 僅記錄登入／管理員狀態，不做硬 redirect。
@@ -116,8 +125,8 @@ function AnalyzeContent() {
   // 讀取歷史分析紀錄 (支援傳入 symbol)
   const fetchHistory = useCallback(async (targetSymbol?: string) => {
     setHistoryLoading(true)
+    const querySymbol = targetSymbol !== undefined ? targetSymbol : symbolParam
     try {
-      const querySymbol = targetSymbol !== undefined ? targetSymbol : symbolParam
       const url = querySymbol
         ? `/api/analysis-records?limit=20&symbol=${encodeURIComponent(querySymbol)}`
         : '/api/analysis-records?limit=20'
@@ -127,20 +136,25 @@ function AnalyzeContent() {
       if (data.success && Array.isArray(data.records)) {
         setHistoryRecords(data.records)
 
-        // 若有過濾特定股票且目前尚未設定報告，自動預載最近一筆報告
-        if (querySymbol && data.records.length > 0) {
-          try {
-            const first = data.records[0]
-            const parsed = JSON.parse(first.full_report_json)
-            setAnalysis(parsed)
-            setSelectedRecordId(first.id)
-          } catch (_) {}
+        if (querySymbol) {
+          const recent = findLatestRecentRecordForSymbol<AnalysisRecord>(data.records, querySymbol)
+          setRecentCachedRecord(recent)
+          if (recent) {
+            try {
+              const parsed = JSON.parse(recent.full_report_json)
+              setAnalysis(parsed)
+              setSelectedRecordId(recent.id)
+            } catch (_) {}
+          }
+        } else {
+          setRecentCachedRecord(null)
         }
       }
     } catch (e) {
       console.error('Failed to load analysis history:', e)
     } finally {
       setHistoryLoading(false)
+      setHistoryLoadedForSymbol(querySymbol || '')
     }
   }, [symbolParam])
 
@@ -366,6 +380,21 @@ function AnalyzeContent() {
     }
   }, [fetchHistory, language, enabledAgents, ui, dict, consumeAnalysisStream, isLoggedIn])
 
+  // Issue #198：帶 ?symbol=... 進入且已登入時，若 7 天內無未軟刪除的分析紀錄則自動開始分析
+  useEffect(() => {
+    if (authChecking || !isLoggedIn || loading) return
+    if (!symbolParam || !isTaiwanSymbol(symbolParam)) return
+    if (historyLoadedForSymbol !== symbolParam) return
+    if (autoAnalyzedSymbolRef.current === symbolParam) return
+
+    autoAnalyzedSymbolRef.current = symbolParam
+    const recent = findLatestRecentRecordForSymbol(historyRecords, symbolParam)
+    if (!recent) {
+      setActiveTab('analyze')
+      handleAnalyze(symbolParam)
+    }
+  }, [authChecking, isLoggedIn, loading, symbolParam, historyLoadedForSymbol, historyRecords, handleAnalyze])
+
   // 斷點續跑：呼叫 /api/analyze/resume，SSE 推送與首次分析相同
   const handleResume = useCallback(async (id: number) => {
     setLoading(true)
@@ -445,21 +474,22 @@ function AnalyzeContent() {
     setEnabledAgents(enabled ? [...AGENT_KEYS] : [])
   }, [])
 
-  // 點擊歷史紀錄載入該報告
+  // 點擊歷史紀錄載入該報告並切回分析檢視頁籤
   const handleSelectHistoryRecord = (record: AnalysisRecord) => {
     try {
       const parsedReport = JSON.parse(record.full_report_json)
       setAnalysis({ ...parsedReport, ticker: parsedReport.ticker || record.ticker })
       setSelectedRecordId(record.id)
-      window.scrollTo({ top: 300, behavior: 'smooth' })
+      setActiveTab('analyze')
+      window.scrollTo({ top: 180, behavior: 'smooth' })
     } catch (e) {
       console.error('Failed to parse historical report JSON:', e)
     }
   }
 
-  // 刪除歷史分析紀錄（僅管理者）
+  // 軟刪除歷史分析紀錄（本人建立或管理者皆可刪除）
   const handleDeleteRecord = async (record: AnalysisRecord) => {
-    if (!window.confirm(`確定要刪除 ${record.ticker} 的分析紀錄 (Record #${record.id}) 嗎？此操作無法復原。`)) {
+    if (!window.confirm(`確定要刪除 ${record.ticker} 的分析紀錄 (Record #${record.id}) 嗎？（刪除後將不再顯示於清單中）`)) {
       return
     }
     try {
@@ -477,6 +507,7 @@ function AnalyzeContent() {
       if (selectedRecordId === record.id) {
         setAnalysis(null)
         setSelectedRecordId(null)
+        setRecentCachedRecord(null)
       }
       fetchHistory()
     } catch (e: any) {
@@ -581,31 +612,78 @@ function AnalyzeContent() {
         </div>
       </div>
 
-      <SearchBar onSearch={handleAnalyze} loading={loading} />
-
-      {assetType && (
-        <div className="mt-3">
-          <span
-            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
-              assetType === 'etf'
-                ? 'bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/30'
-                : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-            }`}
-          >
-            <Brain className="w-3.5 h-3.5" />
-            {assetType === 'etf' ? ui.agentClassifiedEtf : assetType === 'index' ? ui.agentClassifiedIndex : ui.agentClassifiedStock}
+      <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab('analyze')}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+            activeTab === 'analyze'
+              ? 'bg-[var(--accent)] text-white shadow'
+              : 'bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white border border-white/10'
+          }`}
+        >
+          <Brain className="w-4 h-4" />
+          <span>{language === 'en' ? 'Analyze & Settings' : language === 'ja' ? '分析と設定' : '啟動分析與設定'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('history')}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+            activeTab === 'history'
+              ? 'bg-[var(--accent)] text-white shadow'
+              : 'bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white border border-white/10'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>
+            {language === 'en'
+              ? `History (${historyRecords.length})`
+              : language === 'ja'
+                ? `分析履歴 (${historyRecords.length})`
+                : `歷史分析紀錄 (${historyRecords.length})`}
           </span>
-        </div>
-      )}
+        </button>
+      </div>
 
-      <AnalysisOptions
-        language={language}
-        onLanguageChange={setLanguage}
-        enabledAgents={enabledAgents}
-        onToggleAgent={handleToggleAgent}
-        onToggleAll={handleToggleAll}
-        disabled={loading}
-      />
+      {activeTab === 'analyze' && (
+        <>
+          <SearchBar onSearch={handleAnalyze} loading={loading} initialSymbol={symbolParam} />
+
+          {symbolParam && recentCachedRecord && !loading && (
+            <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-300">
+              <span>
+                {language === 'en'
+                  ? `Loaded recent analysis for ${recentCachedRecord.ticker} (within 7 days).`
+                  : language === 'ja'
+                    ? `${recentCachedRecord.ticker} の7日以内の最新分析を表示しています。`
+                    : `已自動載入 ${recentCachedRecord.ticker} 7 天內的最新分析報告（${recentCachedRecord.created_at}）；若需最新盤勢可點擊上方「開始分析」重跑。`}
+              </span>
+            </div>
+          )}
+
+          {assetType && (
+            <div className="mt-3">
+              <span
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                  assetType === 'etf'
+                    ? 'bg-[var(--accent)]/15 text-[var(--accent)] border-[var(--accent)]/30'
+                    : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                }`}
+              >
+                <Brain className="w-3.5 h-3.5" />
+                {assetType === 'etf' ? ui.agentClassifiedEtf : assetType === 'index' ? ui.agentClassifiedIndex : ui.agentClassifiedStock}
+              </span>
+            </div>
+          )}
+
+          <AnalysisOptions
+            language={language}
+            onLanguageChange={setLanguage}
+            enabledAgents={enabledAgents}
+            onToggleAgent={handleToggleAgent}
+            onToggleAll={handleToggleAll}
+            disabled={loading}
+          />
 
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {(loading || partialError) && (
@@ -711,15 +789,44 @@ function AnalyzeContent() {
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* 📜 歷史 AI 分析報告區塊 */}
-      <div className="mt-12 border-t border-white/10 pt-8">
+      {activeTab === 'history' && (() => {
+        const visibleRecords = historyFilter === 'mine'
+          ? historyRecords.filter((r) => r.is_mine)
+          : historyRecords
+        return (
+      <div className="pt-2">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <History className="w-5 h-5 text-[var(--accent)]" />
             <h2 className="text-xl font-bold">
               {symbolParam ? ui.historyTitleSymbol.replace('{symbol}', symbolParam) : ui.historyTitleAll}
             </h2>
+            {isLoggedIn && (
+              <div className="inline-flex items-center rounded-lg border border-white/10 bg-[var(--bg-card)] p-0.5 text-xs ml-2">
+                <button
+                  type="button"
+                  onClick={() => setHistoryFilter('all')}
+                  className={`px-2.5 py-1 rounded-md transition ${
+                    historyFilter === 'all' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-white'
+                  }`}
+                >
+                  全部 ({historyRecords.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryFilter('mine')}
+                  className={`px-2.5 py-1 rounded-md transition ${
+                    historyFilter === 'mine' ? 'bg-[var(--accent)] text-white' : 'text-[var(--text-secondary)] hover:text-white'
+                  }`}
+                >
+                  只看我的 ({historyRecords.filter((r) => r.is_mine).length})
+                </button>
+              </div>
+            )}
           </div>
           
           <div className="flex items-center gap-3">
@@ -742,14 +849,19 @@ function AnalyzeContent() {
           </div>
         </div>
 
-        {historyRecords.length === 0 ? (
+        {visibleRecords.length === 0 ? (
           <div className="bg-[var(--bg-card)] rounded-xl p-8 border border-white/5 text-center text-sm text-[var(--text-secondary)]">
-            {symbolParam ? (
+            {historyFilter === 'mine' ? (
+              <p>您尚未建立任何符合條件的分析紀錄。</p>
+            ) : symbolParam ? (
               <div className="space-y-3">
                 <p className="font-medium text-white text-base">{ui.noHistoryFor.replace('{symbol}', symbolParam)}</p>
                 <p className="text-xs">{ui.noHistoryHint.replace('{symbol}', symbolParam)}</p>
                 <button
-                  onClick={() => handleAnalyze(symbolParam)}
+                  onClick={() => {
+                    setActiveTab('analyze')
+                    handleAnalyze(symbolParam)
+                  }}
                   disabled={loading}
                   className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--accent)] text-white font-medium text-xs hover:opacity-90 transition"
                 >
@@ -763,7 +875,7 @@ function AnalyzeContent() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {historyRecords.map(record => {
+            {visibleRecords.map(record => {
               const recordTokens = getRecordTokens(record)
               return (
               <div
@@ -779,6 +891,11 @@ function AnalyzeContent() {
                   <div className="flex items-center gap-2">
                     <FileText className="w-4 h-4 text-[var(--text-secondary)]" />
                     <span className="font-bold text-lg">{record.ticker}</span>
+                    {record.is_mine && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--accent)]/15 text-[var(--accent)] border border-[var(--accent)]/30">
+                        我的
+                      </span>
+                    )}
                     {isPartialRecord(record) && (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30">
                         {ui.jobPartial}
@@ -810,7 +927,7 @@ function AnalyzeContent() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {isAdmin && (
+                    {(record.can_delete || isAdmin) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
@@ -834,6 +951,8 @@ function AnalyzeContent() {
           </div>
         )}
       </div>
+        )
+      })()}
     </div>
   )
 }

@@ -136,6 +136,9 @@ function getSqliteDb(): Database.Database | null {
         primary_models       TEXT,
         fallback_used        TEXT,
         fallback_count       INTEGER DEFAULT 0,
+        user_id              INTEGER,
+        deleted_at           TEXT,
+        deleted_by           INTEGER,
         created_at           TEXT    DEFAULT (datetime('now', 'localtime'))
       );
       CREATE INDEX IF NOT EXISTS idx_analysis_ticker ON analysis_records(ticker);
@@ -403,6 +406,12 @@ function getSqliteDb(): Database.Database | null {
     try {
       _db.exec('ALTER TABLE arena_agents ADD COLUMN reset_note TEXT;')
     } catch {}
+    // Issue #198：analysis_records 建立者與軟刪除欄位（冪等補欄）。
+    for (const col of ['user_id INTEGER', 'deleted_at TEXT', 'deleted_by INTEGER']) {
+      try {
+        _db.exec(`ALTER TABLE analysis_records ADD COLUMN ${col};`)
+      } catch {}
+    }
     try {
       _db.exec('ALTER TABLE arena_agents ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0;')
     } catch {}
@@ -843,11 +852,20 @@ async function getAzurePool(): Promise<sql.ConnectionPool | null> {
           primary_models       NVARCHAR(500),
           fallback_used        NVARCHAR(10),
           fallback_count       INT DEFAULT 0,
+          user_id              INT NULL,
+          deleted_at           NVARCHAR(40) NULL,
+          deleted_by           INT NULL,
           created_at           DATETIME DEFAULT GETDATE()
         );
         CREATE INDEX idx_analysis_ticker ON analysis_records(ticker);
         CREATE INDEX idx_analysis_created ON analysis_records(created_at);
       END
+      IF COL_LENGTH('analysis_records', 'user_id') IS NULL
+        ALTER TABLE analysis_records ADD user_id INT NULL;
+      IF COL_LENGTH('analysis_records', 'deleted_at') IS NULL
+        ALTER TABLE analysis_records ADD deleted_at NVARCHAR(40) NULL;
+      IF COL_LENGTH('analysis_records', 'deleted_by') IS NULL
+        ALTER TABLE analysis_records ADD deleted_by INT NULL;
     `)
 
     await _pool.request().query(`
@@ -2181,6 +2199,9 @@ export interface AnalysisRecord {
   primary_models?: string
   fallback_used?: string
   fallback_count?: number
+  user_id?: number | null
+  deleted_at?: string | null
+  deleted_by?: number | null
   created_at?: string
 }
 
@@ -2193,6 +2214,7 @@ export async function saveAnalysisRecord(record: {
   primaryModels?: string
   fallbackUsed?: boolean
   fallbackCount?: number
+  userId?: number | null
 }): Promise<number> {
   const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19)
   const reportJson = typeof record.fullReport === 'string' ? record.fullReport : JSON.stringify(record.fullReport)
@@ -2201,6 +2223,7 @@ export async function saveAnalysisRecord(record: {
   const primaryModelsStr = record.primaryModels ?? null
   const fallbackUsedStr = record.fallbackUsed ? '1' : '0'
   const fallbackCount = record.fallbackCount ?? 0
+  const userId = record.userId ?? null
   let insertedId = -1
 
   if (isAzureSql) {
@@ -2216,9 +2239,10 @@ export async function saveAnalysisRecord(record: {
           .input('primaryModels', sql.NVarChar(500), primaryModelsStr)
           .input('fallbackUsed', sql.NVarChar(10), fallbackUsedStr)
           .input('fallbackCount', sql.Int, fallbackCount)
+          .input('userId', sql.Int, userId)
           .query(`
-            INSERT INTO analysis_records (ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count)
-            VALUES (@ticker, @rec, @summary, @report, @modelUsage, @primaryModels, @fallbackUsed, @fallbackCount);
+            INSERT INTO analysis_records (ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id)
+            VALUES (@ticker, @rec, @summary, @report, @modelUsage, @primaryModels, @fallbackUsed, @fallbackCount, @userId);
             SELECT SCOPE_IDENTITY() as id
           `)
         insertedId = Number(result.recordset[0]?.id ?? -1)
@@ -2231,10 +2255,10 @@ export async function saveAnalysisRecord(record: {
     if (db) {
       try {
         const stmt = db.prepare(`
-          INSERT INTO analysis_records (ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO analysis_records (ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
-        const info = stmt.run(record.ticker, record.recommendation || 'Hold', summaryStr, reportJson, modelUsageStr, primaryModelsStr, fallbackUsedStr, fallbackCount)
+        const info = stmt.run(record.ticker, record.recommendation || 'Hold', summaryStr, reportJson, modelUsageStr, primaryModelsStr, fallbackUsedStr, fallbackCount, userId)
         insertedId = Number(info.lastInsertRowid)
       } catch (e) {
         console.error('[SQLite] saveAnalysisRecord error:', e)
@@ -2250,6 +2274,9 @@ export async function saveAnalysisRecord(record: {
     primary_models: primaryModelsStr ?? undefined,
     fallback_used: fallbackUsedStr,
     fallback_count: fallbackCount,
+    user_id: userId,
+    deleted_at: null,
+    deleted_by: null,
   })
   return id
 }
@@ -2266,14 +2293,14 @@ export async function getAnalysisRecords(limit: number = 20, symbol?: string): P
         if (cleanSymbol) {
           req.input('pattern', sql.NVarChar(50), `%${cleanSymbol}%`)
           const result = await req.query(`
-            SELECT TOP (@limit) id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at
-            FROM analysis_records WHERE UPPER(ticker) LIKE @pattern ORDER BY id DESC
+            SELECT TOP (@limit) id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at
+            FROM analysis_records WHERE deleted_at IS NULL AND UPPER(ticker) LIKE @pattern ORDER BY id DESC
           `)
           return result.recordset as AnalysisRecord[]
         }
         const result = await req.query(`
-          SELECT TOP (@limit) id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at
-          FROM analysis_records ORDER BY id DESC
+          SELECT TOP (@limit) id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at
+          FROM analysis_records WHERE deleted_at IS NULL ORDER BY id DESC
         `)
         return result.recordset as AnalysisRecord[]
       } catch (e) {
@@ -2286,13 +2313,13 @@ export async function getAnalysisRecords(limit: number = 20, symbol?: string): P
       try {
         if (cleanSymbol) {
           return db.prepare(`
-            SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at
-            FROM analysis_records WHERE UPPER(ticker) LIKE ? ORDER BY id DESC LIMIT ?
+            SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at
+            FROM analysis_records WHERE deleted_at IS NULL AND UPPER(ticker) LIKE ? ORDER BY id DESC LIMIT ?
           `).all(`%${cleanSymbol}%`, limit) as AnalysisRecord[]
         }
         return db.prepare(`
-          SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at
-          FROM analysis_records ORDER BY id DESC LIMIT ?
+          SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at
+          FROM analysis_records WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ?
         `).all(limit) as AnalysisRecord[]
       } catch (e) {
         console.error('[SQLite] getAnalysisRecords error:', e)
@@ -2300,10 +2327,11 @@ export async function getAnalysisRecords(limit: number = 20, symbol?: string): P
     }
   }
 
+  const active = memoryStore.filter(r => !r.deleted_at)
   if (cleanSymbol) {
-    return memoryStore.filter(r => r.ticker.toUpperCase().includes(cleanSymbol)).slice(0, limit)
+    return active.filter(r => r.ticker.toUpperCase().includes(cleanSymbol)).slice(0, limit)
   }
-  return memoryStore.slice(0, limit)
+  return active.slice(0, limit)
 }
 
 // ─── Analysis Jobs（跑多少看多少＋斷點續跑）────────────────────────
@@ -4921,7 +4949,7 @@ export async function getAnalysisRecordById(id: number): Promise<AnalysisRecord 
       try {
         const result = await pool.request()
           .input('id', sql.Int, id)
-          .query(`SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at FROM analysis_records WHERE id = @id`)
+          .query(`SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at FROM analysis_records WHERE id = @id AND deleted_at IS NULL`)
         return result.recordset[0] as AnalysisRecord | undefined
       } catch (e) {
         console.error('[AzureSQL] getAnalysisRecordById error:', e)
@@ -4932,8 +4960,8 @@ export async function getAnalysisRecordById(id: number): Promise<AnalysisRecord 
     if (db) {
       try {
         return db.prepare(`
-          SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, created_at
-          FROM analysis_records WHERE id = ?
+          SELECT id, ticker, recommendation, summary, full_report_json, model_usage, primary_models, fallback_used, fallback_count, user_id, created_at
+          FROM analysis_records WHERE id = ? AND deleted_at IS NULL
         `).get(id) as AnalysisRecord | undefined
       } catch (e) {
         console.error('[SQLite] getAnalysisRecordById error:', e)
@@ -4941,17 +4969,23 @@ export async function getAnalysisRecordById(id: number): Promise<AnalysisRecord 
     }
   }
 
-  return memoryStore.find(r => r.id === id)
+  return memoryStore.find(r => r.id === id && !r.deleted_at)
 }
 
-export async function deleteAnalysisRecord(id: number): Promise<boolean> {
+/** 軟刪除分析紀錄（設定 deleted_at 與 deleted_by，不實際刪除資料庫列）。 */
+export async function deleteAnalysisRecord(id: number, deletedBy?: number | null): Promise<boolean> {
+  const deletedAt = new Date().toISOString()
+  const actor = deletedBy ?? null
+
   if (isAzureSql) {
     const pool = await getAzurePool()
     if (pool) {
       try {
         const result = await pool.request()
           .input('id', sql.Int, id)
-          .query('DELETE FROM analysis_records WHERE id = @id')
+          .input('deletedAt', sql.NVarChar(40), deletedAt)
+          .input('deletedBy', sql.Int, actor)
+          .query('UPDATE analysis_records SET deleted_at = @deletedAt, deleted_by = @deletedBy WHERE id = @id AND deleted_at IS NULL')
         return result.rowsAffected[0] > 0
       } catch (e) {
         console.error('[AzureSQL] deleteAnalysisRecord error:', e)
@@ -4964,7 +4998,9 @@ export async function deleteAnalysisRecord(id: number): Promise<boolean> {
   const db = getSqliteDb()
   if (db) {
     try {
-      const info = db.prepare('DELETE FROM analysis_records WHERE id = ?').run(id)
+      const info = db
+        .prepare('UPDATE analysis_records SET deleted_at = ?, deleted_by = ? WHERE id = ? AND deleted_at IS NULL')
+        .run(deletedAt, actor, id)
       return info.changes > 0
     } catch (e) {
       console.error('[SQLite] deleteAnalysisRecord error:', e)
@@ -4972,9 +5008,10 @@ export async function deleteAnalysisRecord(id: number): Promise<boolean> {
     }
   }
 
-  const idx = memoryStore.findIndex(r => r.id === id)
-  if (idx >= 0) {
-    memoryStore.splice(idx, 1)
+  const target = memoryStore.find(r => r.id === id && !r.deleted_at)
+  if (target) {
+    target.deleted_at = deletedAt
+    target.deleted_by = actor
     return true
   }
   return false
