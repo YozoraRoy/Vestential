@@ -63,18 +63,26 @@ export async function syncTwseAndTpexStockNames(): Promise<number> {
   return upsertStockNames(items)
 }
 
-/** 節流按需同步（6 小時內僅執行一次；失敗不拋錯，避免影響主查詢流程） */
+/** 節流按需同步（成功 6 小時／失敗 10 分鐘內不重試；不拋錯，避免影響主查詢流程） */
+let lastFailureAt = 0
+const FAILURE_COOLDOWN_MS = 10 * 60 * 1000
+
 export async function ensureTwStockNamesSynced(): Promise<number> {
   const now = Date.now()
   if (now - lastSyncAt < SYNC_TTL_MS) return 0
+  if (now - lastFailureAt < FAILURE_COOLDOWN_MS) return 0
   if (inFlightSync) return inFlightSync
 
   inFlightSync = syncTwseAndTpexStockNames()
     .then((count) => {
       if (count > 0) lastSyncAt = Date.now()
+      else lastFailureAt = Date.now()
       return count
     })
-    .catch(() => 0)
+    .catch(() => {
+      lastFailureAt = Date.now()
+      return 0
+    })
     .finally(() => {
       inFlightSync = null
     })

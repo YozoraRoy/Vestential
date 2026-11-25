@@ -402,7 +402,7 @@ async function enrichCandidatesWithNames(list: StockCandidate[], market: Market)
       knownZhNames: knownZh,
       marketHint: market === 'tw' ? 'TW' : 'US',
       source: 'stock_search',
-      syncIfNeeded: market === 'tw',
+      syncIfNeeded: false,
     },
   ).catch(() => ({} as Record<string, StockMultilingualName>))
 
