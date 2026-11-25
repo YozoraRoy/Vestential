@@ -31,7 +31,8 @@ export async function resolveServerStockNames(
   if (!codes.length) return {}
 
   if (opts?.syncIfNeeded !== false) {
-    await ensureTwStockNamesSynced().catch(() => 0)
+    // 絕不阻塞即時請求；僅於背景非同步觸發節流同步。
+    void ensureTwStockNamesSynced().catch(() => 0)
   }
 
   const dbMap = await getStockMultilingualNames(codes).catch(

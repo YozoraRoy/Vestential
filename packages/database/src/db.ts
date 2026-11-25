@@ -5900,6 +5900,27 @@ export async function searchStocksByName(keyword: string): Promise<Array<{ stock
   if (!trimmed) return []
   const kw = `%${trimmed}%`
   const prefix = `${trimmed}%`
+  // 0. 最優先查詢 stock_names 主檔（僅數千筆且有 PK symbol，避免掃描數十萬筆 odd_lot_trades）
+  try {
+    const masterRows = await dbQueryAll(
+      `SELECT symbol AS stock_id, name_zh AS stock_name FROM stock_names
+       WHERE market = 'TW' AND name_zh IS NOT NULL AND name_zh != ''
+         AND (symbol LIKE @kw OR name_zh LIKE @kw)
+       ORDER BY CASE
+         WHEN symbol = @exact THEN 0
+         WHEN name_zh = @exact THEN 1
+         WHEN symbol LIKE @prefix THEN 2
+         WHEN name_zh LIKE @prefix THEN 3
+         ELSE 4
+       END, symbol
+       LIMIT 15`,
+      { kw, exact: trimmed.toUpperCase(), prefix },
+    )
+    if (masterRows.length) return masterRows as Array<{ stock_id: string; stock_name: string }>
+  } catch {
+    // 舊庫尚未建 stock_names 時降級至 odd_lot_trades
+  }
+
   // 1. 優先查詢 odd_lot_trades 表（涵蓋上市上櫃與 ETF，名稱最標準最新）
   // 支援同時比對 stock_name 或 stock_id；且排除少數 stock_name 純為代號的紀錄以取得正式中文
   const rows = await dbQueryAll(
