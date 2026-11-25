@@ -120,6 +120,7 @@ export async function POST(req: Request) {
             language: outputLanguage,
             enabledAgents,
             jobId: job.id,
+            userId: user.id,
             send,
             initialAgentStates: agentStates,
             run: (onProgress, onAgentComplete) =>

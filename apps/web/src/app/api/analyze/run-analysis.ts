@@ -20,6 +20,7 @@ export interface StreamRunContext {
   language: AnalysisLanguage
   enabledAgents: string[]
   jobId: number
+  userId?: number | null
   send: (event: string, data: any) => void
   /**
    * Resume 時從既有 job 讀回的 agent_states，用來 seed 本次 run 的起始狀態，
@@ -114,6 +115,7 @@ export async function runAnalysisStream(ctx: StreamRunContext): Promise<void> {
           primaryModels: JSON.stringify(modelPlan),
           fallbackUsed: result.tokenUsage.agents.reduce((n, a) => n + (a.fallbackCalls ?? 0), 0) > 0,
           fallbackCount: result.tokenUsage.agents.reduce((n, a) => n + (a.fallbackCalls ?? 0), 0),
+          userId: ctx.userId ?? null,
         })
       } catch (dbErr) {
         console.error('[API/Analyze] Failed to save partial analysis record to DB:', dbErr)
@@ -185,6 +187,7 @@ export async function runAnalysisStream(ctx: StreamRunContext): Promise<void> {
       primaryModels: JSON.stringify(modelPlan),
       fallbackUsed: fallbackCount > 0,
       fallbackCount,
+      userId: ctx.userId ?? null,
     })
   } catch (dbErr) {
     console.error('[API/Analyze] Failed to save analysis record to DB:', dbErr)

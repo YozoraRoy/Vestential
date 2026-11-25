@@ -190,6 +190,7 @@ async function handlePost(req: Request) {
             language: outputLanguage,
             enabledAgents,
             jobId,
+            userId: user.id,
             send,
             // B2：失敗分支（result.failedAgent）觸發退款；resume 不傳故不退。
             onFailure: refundOnce,

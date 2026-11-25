@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { deleteAnalysisRecord } from '@stock/database'
+import { deleteAnalysisRecord, getAnalysisRecordById } from '@stock/database'
 import { getCurrentUserFromReq, isAdminUser } from '../../../../lib/auth'
 
 export async function DELETE(
@@ -17,16 +17,23 @@ export async function DELETE(
     if (!user) {
       return NextResponse.json({ success: false, error: 'not authenticated' }, { status: 401 })
     }
-    const isAdmin = await isAdminUser(user)
-    if (!isAdmin) {
-      return NextResponse.json({ success: false, error: 'forbidden: admin only' }, { status: 403 })
+
+    const existing = await getAnalysisRecordById(recordId)
+    if (!existing) {
+      return NextResponse.json({ success: false, error: 'record not found' }, { status: 404 })
     }
 
-    const deleted = await deleteAnalysisRecord(recordId)
+    const isAdmin = await isAdminUser(user)
+    const isOwner = existing.user_id != null && existing.user_id === user.id
+    if (!isAdmin && !isOwner) {
+      return NextResponse.json({ success: false, error: 'forbidden: owner or admin only' }, { status: 403 })
+    }
+
+    const deleted = await deleteAnalysisRecord(recordId, user.id)
     if (!deleted) {
       return NextResponse.json({ success: false, error: 'record not found' }, { status: 404 })
     }
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, softDeleted: true })
   } catch (error) {
     console.error('[API/Analysis-Records/Delete] Failed:', error)
     return NextResponse.json({ success: false, error: 'internal error' }, { status: 500 })
