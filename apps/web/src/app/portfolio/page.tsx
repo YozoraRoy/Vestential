@@ -1576,6 +1576,10 @@ export default function PortfolioPage() {
           loading={txLoading}
           locale={locale}
           onOpenTradeModal={() => openTradeModal()}
+          onUpdated={(nextTx, nextSummary) => {
+            setTransactions(nextTx)
+            setTxSummary(nextSummary)
+          }}
         />
       ) : (
         <>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownUp, CheckCircle2, Plus, ReceiptText, Search, X } from 'lucide-react'
+import { ArrowDownUp, CheckCircle2, Pencil, Plus, ReceiptText, Search, Trash2, X } from 'lucide-react'
 import type { Locale } from '@/i18n/config'
 import {
   estimateTradeFeeAndTax,
@@ -689,6 +689,7 @@ interface PortfolioTransactionsTabProps {
   loading: boolean
   locale: Locale
   onOpenTradeModal: () => void
+  onUpdated?: (transactions: PortfolioTransactionItem[], summary: PortfolioTransactionsSummary) => void
 }
 
 const TAB_COPY: Record<
@@ -709,6 +710,15 @@ const TAB_COPY: Record<
     colAmount: string
     colRealized: string
     colNote: string
+    colActions: string
+    editTitle: string
+    editBtnTitle: string
+    deleteBtnTitle: string
+    editHint: string
+    editSave: string
+    editSaving: string
+    cancel: string
+    deleteConfirm: (symbol: string, date: string) => string
     buyBadge: string
     sellBadge: string
   }
@@ -729,6 +739,15 @@ const TAB_COPY: Record<
     colAmount: '交割金額',
     colRealized: '已實現損益',
     colNote: '備註',
+    colActions: '操作',
+    editTitle: '編輯交易結算紀錄',
+    editBtnTitle: '編輯紀錄',
+    deleteBtnTitle: '刪除紀錄',
+    editHint: '修改或刪除此筆紀錄僅更新交易結算明細與上方統計，不會回溯覆寫「持股總覽」。',
+    editSave: '儲存變更',
+    editSaving: '儲存中...',
+    cancel: '取消',
+    deleteConfirm: (sym, dt) => `確定要刪除 ${sym}（${dt}）這筆交易結算紀錄嗎？（僅移除此筆明細，不會自動回溯修改持股總覽）`,
     buyBadge: '買入',
     sellBadge: '賣出',
   },
@@ -748,6 +767,15 @@ const TAB_COPY: Record<
     colAmount: 'Settlement',
     colRealized: 'Realized P&L',
     colNote: 'Note',
+    colActions: 'Actions',
+    editTitle: 'Edit Trade Settlement',
+    editBtnTitle: 'Edit record',
+    deleteBtnTitle: 'Delete record',
+    editHint: 'Editing or deleting this record only updates the trade ledger and KPIs without overwriting Holdings Overview.',
+    editSave: 'Save Changes',
+    editSaving: 'Saving...',
+    cancel: 'Cancel',
+    deleteConfirm: (sym, dt) => `Delete settlement record for ${sym} (${dt})? This will not alter Holdings Overview.`,
     buyBadge: 'BUY',
     sellBadge: 'SELL',
   },
@@ -767,6 +795,15 @@ const TAB_COPY: Record<
     colAmount: '受渡金額',
     colRealized: '実現損益',
     colNote: 'メモ',
+    colActions: '操作',
+    editTitle: '取引精算履歴を編集',
+    editBtnTitle: '編集',
+    deleteBtnTitle: '削除',
+    editHint: 'この履歴の編集・削除は取引明細と集計のみを更新し、保有銘柄一覧は自動変更されません。',
+    editSave: '保存する',
+    editSaving: '保存中...',
+    cancel: 'キャンセル',
+    deleteConfirm: (sym, dt) => `${sym}（${dt}）の精算履歴を削除しますか？（保有銘柄一覧には影響しません）`,
     buyBadge: '買付',
     sellBadge: '売却',
   },
@@ -778,9 +815,92 @@ export function PortfolioTransactionsTab({
   loading,
   locale,
   onOpenTradeModal,
+  onUpdated,
 }: PortfolioTransactionsTabProps) {
   const t = TAB_COPY[locale] ?? TAB_COPY['zh-TW']
   const [txMarketFilter, setTxMarketFilter] = useState<MarketFilter>('all')
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [actionErr, setActionErr] = useState<string | null>(null)
+  const [editingTx, setEditingTx] = useState<PortfolioTransactionItem | null>(null)
+  const [editTradeDate, setEditTradeDate] = useState('')
+  const [editShares, setEditShares] = useState('')
+  const [editPrice, setEditPrice] = useState('')
+  const [editFee, setEditFee] = useState('')
+  const [editTax, setEditTax] = useState('')
+  const [editRealizedPnl, setEditRealizedPnl] = useState('')
+  const [editNote, setEditNote] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  const openEditModal = (tx: PortfolioTransactionItem) => {
+    setActionErr(null)
+    setEditingTx(tx)
+    setEditTradeDate(tx.trade_date)
+    setEditShares(String(tx.shares))
+    setEditPrice(String(tx.price))
+    setEditFee(String(tx.fee))
+    setEditTax(String(tx.tax))
+    setEditRealizedPnl(tx.realized_pnl != null ? String(tx.realized_pnl) : '')
+    setEditNote(tx.note ?? '')
+  }
+
+  const handleDeleteTx = async (tx: PortfolioTransactionItem) => {
+    if (!window.confirm(t.deleteConfirm(tx.symbol, tx.trade_date))) return
+    setActionErr(null)
+    setDeletingId(tx.id)
+    try {
+      const res = await fetch(`/api/portfolio/transactions/${tx.id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setActionErr(data.error || `刪除失敗 (${res.status})`)
+        return
+      }
+      if (Array.isArray(data.transactions) && data.summary) {
+        onUpdated?.(data.transactions, data.summary)
+      }
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : '刪除失敗')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTx) return
+    setActionErr(null)
+    setSavingEdit(true)
+    try {
+      const payload: Record<string, unknown> = {
+        tradeDate: editTradeDate.trim(),
+        shares: Number(editShares),
+        price: Number(editPrice),
+        fee: Number(editFee || 0),
+        tax: Number(editTax || 0),
+        note: editNote.trim() || null,
+      }
+      if (editingTx.side === 'sell') {
+        payload.realizedPnl = editRealizedPnl.trim() === '' ? null : Number(editRealizedPnl)
+      }
+      const res = await fetch(`/api/portfolio/transactions/${editingTx.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setActionErr(data.error || `更新失敗 (${res.status})`)
+        return
+      }
+      if (Array.isArray(data.transactions) && data.summary) {
+        onUpdated?.(data.transactions, data.summary)
+      }
+      setEditingTx(null)
+    } catch (err: unknown) {
+      setActionErr(err instanceof Error ? err.message : '更新失敗')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
 
   const byMarket = useMemo(() => summarizeTransactionsByMarket(transactions), [transactions])
   const filteredTx = useMemo(() => {
@@ -915,6 +1035,7 @@ export function PortfolioTransactionsTab({
                 <th className="px-3 py-2.5 text-right whitespace-nowrap">{t.colAmount}</th>
                 <th className="px-3 py-2.5 text-right whitespace-nowrap">{t.colRealized}</th>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">{t.colNote}</th>
+                <th className="px-3 py-2.5 text-right whitespace-nowrap">{t.colActions}</th>
               </tr>
             </thead>
             <tbody>
@@ -962,11 +1083,163 @@ export function PortfolioTransactionsTab({
                     <td className="px-3 py-2.5 text-[var(--text-secondary)] max-w-[180px] truncate">
                       {tx.note ?? '—'}
                     </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap text-right">
+                      <div className="inline-flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(tx)}
+                          title={t.editBtnTitle}
+                          className="p-1.5 rounded-lg bg-white/5 text-[var(--accent)] hover:bg-white/10 transition"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTx(tx)}
+                          disabled={deletingId === tx.id}
+                          title={t.deleteBtnTitle}
+                          className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/10 transition disabled:opacity-50 disabled:cursor-wait"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {actionErr && !editingTx && (
+        <p className="text-xs text-rose-400">{actionErr}</p>
+      )}
+
+      {editingTx && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+          onClick={() => setEditingTx(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/15 bg-[var(--bg-card)] shadow-2xl overflow-hidden"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/10">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                  {t.editTitle} — {editingTx.symbol} {editingTx.symbol_name ?? ''}
+                </h3>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{t.editHint}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingTx(null)}
+                className="p-1 rounded-lg hover:bg-white/10 text-[var(--text-secondary)]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEdit} className="p-5 space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[var(--text-secondary)] mb-1">{t.colDate}</label>
+                  <input
+                    type="date"
+                    value={editTradeDate}
+                    onChange={(ev) => setEditTradeDate(ev.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[var(--text-secondary)] mb-1">{t.colShares}</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.0001"
+                    value={editShares}
+                    onChange={(ev) => setEditShares(ev.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)] tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[var(--text-secondary)] mb-1">{t.colPrice}</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0.0001"
+                    value={editPrice}
+                    onChange={(ev) => setEditPrice(ev.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)] tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[var(--text-secondary)] mb-1">手續費</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={editFee}
+                    onChange={(ev) => setEditFee(ev.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)] tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[var(--text-secondary)] mb-1">交易稅</label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={editTax}
+                    onChange={(ev) => setEditTax(ev.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)] tabular-nums"
+                  />
+                </div>
+                {editingTx.side === 'sell' && (
+                  <div>
+                    <label className="block text-[var(--text-secondary)] mb-1">{t.colRealized}</label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={editRealizedPnl}
+                      onChange={(ev) => setEditRealizedPnl(ev.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)] tabular-nums"
+                    />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-[var(--text-secondary)] mb-1">{t.colNote}</label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  value={editNote}
+                  onChange={(ev) => setEditNote(ev.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[var(--bg-secondary)] border border-white/10 text-[var(--text-primary)]"
+                />
+              </div>
+              {actionErr && <p className="text-xs text-rose-400">{actionErr}</p>}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingTx(null)}
+                  className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-[var(--text-secondary)]"
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-4 py-2 rounded-lg bg-[var(--accent)] text-white font-semibold hover:opacity-90 disabled:opacity-50"
+                >
+                  {savingEdit ? t.editSaving : t.editSave}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

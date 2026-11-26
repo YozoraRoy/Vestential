@@ -3930,6 +3930,186 @@ export async function getPortfolioTransactionsByGuest(guestUid: string, limit = 
   return portfolioTransactionsMemoryStore.filter(r => r.guest_uid === guestUid && r.user_id === 0).slice(0, limit)
 }
 
+export interface PortfolioTransactionUpdatePatch {
+  tradeDate?: string
+  shares?: number
+  price?: number
+  fee?: number
+  tax?: number
+  totalAmount?: number
+  realizedPnl?: number | null
+  realizedPnlPct?: number | null
+  note?: string | null
+}
+
+function matchPortfolioTxOwner(row: PortfolioTransactionRow, owner: PortfolioOwnerFilter): boolean {
+  if (owner.userId && owner.userId > 0) return row.user_id === owner.userId
+  return !!owner.guestUid && row.guest_uid === owner.guestUid && row.user_id === 0
+}
+
+export async function getPortfolioTransactionByOwner(
+  id: number,
+  owner: PortfolioOwnerFilter,
+): Promise<PortfolioTransactionRow | undefined> {
+  const byUser = !!(owner.userId && owner.userId > 0)
+  if (!byUser && !owner.guestUid) return undefined
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return undefined
+    try {
+      const req = pool.request().input('id', sql.Int, id)
+      const whereOwner = byUser ? 'user_id = @userId' : 'guest_uid = @guestUid AND user_id = 0'
+      if (byUser) req.input('userId', sql.Int, owner.userId!)
+      else req.input('guestUid', sql.NVarChar(64), owner.guestUid!)
+      const result = await req.query(`SELECT TOP 1 * FROM portfolio_transactions WHERE id = @id AND ${whereOwner}`)
+      return result.recordset[0] as PortfolioTransactionRow | undefined
+    } catch (e) {
+      console.error('[AzureSQL] getPortfolioTransactionByOwner error:', e)
+      return undefined
+    }
+  }
+
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      return (
+        byUser
+          ? db.prepare('SELECT * FROM portfolio_transactions WHERE id = ? AND user_id = ?').get(id, owner.userId!)
+          : db.prepare('SELECT * FROM portfolio_transactions WHERE id = ? AND guest_uid = ? AND user_id = 0').get(id, owner.guestUid!)
+      ) as PortfolioTransactionRow | undefined
+    } catch (e) {
+      console.error('[SQLite] getPortfolioTransactionByOwner error:', e)
+      return undefined
+    }
+  }
+
+  return portfolioTransactionsMemoryStore.find((r) => r.id === id && matchPortfolioTxOwner(r, owner))
+}
+
+export async function updatePortfolioTransactionByOwner(
+  id: number,
+  owner: PortfolioOwnerFilter,
+  patch: PortfolioTransactionUpdatePatch,
+): Promise<boolean> {
+  const byUser = !!(owner.userId && owner.userId > 0)
+  if (!byUser && !owner.guestUid) return false
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return false
+    try {
+      const sets: string[] = []
+      const req = pool.request().input('id', sql.Int, id)
+      const whereOwner = byUser ? 'user_id = @userId' : 'guest_uid = @guestUid AND user_id = 0'
+      if (byUser) req.input('userId', sql.Int, owner.userId!)
+      else req.input('guestUid', sql.NVarChar(64), owner.guestUid!)
+
+      if (patch.tradeDate !== undefined) { sets.push('trade_date = @tradeDate'); req.input('tradeDate', sql.NVarChar(20), patch.tradeDate) }
+      if (patch.shares !== undefined) { sets.push('shares = @shares'); req.input('shares', sql.Float, patch.shares) }
+      if (patch.price !== undefined) { sets.push('price = @price'); req.input('price', sql.Float, patch.price) }
+      if (patch.fee !== undefined) { sets.push('fee = @fee'); req.input('fee', sql.Float, patch.fee) }
+      if (patch.tax !== undefined) { sets.push('tax = @tax'); req.input('tax', sql.Float, patch.tax) }
+      if (patch.totalAmount !== undefined) { sets.push('total_amount = @totalAmount'); req.input('totalAmount', sql.Float, patch.totalAmount) }
+      if (patch.realizedPnl !== undefined) { sets.push('realized_pnl = @realizedPnl'); req.input('realizedPnl', sql.Float, patch.realizedPnl) }
+      if (patch.realizedPnlPct !== undefined) { sets.push('realized_pnl_pct = @realizedPnlPct'); req.input('realizedPnlPct', sql.Float, patch.realizedPnlPct) }
+      if (patch.note !== undefined) { sets.push('note = @note'); req.input('note', sql.NVarChar(500), patch.note) }
+      if (sets.length === 0) return false
+
+      const result = await req.query(`UPDATE portfolio_transactions SET ${sets.join(', ')} WHERE id = @id AND ${whereOwner}`)
+      return result.rowsAffected[0] > 0
+    } catch (e) {
+      console.error('[AzureSQL] updatePortfolioTransactionByOwner error:', e)
+      return false
+    }
+  }
+
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      const sets: string[] = []
+      const params: unknown[] = []
+      if (patch.tradeDate !== undefined) { sets.push('trade_date = ?'); params.push(patch.tradeDate) }
+      if (patch.shares !== undefined) { sets.push('shares = ?'); params.push(patch.shares) }
+      if (patch.price !== undefined) { sets.push('price = ?'); params.push(patch.price) }
+      if (patch.fee !== undefined) { sets.push('fee = ?'); params.push(patch.fee) }
+      if (patch.tax !== undefined) { sets.push('tax = ?'); params.push(patch.tax) }
+      if (patch.totalAmount !== undefined) { sets.push('total_amount = ?'); params.push(patch.totalAmount) }
+      if (patch.realizedPnl !== undefined) { sets.push('realized_pnl = ?'); params.push(patch.realizedPnl) }
+      if (patch.realizedPnlPct !== undefined) { sets.push('realized_pnl_pct = ?'); params.push(patch.realizedPnlPct) }
+      if (patch.note !== undefined) { sets.push('note = ?'); params.push(patch.note) }
+      if (sets.length === 0) return false
+
+      if (byUser) {
+        params.push(id, owner.userId!)
+        return db.prepare(`UPDATE portfolio_transactions SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params).changes > 0
+      }
+      params.push(id, owner.guestUid!)
+      return db.prepare(`UPDATE portfolio_transactions SET ${sets.join(', ')} WHERE id = ? AND guest_uid = ? AND user_id = 0`).run(...params).changes > 0
+    } catch (e) {
+      console.error('[SQLite] updatePortfolioTransactionByOwner error:', e)
+      return false
+    }
+  }
+
+  const target = portfolioTransactionsMemoryStore.find((r) => r.id === id && matchPortfolioTxOwner(r, owner))
+  if (!target) return false
+  if (patch.tradeDate !== undefined) target.trade_date = patch.tradeDate
+  if (patch.shares !== undefined) target.shares = patch.shares
+  if (patch.price !== undefined) target.price = patch.price
+  if (patch.fee !== undefined) target.fee = patch.fee
+  if (patch.tax !== undefined) target.tax = patch.tax
+  if (patch.totalAmount !== undefined) target.total_amount = patch.totalAmount
+  if (patch.realizedPnl !== undefined) target.realized_pnl = patch.realizedPnl
+  if (patch.realizedPnlPct !== undefined) target.realized_pnl_pct = patch.realizedPnlPct
+  if (patch.note !== undefined) target.note = patch.note
+  return true
+}
+
+export async function deletePortfolioTransactionByOwner(
+  id: number,
+  owner: PortfolioOwnerFilter,
+): Promise<boolean> {
+  const byUser = !!(owner.userId && owner.userId > 0)
+  if (!byUser && !owner.guestUid) return false
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (!pool) return false
+    try {
+      const req = pool.request().input('id', sql.Int, id)
+      const whereOwner = byUser ? 'user_id = @userId' : 'guest_uid = @guestUid AND user_id = 0'
+      if (byUser) req.input('userId', sql.Int, owner.userId!)
+      else req.input('guestUid', sql.NVarChar(64), owner.guestUid!)
+      const result = await req.query(`DELETE FROM portfolio_transactions WHERE id = @id AND ${whereOwner}`)
+      return result.rowsAffected[0] > 0
+    } catch (e) {
+      console.error('[AzureSQL] deletePortfolioTransactionByOwner error:', e)
+      return false
+    }
+  }
+
+  const db = getSqliteDb()
+  if (db) {
+    try {
+      const info = byUser
+        ? db.prepare('DELETE FROM portfolio_transactions WHERE id = ? AND user_id = ?').run(id, owner.userId!)
+        : db.prepare('DELETE FROM portfolio_transactions WHERE id = ? AND guest_uid = ? AND user_id = 0').run(id, owner.guestUid!)
+      return info.changes > 0
+    } catch (e) {
+      console.error('[SQLite] deletePortfolioTransactionByOwner error:', e)
+      return false
+    }
+  }
+
+  const idx = portfolioTransactionsMemoryStore.findIndex((r) => r.id === id && matchPortfolioTxOwner(r, owner))
+  if (idx >= 0) {
+    portfolioTransactionsMemoryStore.splice(idx, 1)
+    return true
+  }
+  return false
+}
+
 // ─── Portfolio 現價同步（Issue #33）───────────────────────────────────
 // 只更新現價＋衍生欄位＋price_synced_at；dividend（使用者手填股息）絕不異動。
 
