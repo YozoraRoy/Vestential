@@ -145,15 +145,18 @@ export class TradingEngine {
       return Number.isFinite(n) && n >= 128 ? Math.round(n) : 2048
     })()
 
-    const createClient = (model: string, provider?: string) => LLMFactory.create({
-      provider: provider ?? this.config.llmProvider,
-      model,
-      temperature: this.config.temperature,
-      baseUrl: provider !== 'google' ? this.config.backendUrl : undefined,
-      // 壓低 max_tokens 預算：部分模型（如 big-pickle）輸出預算較小，
-      // 若請求過大的 max_tokens 會被上游回 413 Request Entity Too Large。
-      maxTokens: this.analyzeMaxTokens,
-    })
+    const createClient = (model: string, provider?: string) => {
+      const effectiveProvider = provider ?? this.config.llmProvider
+      return LLMFactory.create({
+        provider: effectiveProvider,
+        model,
+        temperature: this.config.temperature,
+        baseUrl: effectiveProvider !== 'google' ? (this.config.backendUrl?.trim() || undefined) : undefined,
+        // 壓低 max_tokens 預算：部分模型（如 big-pickle）輸出預算較小，
+        // 若請求過大的 max_tokens 會被上游回 413 Request Entity Too Large。
+        maxTokens: this.analyzeMaxTokens,
+      })
+    }
 
     this.deepLLM = createClient(this.config.deepThinkModel)
     this.quickLLM = createClient(this.config.quickThinkModel)
