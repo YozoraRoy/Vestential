@@ -789,10 +789,20 @@ export async function generateArticleSummaries(
         })
         .join('\n\n')
       try {
-        const raw = await llm.generate(
+        const chunkTimeoutMs = Number(process.env.MARKET_FOCUS_SUMMARY_CHUNK_TIMEOUT_MS ?? '90000')
+        const genPromise = llm.generate(
           ARTICLE_SUMMARIES_SYSTEM_PROMPT,
           `請為以下 ${chunk.length} 則新聞分別產出說人話重點摘要（含影響欄位）：\n\n${promptList}`,
         )
+        const raw =
+          Number.isFinite(chunkTimeoutMs) && chunkTimeoutMs > 0
+            ? await Promise.race([
+                genPromise,
+                new Promise<string>((_, reject) =>
+                  setTimeout(() => reject(new Error(`article summary chunk timeout after ${chunkTimeoutMs}ms`)), chunkTimeoutMs),
+                ),
+              ])
+            : await genPromise
         const cleaned = raw.replace(/```json[\s\S]*?```/g, (m) => m.slice(7, -3)).trim()
         const parsed = JSON.parse(cleaned) as {
           summaries?: {

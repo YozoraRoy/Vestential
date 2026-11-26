@@ -45,9 +45,10 @@ export class GoogleClient implements LLMClient {
 
   private getProvider(apiKey?: string) {
     const key = apiKey || this.apiKeys[this.currentKeyIndex] || ''
+    const baseURL = this.config.baseUrl?.trim() || undefined
     return createGoogleGenerativeAI({
       apiKey: key,
-      baseURL: this.config.baseUrl,
+      ...(baseURL ? { baseURL } : {}),
     })
   }
 
