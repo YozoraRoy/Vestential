@@ -268,3 +268,75 @@ export function settlePortfolioTrade(
     realizedPnlPct,
   }
 }
+
+export interface EditableTransactionInput {
+  tradeDate?: string
+  shares?: number
+  price?: number
+  fee?: number
+  tax?: number
+  realizedPnl?: number | null
+  note?: string | null
+}
+
+/**
+ * 依使用者編輯的欄位重算交易結算紀錄金額（不更動持股總覽）。
+ */
+export function recomputeTransactionAmounts(
+  existing: {
+    side: 'buy' | 'sell'
+    shares: number
+    price: number
+    fee: number
+    tax: number
+    trade_date: string
+    realized_pnl?: number | null
+    realized_pnl_pct?: number | null
+    note?: string | null
+  },
+  patch: EditableTransactionInput,
+) {
+  const tradeDate = patch.tradeDate !== undefined ? patch.tradeDate.trim() : existing.trade_date
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
+    throw new Error('成交日期格式須為 YYYY-MM-DD')
+  }
+  const shares = patch.shares !== undefined ? patch.shares : existing.shares
+  const price = patch.price !== undefined ? patch.price : existing.price
+  const fee = patch.fee !== undefined ? patch.fee : existing.fee
+  const tax = patch.tax !== undefined ? patch.tax : existing.tax
+
+  if (!Number.isFinite(shares) || shares <= 0) throw new Error('成交股數必須大於 0')
+  if (!Number.isFinite(price) || price <= 0) throw new Error('成交價格必須大於 0')
+  if (!Number.isFinite(fee) || fee < 0) throw new Error('手續費不可為負數')
+  if (!Number.isFinite(tax) || tax < 0) throw new Error('交易稅不可為負數')
+
+  const gross = shares * price
+  const totalAmount = existing.side === 'buy' ? round2(gross + fee + tax) : round2(gross - fee - tax)
+
+  let realizedPnl: number | null = existing.realized_pnl ?? null
+  if (existing.side === 'buy') {
+    realizedPnl = null
+  } else if (patch.realizedPnl !== undefined) {
+    if (patch.realizedPnl !== null && !Number.isFinite(patch.realizedPnl)) {
+      throw new Error('已實現損益格式錯誤')
+    }
+    realizedPnl = patch.realizedPnl === null ? null : round2(patch.realizedPnl)
+  }
+
+  const note =
+    patch.note !== undefined
+      ? (patch.note && patch.note.trim() ? patch.note.trim().slice(0, 500) : null)
+      : (existing.note ?? null)
+
+  return {
+    tradeDate,
+    shares: round4(shares),
+    price: round4(price),
+    fee: round2(fee),
+    tax: round2(tax),
+    totalAmount,
+    realizedPnl,
+    realizedPnlPct: existing.realized_pnl_pct ?? null,
+    note,
+  }
+}
