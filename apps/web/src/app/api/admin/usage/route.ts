@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { getUserUsageReport, migrate } from '@stock/database'
+import { withApiAudit } from '@/lib/api-audit'
 import { isAdminUser, getCurrentUserFromReq } from '@/lib/auth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   await migrate()
   const user = await getCurrentUserFromReq(req)
   if (!user || !(await isAdminUser(user))) {
@@ -18,4 +19,8 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ success: false, error: e?.message ?? 'usage 失敗' }, { status: 500 })
   }
+}
+
+export async function GET(req: NextRequest) {
+  return withApiAudit(req, 'admin-usage', () => handleGet(req))
 }

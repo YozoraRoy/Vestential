@@ -89,6 +89,14 @@ export async function extractActor(req: Request | NextRequest): Promise<{
   return { actorType: 'guest', userId: null, userEmail: null, clientIp, userAgent }
 }
 
+function safeLogApiError(payload: Parameters<typeof logApiError>[0]): void {
+  try {
+    Promise.resolve(logApiError(payload)).catch(() => {})
+  } catch {
+    // 寫入失敗不影響主流程狀態碼與回應
+  }
+}
+
 /** 包裝 API Route Handler，自動記錄 5xx、429（區分 AI 額度用盡 vs 站內限流）與分級慢 API。 */
 export async function withApiAudit<T extends Response>(
   req: Request | NextRequest,
@@ -132,7 +140,7 @@ export async function withApiAudit<T extends Response>(
         else category = 'api_error'
       }
 
-      void logApiError({
+      safeLogApiError({
         category,
         route,
         method,
@@ -159,7 +167,7 @@ export async function withApiAudit<T extends Response>(
         ? 'ai_error'
         : 'api_error'
 
-    void logApiError({
+    safeLogApiError({
       category,
       route,
       method,

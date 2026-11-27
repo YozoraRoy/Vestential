@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { dbQueryAll, dbQueryFirst, ensureSeedData, hasDb } from '@stock/database'
 import { withApiAudit } from '@/lib/api-audit'
+import { attachOddLotSignals } from '@/lib/odd-lot-signals-server'
 
 export async function GET(req: Request) {
   return withApiAudit(req, '/api/odd-lot', () => handleGet(req))
@@ -38,7 +39,8 @@ async function handleGet(req: Request) {
       LIMIT 1
     `, { stock_id: stockId })
 
-    return NextResponse.json({ trades, gift: gift ?? null })
+    const enrichedTrades = await attachOddLotSignals(trades, trades[0]?.date)
+    return NextResponse.json({ trades: enrichedTrades, gift: gift ?? null })
   }
 
   const latestDate = date ?? (await dbQueryFirst<{ date: string }>(
@@ -70,5 +72,6 @@ async function handleGet(req: Request) {
     LIMIT 1500
   `, { date: latestDate })
 
-  return NextResponse.json({ trades, latestDate })
+  const enrichedTrades = await attachOddLotSignals(trades, latestDate)
+  return NextResponse.json({ trades: enrichedTrades, latestDate })
 }

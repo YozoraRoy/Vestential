@@ -344,6 +344,14 @@ export interface Dict {
     toggleOnlyAllowAgent: string
     toggleOnlyHighCp: string
     toggleHideExpired: string
+    toggleOnlyAbnormal: string
+    badgeVolumeSpike: string
+    badgePremium: string
+    signalCriteriaHint: string
+    emptyAbnormalTitle: string
+    emptyAbnormalHint: string
+    loadErrorTitle: string
+    retryLoad: string
     refreshing: string
     manualRefresh: string
     refreshThrottled: string

@@ -4,7 +4,7 @@ import { getTwseDividendsByYear, migrate, taipeiTodayStr } from '@stock/database
 import { resolveServerStockNames } from '@/lib/stock-names-server'
 import { authorizeSync } from '@/lib/sync-auth'
 import { computeExLastBuyDate } from '@/lib/ex-dividend-engine'
-import { alertExLastBuyCountdown } from '@/lib/ex-dividend-alerts'
+import { alertExLastBuyCountdown, getOwnerHeldSymbols, normalizeTwSymbol } from '@/lib/ex-dividend-alerts'
 import { isTwseTradingDay } from '@/lib/twse-calendar'
 
 export const runtime = 'nodejs'
@@ -46,8 +46,20 @@ export async function POST(req: Request) {
       }
     }
 
+    const heldSymbols = await getOwnerHeldSymbols()
+    if (heldSymbols.size === 0) {
+      return NextResponse.json({
+        success: true,
+        today,
+        dryRun: body.dryRun === true,
+        count: 0,
+        items: [],
+      })
+    }
+
     const matchedSymbols: { symbol: string; ex_date: string; ex_last_buy_date: string }[] = []
     for (const [symbol, exDate] of upcomingBySymbol.entries()) {
+      if (!heldSymbols.has(normalizeTwSymbol(symbol))) continue
       const lastBuy = computeExLastBuyDate(exDate, isTwseTradingDay)
       if (lastBuy === today) {
         matchedSymbols.push({ symbol, ex_date: exDate, ex_last_buy_date: lastBuy })
@@ -70,7 +82,7 @@ export async function POST(req: Request) {
     matched.sort((a, b) => a.symbol.localeCompare(b.symbol))
 
     if (!body.dryRun && matched.length > 0) {
-      await alertExLastBuyCountdown(matched)
+      await alertExLastBuyCountdown(matched, new Date(), { heldSymbols })
     }
 
     return NextResponse.json({

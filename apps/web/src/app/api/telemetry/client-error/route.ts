@@ -1,31 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { logApiError, migrate, type ApiErrorCategory } from '@stock/database'
+import { countRecentClientErrors, logApiError, migrate, type ApiErrorCategory } from '@stock/database'
 import { extractActor, isAiQuotaText } from '@/lib/api-audit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-// 單一遮罩 IP 每分鐘最多上報 10 筆，防止惡意灌爆資料庫
-const rateBuckets = new Map<string, { count: number; resetAt: number }>()
-const MAX_PER_MIN = 10
-
-function allowReport(key: string): boolean {
-  const now = Date.now()
-  const cur = rateBuckets.get(key)
-  if (!cur || now > cur.resetAt) {
-    rateBuckets.set(key, { count: 1, resetAt: now + 60_000 })
-    if (rateBuckets.size > 500) rateBuckets.clear()
-    return true
-  }
-  if (cur.count >= MAX_PER_MIN) return false
-  cur.count += 1
-  return true
-}
+const CLIENT_ERROR_WINDOW_MS = 60_000
+const MAX_REPORTS_PER_WINDOW = 10
 
 export async function POST(req: NextRequest) {
   await migrate()
   const actor = await extractActor(req)
-  if (!allowReport(actor.clientIp)) {
+  const recentCount = await countRecentClientErrors(actor.clientIp, CLIENT_ERROR_WINDOW_MS)
+  if (recentCount >= MAX_REPORTS_PER_WINDOW) {
     return NextResponse.json({ success: false, error: 'Too many reports' }, { status: 429 })
   }
 

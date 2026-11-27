@@ -38,6 +38,12 @@ import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
 import { getOddLotRestriction, type RestrictionStatus } from '@/lib/odd-lot-restriction'
 import {
+  ODD_LOT_LOOKBACK_DAYS,
+  PREMIUM_PCT,
+  VOLUME_SPIKE_Z,
+  type OddLotSignal,
+} from '@/lib/odd-lot-signals'
+import {
   INDUSTRY_ALL,
   INDUSTRY_BOND_ETF,
   INDUSTRY_DR,
@@ -73,6 +79,7 @@ export interface OddLotItem {
   twse_meeting_date?: string | null
   industry_code?: string | null
   industry_name?: string | null
+  signals?: OddLotSignal
 }
 
 export type GiftCategory = 'ALL' | 'EGIFT' | 'CARD' | 'KITCHEN' | 'CARE' | 'LIFESTYLE' | 'PENDING' | 'NO_GIFT' | 'OTHER'
@@ -402,9 +409,12 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
   const { dict, locale } = useI18n()
   const ui = dict.oddLot
   const typo = useTableTypography()
+  const [items, setItems] = useState<OddLotItem[]>(initialItems)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [reloading, setReloading] = useState(false)
   const oddLotQuerySymbols = useMemo(
-    () => (locale === 'zh-TW' ? [] : initialItems.slice(0, 100).map((i) => i.stock_id)),
-    [locale, initialItems],
+    () => (locale === 'zh-TW' ? [] : items.slice(0, 100).map((i) => i.stock_id)),
+    [locale, items],
   )
   const oddLotNames = useStockNames(oddLotQuerySymbols)
 
@@ -421,6 +431,28 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
   const [onlyAllowAgent, setOnlyAllowAgent] = useState(false)
   const [onlyHighCp, setOnlyHighCp] = useState(false)
   const [hideExpired, setHideExpired] = useState(true)
+  const [onlyAbnormal, setOnlyAbnormal] = useState(false)
+
+  const reloadFromApi = useCallback(async () => {
+    setReloading(true)
+    setLoadError(null)
+    try {
+      const res = await fetch('/api/odd-lot', { cache: 'no-store' })
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const data = (await res.json()) as { trades?: OddLotItem[] }
+      if (!Array.isArray(data.trades)) {
+        throw new Error('Invalid payload')
+      }
+      setItems(data.trades)
+      setPage(1)
+    } catch {
+      setLoadError(ui.loadErrorTitle)
+    } finally {
+      setReloading(false)
+    }
+  }, [ui.loadErrorTitle])
 
   const [refreshing, setRefreshing] = useState(false)
   const [refreshMsg, setRefreshMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -476,12 +508,12 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
   const categoryConfig = useMemo(() => getCategoryConfig(ui), [ui])
 
   const summaryItem = useMemo(() => {
-    return initialItems.find(item => item.stock_name === '合計' || item.stock_id === '' || item.stock_id === '-')
-  }, [initialItems])
+    return items.find(item => item.stock_name === '合計' || item.stock_id === '' || item.stock_id === '-')
+  }, [items])
 
   const dedupedItems = useMemo(() => {
     const seen = new Set<string>()
-    return initialItems.filter(item => {
+    return items.filter(item => {
       if (item.stock_name === '合計' || !item.stock_id || item.stock_id === '-') return false
 
       const key = `${item.date}-${item.stock_id}`
@@ -489,7 +521,7 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       seen.add(key)
       return true
     })
-  }, [initialItems])
+  }, [items])
 
   const categoryCounts = useMemo(() => {
     const counts: Record<GiftCategory, number> = {
@@ -621,6 +653,9 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       if (selectedIndustry !== INDUSTRY_ALL) {
         if (!matchesIndustry(item, selectedIndustry)) return false
       }
+      if (onlyAbnormal) {
+        if (!item.signals || item.signals.flags.length === 0) return false
+      }
       if (searchQuery.trim()) {
         const q = searchQuery.trim().toLowerCase()
         const matchId = item.stock_id.toLowerCase().includes(q)
@@ -633,7 +668,7 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
       }
       return true
     })
-  }, [dedupedItems, hideNoGift, hideExpired, onlyAllowAgent, onlyHighCp, selectedCategory, selectedIndustry, searchQuery, industryDisplay])
+  }, [dedupedItems, hideNoGift, hideExpired, onlyAllowAgent, onlyHighCp, selectedCategory, selectedIndustry, onlyAbnormal, searchQuery, industryDisplay])
 
   const sortedItems = useMemo(() => {
     if (sortField === 'default' || sortOrder === 'none') {
@@ -917,6 +952,22 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
 
             <button
               type="button"
+              onClick={() => {
+                setOnlyAbnormal(prev => !prev)
+                setPage(1)
+              }}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${
+                onlyAbnormal
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-lg shadow-amber-500/10'
+                  : 'bg-white/5 text-[var(--text-secondary)] border-white/10 hover:text-white hover:border-white/20'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{ui.toggleOnlyAbnormal}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleRefresh}
               disabled={refreshing}
               className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer select-none ${
@@ -1062,14 +1113,40 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
         </div>
       </div>
 
-      {filteredItems.length === 0 ? (
+      <div className="text-xs text-[var(--text-secondary)] px-1 flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {ui.signalCriteriaHint
+            .replace('{days}', String(ODD_LOT_LOOKBACK_DAYS))
+            .replace('{z}', String(VOLUME_SPIKE_Z))
+            .replace('{pct}', String(PREMIUM_PCT))}
+        </span>
+      </div>
+
+      {loadError ? (
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-8 text-center space-y-3">
+          <p className="text-sm font-medium text-rose-300">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void reloadFromApi()}
+            disabled={reloading}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-semibold border border-rose-500/30 transition cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${reloading ? 'animate-spin' : ''}`} />
+            <span>{ui.retryLoad}</span>
+          </button>
+        </div>
+      ) : filteredItems.length === 0 ? (
         <div className="bg-[var(--bg-card)] border border-white/5 rounded-2xl p-12 text-center text-sm text-[var(--text-secondary)]">
           <Gift className="w-8 h-8 text-[var(--text-secondary)] mx-auto mb-3 opacity-50" />
-          <p className="font-medium text-base text-white mb-1">{ui.emptyTitle}</p>
+          <p className="font-medium text-base text-white mb-1">
+            {onlyAbnormal ? ui.emptyAbnormalTitle : ui.emptyTitle}
+          </p>
           <p className="text-xs">
-            {hideNoGift || onlyAllowAgent || onlyHighCp || selectedIndustry !== INDUSTRY_ALL
-              ? ui.emptyFilteredHint
-              : ui.emptySearchHint}
+            {onlyAbnormal
+              ? ui.emptyAbnormalHint
+              : hideNoGift || onlyAllowAgent || onlyHighCp || selectedIndustry !== INDUSTRY_ALL
+                ? ui.emptyFilteredHint
+                : ui.emptySearchHint}
           </p>
         </div>
       ) : (
@@ -1181,24 +1258,50 @@ export function OddLotView({ initialItems, latestDate, initialQuery = '' }: OddL
                       <td className="px-4 py-3.5 text-xs text-white/30 font-mono">{rowNum}</td>
 
                       <td className="px-4 py-3.5">
-                        <a
-                          href={`https://tw.stock.yahoo.com/quote/${item.stock_id}.TW`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 group transition"
-                          title={ui.yahooLinkTitle.replace('{name}', item.stock_name).replace('{id}', item.stock_id)}
-                        >
-                          <span className="font-bold text-white text-base group-hover:text-[var(--accent)] group-hover:underline transition-colors">
-                            {displayStockName(item.stock_id, locale, {
-                              fallbackName: item.stock_name,
-                              names: oddLotNames[normalizeStockCode(item.stock_id)],
-                            })}
-                          </span>
-                          <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-[var(--accent)] font-mono group-hover:bg-[var(--accent)] group-hover:text-white transition-colors inline-flex items-center gap-1">
-                            <span>{item.stock_id}</span>
-                            <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100" />
-                          </span>
-                        </a>
+                        <div className="flex flex-col gap-1">
+                          <a
+                            href={`https://tw.stock.yahoo.com/quote/${item.stock_id}.TW`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 group transition"
+                            title={ui.yahooLinkTitle.replace('{name}', item.stock_name).replace('{id}', item.stock_id)}
+                          >
+                            <span className="font-bold text-white text-base group-hover:text-[var(--accent)] group-hover:underline transition-colors">
+                              {displayStockName(item.stock_id, locale, {
+                                fallbackName: item.stock_name,
+                                names: oddLotNames[normalizeStockCode(item.stock_id)],
+                              })}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-[var(--accent)] font-mono group-hover:bg-[var(--accent)] group-hover:text-white transition-colors inline-flex items-center gap-1">
+                              <span>{item.stock_id}</span>
+                              <ExternalLink className="w-3 h-3 opacity-60 group-hover:opacity-100" />
+                            </span>
+                          </a>
+                          {item.signals && item.signals.flags.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {item.signals.flags.includes('volume-spike') && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                  title={`z=${item.signals.volumeZ !== null ? item.signals.volumeZ : '—'}`}
+                                >
+                                  {ui.badgeVolumeSpike}{' '}
+                                  {item.signals.volumeZ !== null ? `z=${item.signals.volumeZ}` : '—'}
+                                </span>
+                              )}
+                              {item.signals.flags.includes('premium') && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30"
+                                  title={`${item.signals.premiumPct !== null ? `+${item.signals.premiumPct}%` : '—'}`}
+                                >
+                                  {ui.badgePremium}{' '}
+                                  {item.signals.premiumPct !== null
+                                    ? `+${item.signals.premiumPct}%`
+                                    : '—'}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3.5 whitespace-nowrap">

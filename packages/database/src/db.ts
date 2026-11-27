@@ -8958,6 +8958,47 @@ export async function pruneOldApiErrorLogs(): Promise<void> {
   }
 }
 
+/** 統計指定遮罩 IP 在近期窗口內（windowMs 毫秒）上報的 CLIENT 錯誤筆數。 */
+export async function countRecentClientErrors(maskedIp: string, windowMs: number): Promise<number> {
+  const safeWindowMs = Math.max(1, Math.min(86_400_000, Math.round(windowMs)))
+  const ip = String(maskedIp || '').slice(0, 80)
+  if (!ip) return 0
+
+  if (isAzureSql) {
+    const pool = await getAzurePool()
+    if (pool) {
+      const res = await pool
+        .request()
+        .input('ip', sql.NVarChar(80), ip)
+        .input('windowMs', sql.Int, safeWindowMs)
+        .query<{ cnt: number }>(
+          `SELECT COUNT(*) AS cnt
+           FROM api_error_logs
+           WHERE method = 'CLIENT'
+             AND client_ip = @ip
+             AND created_at >= DATEADD(millisecond, -@windowMs, GETDATE())`,
+        )
+      return Number(res.recordset?.[0]?.cnt ?? 0)
+    }
+  } else {
+    const db = getSqliteDb()
+    if (db) {
+      const offsetSeconds = `-${(safeWindowMs / 1000).toFixed(3)} seconds`
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS cnt
+           FROM api_error_logs
+           WHERE method = 'CLIENT'
+             AND client_ip = ?
+             AND created_at >= datetime('now', 'localtime', ?)`,
+        )
+        .get(ip, offsetSeconds) as { cnt?: number } | undefined
+      return Number(row?.cnt ?? 0)
+    }
+  }
+  return 0
+}
+
 export async function listApiErrorLogs(opts?: {
   category?: ApiErrorCategory | 'all'
   actorType?: ApiErrorActorType | 'all'

@@ -9,6 +9,7 @@ import {
   migrate,
 } from '@stock/database'
 import { isAdminUser, getCurrentUserFromReq } from '@/lib/auth'
+import { withApiAudit } from '@/lib/api-audit'
 import { reportServerError } from '@/lib/server-alert'
 
 export const runtime = 'nodejs'
@@ -22,7 +23,7 @@ function addDays(dateStr: string, days: number): string {
   return new Date(ms + 8 * 3600 * 1000).toISOString().slice(0, 10)
 }
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   await migrate()
   const user = await getCurrentUserFromReq(req)
   if (!user || !(await isAdminUser(user))) {
@@ -84,4 +85,8 @@ export async function GET(req: NextRequest) {
       { status },
     )
   }
+}
+
+export async function GET(req: NextRequest) {
+  return withApiAudit(req, 'admin-llm-usage', () => handleGet(req))
 }

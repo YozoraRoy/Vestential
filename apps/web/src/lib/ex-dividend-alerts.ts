@@ -12,11 +12,97 @@
  *   不新增 cron（排程順帶更新語義沿既有同步鈕／16:00 排程）。
  */
 
-import { getAgentSetting, setAgentSetting } from '@stock/database'
+import { dbQueryAll, getAgentSetting, getPortfolioRecords, setAgentSetting } from '@stock/database'
 import { sendMarketFocusAlert } from './email'
 import { escapeHtml } from './html-escape'
 
 const LAST_EX_BUY_ALERT_DATE_KEY = 'email.last_ex_last_buy_date'
+
+/** 正規化台股代號（移除 .TW / .TWO 後綴並轉大寫）。 */
+export function normalizeTwSymbol(symbol: string): string {
+  return symbol.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+}
+
+function splitCsvEnv(raw: string | undefined, lowercase = false): string[] {
+  const set = new Set<string>()
+  for (const part of (raw ?? '').split(',')) {
+    const trimmed = part.trim()
+    if (!trimmed) continue
+    set.add(lowercase ? trimmed.toLowerCase() : trimmed)
+  }
+  return [...set]
+}
+
+/**
+ * 查詢自己帳號（NOTIFY_TO / ADMIN_EMAILS / ADMIN_LINE_USER_IDS）目前持有的台股代號集合。
+ * 僅納入總股數 > 0 且非美股的標的；若未設定站主識別或查無持股，回傳空集合。
+ */
+export async function getOwnerHeldSymbols(): Promise<Set<string>> {
+  const emails = splitCsvEnv(`${process.env.NOTIFY_TO ?? ''},${process.env.ADMIN_EMAILS ?? ''}`, true)
+  const lineIds = splitCsvEnv(process.env.ADMIN_LINE_USER_IDS, false)
+  if (emails.length === 0 && lineIds.length === 0) return new Set()
+
+  const userIds = new Set<number>()
+
+  if (emails.length > 0) {
+    const params: Record<string, string> = {}
+    const placeholders = emails.map((email, idx) => {
+      const key = `e${idx}`
+      params[key] = email
+      return `@${key}`
+    })
+    const inClause = placeholders.join(', ')
+    const [fromUsers, fromIdentities] = await Promise.all([
+      dbQueryAll<{ id: number }>(`SELECT id FROM users WHERE LOWER(email) IN (${inClause})`, params).catch(() => []),
+      dbQueryAll<{ user_id: number }>(
+        `SELECT user_id FROM user_identities WHERE LOWER(provider_email) IN (${inClause})`,
+        params,
+      ).catch(() => []),
+    ])
+    for (const row of fromUsers) {
+      if (Number.isInteger(row.id) && row.id > 0) userIds.add(row.id)
+    }
+    for (const row of fromIdentities) {
+      if (Number.isInteger(row.user_id) && row.user_id > 0) userIds.add(row.user_id)
+    }
+  }
+
+  if (lineIds.length > 0) {
+    const params: Record<string, string> = {}
+    const placeholders = lineIds.map((lid, idx) => {
+      const key = `l${idx}`
+      params[key] = lid
+      return `@${key}`
+    })
+    const fromLine = await dbQueryAll<{ user_id: number }>(
+      `SELECT user_id FROM user_identities WHERE provider = 'line' AND provider_user_id IN (${placeholders.join(', ')})`,
+      params,
+    ).catch(() => [])
+    for (const row of fromLine) {
+      if (Number.isInteger(row.user_id) && row.user_id > 0) userIds.add(row.user_id)
+    }
+  }
+
+  if (userIds.size === 0) return new Set()
+
+  const sharesBySymbol = new Map<string, number>()
+  for (const uid of userIds) {
+    const records = await getPortfolioRecords(uid, 500).catch(() => [])
+    for (const r of records) {
+      if ((r.market ?? 'tw').toLowerCase() === 'us') continue
+      const sym = normalizeTwSymbol(r.symbol ?? '')
+      if (!sym) continue
+      const shares = Number(r.shares) || 0
+      sharesBySymbol.set(sym, (sharesBySymbol.get(sym) ?? 0) + shares)
+    }
+  }
+
+  const held = new Set<string>()
+  for (const [sym, totalShares] of sharesBySymbol.entries()) {
+    if (totalShares > 0) held.add(sym)
+  }
+  return held
+}
 
 const DEDUP_MS = 30 * 60 * 1000
 const lastSentAt = new Map<string, number>()
@@ -63,7 +149,7 @@ export function buildExLastBuyCountdownHtml(items: ExLastBuyCountdownItem[]): st
       (i) =>
         `<div>• <b>${escapeHtml(stockDisplayLabel(i.symbol, i.name))}</b>：除息日 ${escapeHtml(i.ex_date)}，最後買進日 ${escapeHtml(i.ex_last_buy_date)}（今日）</div>`,
     )
-  return `<div>以下標的今日為除息最後買進日（ex_last_buy_date）：</div>${listHtml(rows, list.length)}`
+  return `<div>以下您持有的標的今日為除息最後買進日（ex_last_buy_date）：</div>${listHtml(rows, list.length)}`
 }
 
 /** 服務通知 HTML：填息完成（股票代號＋名稱粗體）。 */
@@ -109,21 +195,39 @@ export async function alertExDividendFetchFailed(reason: string, now: Date = new
   }
 }
 
+export interface AlertExLastBuyOptions {
+  /** 呼叫端或測試可直接傳入自己帳號持有股代號集合；未傳時自動查詢自己帳號的 portfolio_records */
+  heldSymbols?: Set<string>
+}
+
 /**
- * 最後買進日倒數 T-1 提醒（有當日最後買進日標的才寄；08:30 後、每日一封）。
+ * 最後買進日倒數 T-1 提醒（僅比對自己帳號持有股票，且只寄今日為最後買進日者；08:30 後、每日一封）。
  *
- * 2026-11-05：先前只在「讀取 API」時觸發且無時間窗，實測 00:20 被爬蟲／訪客讀到
- * 就寄出半夜信；現比照預告失敗告警套 `isExDividendAlertWindow`，並把去重鍵改成
- * 「日期＋類型」，確保每天最多一封、且不會在盤前 08:30 前打擾。
+ * - 若未持有或最後買進日還很遠（非今日），不寄信；
+ * - 2026-11-05：先前只在「讀取 API」時觸發且無時間窗，實測 00:20 被爬蟲／訪客讀到
+ *   就寄出半夜信；現比照預告失敗告警套 `isExDividendAlertWindow`，並把去重鍵改成
+ *   「日期＋類型」，確保每天最多一封、且不會在盤前 08:30 前打擾。
  */
-export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[], now: Date = new Date()): Promise<void> {
+export async function alertExLastBuyCountdown(
+  items: ExLastBuyCountdownItem[],
+  now: Date = new Date(),
+  opts: AlertExLastBuyOptions = {},
+): Promise<void> {
   try {
     if (!isExDividendAlertWindow(now)) return
-    const list = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date)
-    if (list.length === 0) return
     const dateKey = taiwanDateKey(now)
+    // 日期還很遠（非今日最後買進日）或已過期，不寄送
+    const todayItems = (items ?? []).filter((i) => i?.symbol && i?.ex_last_buy_date === dateKey)
+    if (todayItems.length === 0) return
+
     const lastDbDate = await getAgentSetting(LAST_EX_BUY_ALERT_DATE_KEY).catch(() => null)
     if (lastDbDate === dateKey) return
+
+    const heldSymbols = opts.heldSymbols ?? (await getOwnerHeldSymbols())
+    if (heldSymbols.size === 0) return
+    const list = todayItems.filter((i) => heldSymbols.has(normalizeTwSymbol(i.symbol)))
+    if (list.length === 0) return
+
     if (!shouldSend(`ex-dividend:last-buy-countdown:${dateKey}`)) return
     const lines = list
       .slice(0, 20)
@@ -131,7 +235,7 @@ export async function alertExLastBuyCountdown(items: ExLastBuyCountdownItem[], n
     const more = list.length > 20 ? `\n…等共 ${list.length} 檔` : ''
     const sent = await sendMarketFocusAlert(
       '除權息最後買進日提醒',
-      `以下標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`,
+      `以下您持有的標的今日為除息最後買進日（ex_last_buy_date）：\n${lines.join('\n')}${more}`,
       { variant: 'notice', htmlDetail: buildExLastBuyCountdownHtml(list) },
     )
     if (sent) {

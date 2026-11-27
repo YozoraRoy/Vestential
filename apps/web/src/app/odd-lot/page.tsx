@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { unstable_cache } from 'next/cache'
 import { dbQueryAll, dbQueryFirst, ensureSeedData } from '@stock/database'
 import { OddLotView, type OddLotItem } from '@/components/odd-lot-view'
+import { attachOddLotSignals } from '@/lib/odd-lot-signals-server'
 import { Gift, Sparkles, TrendingUp } from 'lucide-react'
 import { yahooFinanceProvider } from '@stock/market-data'
 import { MarketDataError } from '@stock/core'
@@ -118,7 +119,8 @@ async function loadOddLotData(stockId: string): Promise<OddLotData> {
         { date: latestDate.date },
       )
 
-  return { trades: await enrichPrices(trades), latestDate: latestDate.date }
+  const priced = await enrichPrices(trades)
+  return { trades: await attachOddLotSignals(priced, latestDate.date), latestDate: latestDate.date }
 }
 
 // 5 分鐘伺服器端資料快取：5 分鐘內再次瀏覽不會重跑 DB/Yahoo 查詢

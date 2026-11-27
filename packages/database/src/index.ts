@@ -110,7 +110,7 @@ export { fetchTwseMeetings } from './fetchers/twse-meetings.js'
 export type { TwseMeeting } from './fetchers/twse-meetings.js'
 
 
-export { logApiError, listApiErrorLogs, pruneOldApiErrorLogs } from './db.js'
+export { logApiError, listApiErrorLogs, pruneOldApiErrorLogs, countRecentClientErrors } from './db.js'
 export {
   upsertStockNames,
   getStockMultilingualName,
