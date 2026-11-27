@@ -892,6 +892,22 @@ export interface Dict {
     riskSectorSource: string
     riskGroupTw: string
     riskGroupUs: string
+    concTitle: string
+    concHhiLabel: string
+    concStatusDanger: string
+    concStatusWarn: string
+    concStatusSafe: string
+    concTopStocksTitle: string
+    concIndustryTitle: string
+    concIndustryDanger: string
+    concEmptyTitle: string
+    concEmptyHint: string
+    concLoginRequired: string
+    concLoadFailed: string
+    concIndustryUnclassified: string
+    concIndustryEtf: string
+    concIndustryBondEtf: string
+    concIndustryDr: string
     viewCards: string
     viewTable: string
     sortAsc: string

@@ -15,6 +15,7 @@ import {
 import { searchStocks, StockCandidateList } from '@/components/stock-search'
 import { displayStockName, type StockMultilingualName } from '@/lib/stock-display'
 import PortfolioRiskPanel, { type RiskQuotaValue, type RiskSummaryValue } from '@/components/portfolio-risk-panel'
+import PortfolioConcentrationPanel from '@/components/portfolio-concentration-panel'
 import { HealthVerdictBadge, PortfolioHealthPanel } from '@/components/portfolio-health-panel'
 import { DividendPaybackCard } from '@/components/dividend-payback-card'
 import { computeRollingAvgDividendsFromEvents } from '@/lib/dividend-payback'
@@ -2358,6 +2359,13 @@ export default function PortfolioPage() {
           </p>
         </div>
       )}
+
+      <PortfolioConcentrationPanel
+        ui={ui}
+        locale={locale}
+        isLoggedIn={authMode === 'user'}
+        holdingsHash={holdingsHash}
+      />
 
       <div className="mb-8">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
