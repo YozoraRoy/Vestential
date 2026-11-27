@@ -479,6 +479,7 @@ function AnalyzeContent() {
     try {
       const parsedReport = JSON.parse(record.full_report_json)
       setAnalysis({ ...parsedReport, ticker: parsedReport.ticker || record.ticker })
+      setAssetType(parsedReport.assetType ? String(parsedReport.assetType).toLowerCase() : null)
       setSelectedRecordId(record.id)
       setActiveTab('analyze')
       window.scrollTo({ top: 180, behavior: 'smooth' })
@@ -750,7 +751,7 @@ function AnalyzeContent() {
                   </button>
                 </div>
               )}
-              <AnalysisCard analysis={analysis} ticker={symbolParam || analysis?.ticker} />
+              <AnalysisCard analysis={analysis} ticker={symbolParam || analysis?.ticker} assetType={assetType || analysis?.assetType} />
             </div>
           )}
 

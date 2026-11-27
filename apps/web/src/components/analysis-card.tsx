@@ -9,6 +9,7 @@ import { displayStockLabel } from '@/lib/stock-display'
 import { useStockNames } from '@/lib/use-stock-names'
 import { headTrClass, tableClass } from '@/lib/table-typography'
 import { useTableTypography } from '@/lib/use-table-typography'
+import { EtfOverviewPanel } from '@/components/etf-overview-panel'
 
 /** 綜合評級旁的「？」說明 tooltip：解釋每種評級代表的意思與建議動作。 */
 function RatingHelp() {
@@ -64,8 +65,10 @@ interface ModelPlan {
 
 interface AnalysisCardProps {
   ticker?: string
+  assetType?: string | null
   analysis: {
     ticker?: string
+    assetType?: string
     signal: string
     decision: string
     language?: string
@@ -111,7 +114,7 @@ const SECTION_LABELS: Record<'market' | 'sentiment' | 'news' | 'fundamentals', '
   fundamentals: 'sectionFundamentals',
 }
 
-export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
+export function AnalysisCard({ analysis, ticker, assetType }: AnalysisCardProps) {
   const { dict, locale } = useI18n()
   const ui = dict.analysisCard
   const typo = useTableTypography()
@@ -125,6 +128,8 @@ export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
     ? displayStockLabel(currentTicker, locale, { names: stockNames[normalizeStockCode(currentTicker)] })
     : ''
   const tier: UniverseTier | null = currentTicker ? getUniverseTier(currentTicker) : null
+  const isEtf =
+    (assetType ?? analysis.assetType ?? '').toLowerCase() === 'etf' || tier === 'ETF'
 
   return (
     <div className="mt-8 space-y-6">
@@ -180,8 +185,16 @@ export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
               {ui.agentsBadge.replace('{n}', String(enabledCount)).replace('{total}', String(AGENT_KEYS.length))}
             </span>
           )}
+          {isEtf && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+              {ui.etfViewBadge}
+            </span>
+          )}
         </div>
       )}
+
+      {isEtf && <EtfOverviewPanel ticker={currentTicker} />}
+
       <div className={`${bg} rounded-xl p-6 border`}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -206,11 +219,18 @@ export function AnalysisCard({ analysis, ticker }: AnalysisCardProps) {
         const content = analysis.reports?.[key]
         if (!content) return null
 
+        const sectionTitle =
+          isEtf && key === 'fundamentals'
+            ? ui.sectionEtfOverview
+            : isEtf && key === 'market'
+              ? ui.sectionEtfTrend
+              : ui[SECTION_LABELS[key]]
+
         return (
           <section key={key} className="bg-[var(--bg-card)] rounded-xl border border-white/5 overflow-hidden">
             <div className="flex items-center gap-3 px-6 pt-5 pb-3 border-b border-white/5">
               <Icon className={`w-5 h-5 ${iconColor}`} />
-              <h3 className="text-base font-semibold">{ui[SECTION_LABELS[key]]}</h3>
+              <h3 className="text-base font-semibold">{sectionTitle}</h3>
             </div>
             <div className="px-6 py-4 prose prose-invert max-w-none text-sm">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>

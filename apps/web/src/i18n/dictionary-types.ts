@@ -441,6 +441,24 @@ export interface Dict {
     tierOtherBadge: string
     riskNoticeTitle: string
     riskNoticeDesc: string
+    etfViewBadge: string
+    sectionEtfOverview: string
+    sectionEtfTrend: string
+    etfPanelTitle: string
+    etfSubtypeBroad: string
+    etfSubtypeDividend: string
+    etfSubtypeBond: string
+    etfTrendBull: string
+    etfTrendNeutral: string
+    etfTrendPullback: string
+    etfBiasHighWarn: string
+    etfCardBias60: string
+    etfCardBias240: string
+    etfCardVolatility: string
+    etfCardMdd: string
+    etfCardYield1y: string
+    etfCardDivCount: string
+    etfCardAvgVol20d: string
   }
   progressPanel: {
     title: string
