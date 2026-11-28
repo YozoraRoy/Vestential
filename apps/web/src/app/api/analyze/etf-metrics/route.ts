@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
-import { yahooFinanceProvider } from '@stock/market-data'
+import { yahooFinanceProvider, type Fundamentals } from '@stock/market-data'
 import { dbQueryAll, getTwseDividendsInWindow } from '@stock/database'
-import { computeEtfMetrics } from '../../../../lib/etf-metrics'
+import { computeEtfMetrics, type EtfHoldingWeight } from '../../../../lib/etf-metrics'
+import { CORE_ETF_HOLDINGS_MAP } from '../../../../lib/etf-holdings-radar'
+import { getTwseEtfNav } from '../../../../lib/twse-etf-nav'
 import { isTaiwanSymbol, normalizeTaiwanSymbol } from '../../../../lib/taiwan-symbol'
 import { taipeiTodayStr } from '../../../../lib/twse-calendar'
 
@@ -41,6 +43,7 @@ export async function GET(req: Request) {
 
     let historyBars: Array<{ close: number; volume?: number | null }> = []
     let profileName: string | null = null
+    let matchedCandidate: string = yahooCandidates[0]
 
     for (const candidate of yahooCandidates) {
       try {
@@ -52,6 +55,7 @@ export async function GET(req: Request) {
         )
         if (hist && hist.length > 0) {
           historyBars = hist.map((b) => ({ close: b.close, volume: b.volume }))
+          matchedCandidate = candidate
           const prof = await yahooFinanceProvider
             .getProfile(candidate, isTw ? 'TW' : 'US')
             .catch(() => null)
@@ -62,6 +66,13 @@ export async function GET(req: Request) {
         // 試下一個候選代號
       }
     }
+
+    const [fundamentals, twseNav] = await Promise.all([
+      yahooFinanceProvider
+        .getFundamentals(matchedCandidate, isTw ? 'TW' : 'US')
+        .catch(() => null as Fundamentals | null),
+      isTw ? getTwseEtfNav(plainSymbol).catch(() => null) : Promise.resolve(null),
+    ])
 
     let industryName: string | null = null
     let dividendCash1y: number | null = null
@@ -96,7 +107,71 @@ export async function GET(req: Request) {
       dividendCount1y,
     })
 
-    return NextResponse.json(report)
+    // #212 Phase 2：合併 Yahoo fundProfile/topHoldings 與 TWSE 即時淨值/折溢價
+    const expenseRatioPct =
+      fundamentals?.expenseRatio != null && fundamentals.expenseRatio > 0
+        ? Math.round(fundamentals.expenseRatio * 10000) / 100
+        : null
+    const totalAssets =
+      fundamentals?.totalAssets != null && fundamentals.totalAssets > 0
+        ? fundamentals.totalAssets
+        : twseNav?.estimatedAumTwd ?? null
+
+    let navPrice: number | null = null
+    let premiumDiscountPct: number | null = null
+    let premiumDiscountSource: 'twse_live' | 'yahoo_prev_nav' | null = null
+    let navUpdatedAt: string | null = null
+
+    if (twseNav) {
+      navPrice = twseNav.nav
+      premiumDiscountPct = twseNav.premiumDiscountPct
+      premiumDiscountSource = 'twse_live'
+      navUpdatedAt = twseNav.updatedAt
+    } else if (fundamentals?.navPrice != null && fundamentals.navPrice > 0) {
+      navPrice = Math.round(fundamentals.navPrice * 100) / 100
+      if (report.latestClose != null && report.latestClose > 0) {
+        premiumDiscountPct =
+          Math.round(((report.latestClose - fundamentals.navPrice) / fundamentals.navPrice) * 10000) / 100
+        premiumDiscountSource = 'yahoo_prev_nav'
+      }
+    }
+
+    const bondMaturityYears =
+      fundamentals?.bondMaturityYears != null && fundamentals.bondMaturityYears > 0
+        ? Math.round(fundamentals.bondMaturityYears * 100) / 100
+        : null
+
+    let topHoldings: EtfHoldingWeight[] | null = null
+    let topHoldingsSource: 'yahoo' | 'core_map' | null = null
+    if (fundamentals?.topHoldings && fundamentals.topHoldings.length > 0) {
+      topHoldings = fundamentals.topHoldings.slice(0, 10).map((h) => ({
+        symbol: h.symbol,
+        name: h.name,
+        weightPct: Math.round(h.weight * 10000) / 100,
+      }))
+      topHoldingsSource = 'yahoo'
+    } else if (isTw && CORE_ETF_HOLDINGS_MAP[plainSymbol]?.top10?.length) {
+      topHoldings = CORE_ETF_HOLDINGS_MAP[plainSymbol].top10.slice(0, 10).map((h) => ({
+        symbol: h.symbol,
+        name: h.name,
+        weightPct: Math.round(h.weight * 100) / 100,
+      }))
+      topHoldingsSource = 'core_map'
+    }
+
+    return NextResponse.json({
+      ...report,
+      expenseRatioPct,
+      totalAssets,
+      currency: isTw ? 'TWD' : 'USD',
+      navPrice,
+      premiumDiscountPct,
+      premiumDiscountSource,
+      navUpdatedAt,
+      bondMaturityYears,
+      topHoldings,
+      topHoldingsSource,
+    })
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'ETF metrics failed'
     return NextResponse.json({ error: message }, { status: 500 })

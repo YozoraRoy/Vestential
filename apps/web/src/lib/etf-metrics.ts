@@ -17,6 +17,12 @@ export interface EtfMetricsInput {
   dividendCount1y?: number | null
 }
 
+export interface EtfHoldingWeight {
+  symbol: string
+  name: string
+  weightPct: number
+}
+
 export interface EtfMetricsReport {
   symbol: string
   subtype: EtfSubtype
@@ -32,6 +38,17 @@ export interface EtfMetricsReport {
   dividendCash1y: number | null
   dividendCount1y: number | null
   trailingYieldPct: number | null
+  /** #212 Phase 2 外部指標（可選，缺值時前端自動隱藏，保持舊報告相容） */
+  expenseRatioPct?: number | null
+  totalAssets?: number | null
+  currency?: 'TWD' | 'USD'
+  navPrice?: number | null
+  premiumDiscountPct?: number | null
+  premiumDiscountSource?: 'twse_live' | 'yahoo_prev_nav' | null
+  navUpdatedAt?: string | null
+  bondMaturityYears?: number | null
+  topHoldings?: EtfHoldingWeight[] | null
+  topHoldingsSource?: 'yahoo' | 'core_map' | null
 }
 
 function roundTo(val: number, decimals: number): number {

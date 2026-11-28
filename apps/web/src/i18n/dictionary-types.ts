@@ -467,6 +467,17 @@ export interface Dict {
     etfCardYield1y: string
     etfCardDivCount: string
     etfCardAvgVol20d: string
+    etfCardExpenseRatio: string
+    etfCardAum: string
+    etfCardPremiumDiscount: string
+    etfCardNavHint: string
+    etfCardPrevNavHint: string
+    etfPremiumWarn: string
+    etfDiscountHint: string
+    etfCardBondMaturity: string
+    etfHoldingsTitle: string
+    etfHoldingsSourceYahoo: string
+    etfHoldingsSourceCore: string
   }
   progressPanel: {
     title: string

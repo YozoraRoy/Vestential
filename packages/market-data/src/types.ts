@@ -83,6 +83,16 @@ export interface Fundamentals {
   currentPrice?: number
   /** #173：標的類型（EQUITY / ETF 等） */
   quoteType?: string
+  /** #212：ETF 總費用率（小數，如 0.0032＝0.32%） */
+  expenseRatio?: number
+  /** #212：ETF 基金總規模 AUM（原幣元） */
+  totalAssets?: number
+  /** #212：ETF 最新淨值 NAV（原幣） */
+  navPrice?: number
+  /** #212：債券 ETF 平均到期年限（年） */
+  bondMaturityYears?: number
+  /** #212：ETF 前 10 大成分股清單（weight 為小數，如 0.52＝52%） */
+  topHoldings?: Array<{ symbol: string; name: string; weight: number }>
   revenue?: number
   netIncome?: number
   sector?: string

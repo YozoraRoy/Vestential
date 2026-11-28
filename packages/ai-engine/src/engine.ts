@@ -26,6 +26,7 @@ import {
   createSentimentAnalyst,
   createNewsAnalyst,
   createFundamentalsAnalyst,
+  buildEtfExternalContext,
   createBullResearcher,
   createBearResearcher,
   createAggressiveDebator,
@@ -375,6 +376,7 @@ export class TradingEngine {
     let quoteContext = ''
     let profileContext = ''
     let historyContext = ''
+    let etfExternalContext = ''
     let quote: any = null
     let profile: any = null
     /** Issue #114：本地 DB 查得的台股中文正名（Yahoo Profile 只有英文名）。 */
@@ -443,6 +445,16 @@ export class TradingEngine {
         throw new Error(`無法驗證股票代號 [${ticker}]。查無此股票之即時市場數據與基本面資料，已終止 AI 分析。請確認代號是否正確（例如台股 2330 / 2330.TW）。`)
       }
 
+      if (assetType === AssetType.ETF) {
+        try {
+          const marketHint = resolvedTicker.endsWith('.TW') || resolvedTicker.endsWith('.TWO') ? 'TW' : 'US'
+          const etfFund = await yahooFinanceProvider.getFundamentals(resolvedTicker, marketHint)
+          etfExternalContext = buildEtfExternalContext(etfFund, quote?.price ?? null)
+        } catch (e: any) {
+          console.warn(`[TradingEngine] Failed to fetch ETF fundamentals for ${resolvedTicker}:`, e?.message)
+        }
+      }
+
       try {
         onProgress?.('Data Fetcher', `Fetching historical charts for ${resolvedTicker}...`)
         const history = await tools.getStockData(resolvedTicker)
@@ -467,6 +479,7 @@ ${profileContext}
 
 ${quoteContext}
 
+${etfExternalContext ? `${etfExternalContext}\n` : ''}
 ${historyContext}`
       : (existingState.instrumentContext ?? '')
 

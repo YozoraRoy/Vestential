@@ -1,7 +1,7 @@
 export { createMarketAnalyst } from './analysts/market.js'
 export { createSentimentAnalyst } from './analysts/sentiment.js'
 export { createNewsAnalyst } from './analysts/news.js'
-export { createFundamentalsAnalyst } from './analysts/fundamentals.js'
+export { createFundamentalsAnalyst, buildEtfExternalContext } from './analysts/fundamentals.js'
 export { createBullResearcher } from './researchers/bull.js'
 export { createBearResearcher } from './researchers/bear.js'
 export { createAggressiveDebator } from './risk/aggressive.js'

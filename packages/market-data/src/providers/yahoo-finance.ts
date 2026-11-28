@@ -159,7 +159,7 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<BatchQuote[]>
  * 401/403 時清除 crumb 快取重試一次；逾時 8s；全失敗回 null 由呼叫端三態降級。
  */
 async function fetchFundamentalsRaw(symbol: string): Promise<any | null> {
-  const modules = 'price,summaryDetail,financialData,defaultKeyStatistics'
+  const modules = 'price,summaryDetail,financialData,defaultKeyStatistics,fundProfile,topHoldings'
   const base = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules}`
   for (let attempt = 0; attempt < 2; attempt++) {
     const controller = new AbortController()
@@ -253,6 +253,55 @@ async function fetchTtmDividendFromChart(
     }
   } catch {
     return null
+  }
+}
+
+export interface YahooEtfParsedFields {
+  expenseRatio?: number
+  totalAssets?: number
+  navPrice?: number
+  bondMaturityYears?: number
+  topHoldings?: Array<{ symbol: string; name: string; weight: number }>
+}
+
+/** #212：純函式解析 Yahoo quoteSummary 的 ETF 相關模組（fundProfile / topHoldings / summaryDetail）。 */
+export function parseYahooEtfModules(root: any): YahooEtfParsedFields {
+  if (!root || typeof root !== 'object') return {}
+  const num = (v: any): number | undefined => {
+    const raw = typeof v === 'object' && v !== null ? v.raw : v
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : undefined
+  }
+  const pos = (v: number | undefined): number | undefined =>
+    v != null && v > 0 ? v : undefined
+
+  const summary = root.summaryDetail ?? {}
+  const stats = root.defaultKeyStatistics ?? {}
+  const fundProfile = root.fundProfile ?? {}
+  const topHoldingsNode = root.topHoldings ?? {}
+
+  const expenseRatio = pos(num(fundProfile?.feesExpensesInvestment?.annualReportExpenseRatio))
+  const totalAssets = pos(num(summary.totalAssets) ?? num(stats.totalAssets))
+  const navPrice = pos(num(summary.navPrice) ?? num(stats.navPrice))
+  const bondMaturityYears = pos(num(topHoldingsNode?.bondHoldings?.maturity))
+
+  const rawHoldings: any[] = Array.isArray(topHoldingsNode?.holdings) ? topHoldingsNode.holdings : []
+  const topHoldings = rawHoldings
+    .map((h) => {
+      const sym = String(h?.symbol ?? '').trim()
+      const name = String(h?.holdingName ?? sym).trim()
+      const weight = num(h?.holdingPercent)
+      if (!name || weight == null || weight <= 0) return null
+      return { symbol: sym || name, name, weight }
+    })
+    .filter((x): x is { symbol: string; name: string; weight: number } => x !== null)
+    .slice(0, 10)
+
+  return {
+    expenseRatio,
+    totalAssets,
+    navPrice,
+    bondMaturityYears,
+    topHoldings: topHoldings.length > 0 ? topHoldings : undefined,
   }
 }
 
@@ -368,6 +417,8 @@ export const yahooFinanceProvider: MarketDataProvider = {
       dividendYield = dividendYield ?? pos(num(summary.yield))
     }
 
+    const etfFields = parseYahooEtfModules(root)
+
     const result: Fundamentals = {
       symbol,
       marketCap: num(price.marketCap) ?? num(summary.marketCap),
@@ -395,6 +446,11 @@ export const yahooFinanceProvider: MarketDataProvider = {
       fiftyTwoWeekLow: num(summary.fiftyTwoWeekLow),
       currentPrice: num(fin.currentPrice) ?? num(price.regularMarketPrice),
       quoteType,
+      expenseRatio: etfFields.expenseRatio,
+      totalAssets: etfFields.totalAssets,
+      navPrice: etfFields.navPrice,
+      bondMaturityYears: etfFields.bondMaturityYears,
+      topHoldings: etfFields.topHoldings,
       revenue: num(fin.totalRevenue),
       netIncome: num(stats.netIncomeToCommon),
       sector: price.sector,

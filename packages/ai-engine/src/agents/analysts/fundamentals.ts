@@ -1,4 +1,5 @@
 import { AssetType, type AnalysisState } from '@stock/core'
+import type { Fundamentals } from '@stock/market-data'
 import type { LLMClient } from '../../llm/client.js'
 
 const SYSTEM_PROMPT = `You are a Fundamentals Analyst. Analyze financial statements and valuation.
@@ -27,6 +28,42 @@ STRICT RULES FOR ETF ANALYSIS:
 
 export function getFundamentalsSystemPrompt(assetType: AssetType): string {
   return assetType === AssetType.ETF ? ETF_SYSTEM_PROMPT : SYSTEM_PROMPT
+}
+
+/** #212：將真實取得的 ETF 外部指標（TER / AUM / NAV 折溢價 / 前10大成分股 / 債券到期年限）組裝為 AI 上下文。 */
+export function buildEtfExternalContext(
+  fundamentals: Partial<Fundamentals> | null | undefined,
+  quotePrice?: number | null,
+): string {
+  if (!fundamentals) return ''
+  const lines: string[] = []
+  if (typeof fundamentals.expenseRatio === 'number' && fundamentals.expenseRatio > 0) {
+    lines.push(`- Expense Ratio (TER): ${(fundamentals.expenseRatio * 100).toFixed(2)}%`)
+  }
+  if (typeof fundamentals.totalAssets === 'number' && fundamentals.totalAssets > 0) {
+    lines.push(`- Total Assets (AUM): ${Math.round(fundamentals.totalAssets).toLocaleString('en-US')}`)
+  }
+  if (typeof fundamentals.navPrice === 'number' && fundamentals.navPrice > 0) {
+    let navLine = `- Latest NAV: ${fundamentals.navPrice.toFixed(2)}`
+    if (typeof quotePrice === 'number' && quotePrice > 0) {
+      const premPct = ((quotePrice - fundamentals.navPrice) / fundamentals.navPrice) * 100
+      const sign = premPct > 0 ? '+' : ''
+      navLine += ` (Estimated Premium/Discount vs Quote: ${sign}${premPct.toFixed(2)}%)`
+    }
+    lines.push(navLine)
+  }
+  if (typeof fundamentals.bondMaturityYears === 'number' && fundamentals.bondMaturityYears > 0) {
+    lines.push(`- Bond Average Maturity: ${fundamentals.bondMaturityYears.toFixed(2)} years`)
+  }
+  if (Array.isArray(fundamentals.topHoldings) && fundamentals.topHoldings.length > 0) {
+    const holdingsSummary = fundamentals.topHoldings
+      .slice(0, 10)
+      .map((h) => `${h.name} (${h.symbol}): ${(h.weight * 100).toFixed(2)}%`)
+      .join('; ')
+    lines.push(`- Top Holdings: ${holdingsSummary}`)
+  }
+  if (lines.length === 0) return ''
+  return `ETF External Metrics (Verified Provider Data):\n${lines.join('\n')}`
 }
 
 export function createFundamentalsAnalyst(llm: LLMClient) {
