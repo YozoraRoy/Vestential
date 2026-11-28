@@ -5,6 +5,7 @@ import { resolveYahooSymbol } from '@/lib/portfolio'
 import { isCoreEtf, getUniverseTier } from '@stock/cycle-entry'
 import { getMarketLevelDashboardData } from '@/lib/market-level'
 import { getBottomRadarDashboardData } from '@/lib/bottom-radar'
+import { buildTodayDcaSignal } from '@/lib/dca-lab-format'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,9 +75,7 @@ export async function GET(req: Request) {
     const currentClose = lastPoint?.close ?? null
     const currentMa60 = lastPoint?.ma60 ?? null
 
-    // 判定今日倍率建議
-    const isMarketLow =
-      marketLevel?.levelStatus === 'extreme_cold' || marketLevel?.levelStatus === 'cold'
+    const marketLevelStatus = marketLevel?.levelStatus ?? 'fair'
     const isRadarTriggered = Boolean(
       bottomRadar?.checklist &&
       [
@@ -85,28 +84,14 @@ export async function GET(req: Request) {
         bottomRadar.checklist.patternMet,
         bottomRadar.checklist.futuresMet,
         bottomRadar.checklist.fxMet,
-      ].filter(Boolean).length >= 2
+      ].filter(Boolean).length >= 2,
     )
-
-    let action: 'STANDARD' | 'MODERATE_ADD' | 'AGGRESSIVE_ADD' = 'STANDARD'
-    let recommendedMultiplier = 1.0
-    let actionBadge = '1.0x 常態定期扣款'
-    let reason = '目前標的季線乖離適中且大盤無低檔訊號，建議維持預設計畫穩健扣款。'
-
-    if (currentBiasPct != null && currentBiasPct <= -8 && (isMarketLow || isRadarTriggered)) {
-      action = 'AGGRESSIVE_ADD'
-      recommendedMultiplier = 2.0
-      actionBadge = '2.0x 積極逢低加碼'
-      reason = `標的目前季線負乖離達 ${currentBiasPct.toFixed(1)}%，且大盤指標呈現低檔區，屬歷史罕見的高勝率黃金加碼點！`
-    } else if (
-      (currentBiasPct != null && currentBiasPct <= thresholdPct) ||
-      isMarketLow
-    ) {
-      action = 'MODERATE_ADD'
-      recommendedMultiplier = 1.5
-      actionBadge = '1.5x 溫和逢低加碼'
-      reason = `標的季線負乖離達 ${currentBiasPct != null ? currentBiasPct.toFixed(1) + '%' : '合理門檻'}，適合提高扣款倍率拉低持股均價。`
-    }
+    const { action, multiplier: recommendedMultiplier, actionBadge, reason } = buildTodayDcaSignal({
+      currentBiasPct,
+      thresholdPct,
+      marketLevelStatus,
+      isRadarTriggered,
+    })
 
     const tier = getUniverseTier(symbol)
     const isCore = isCoreEtf(symbol)

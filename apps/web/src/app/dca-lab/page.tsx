@@ -34,6 +34,7 @@ import { CORE_ETF_UNIVERSE, resolveStockName, getUniverseTier } from '@stock/cyc
 import { normalizeStockCode } from '@stock/core'
 import { displayStockName } from '@/lib/stock-display'
 import { useStockNames } from '@/lib/use-stock-names'
+import { formatCostReduction, formatSignedPct } from '@/lib/dca-lab-format'
 
 
 const POPULAR_ETFS = [
@@ -162,7 +163,9 @@ export default function DcaLabPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold">{ui.title}</h1>
-            <p className="text-sm text-[var(--text-secondary)] mt-0.5">{ui.subtitle}</p>
+            <p className="text-sm text-[var(--text-secondary)] mt-0.5">
+              {ui.subtitle.replace('{years}', String(years))}
+            </p>
           </div>
         </div>
 
@@ -205,6 +208,9 @@ export default function DcaLabPage() {
               </h2>
               <p className="text-sm text-emerald-200/90 leading-relaxed">
                 {data.todaySignal.reason}
+              </p>
+              <p className="text-[11px] text-[var(--text-secondary)]">
+                {ui.signalScopeHint}
               </p>
             </div>
 
@@ -296,6 +302,9 @@ export default function DcaLabPage() {
                 </option>
               ))}
             </select>
+            <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+              {ui.investDayHint}
+            </p>
           </div>
 
           <div>
@@ -359,50 +368,65 @@ export default function DcaLabPage() {
       {data?.dca && !loading && (
         <>
           {/* 雙軌成效亮點橫幅 */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
-              <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.comparisonExtraValue}</p>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">
-                +NT$ {data.dca.smart.extraReturn.toLocaleString()}
-              </p>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                期末總資產：NT$ {data.dca.smart.finalValue.toLocaleString()} vs NT${' '}
-                {data.dca.standard.finalValue.toLocaleString()}
-              </p>
-            </div>
+          {(() => {
+            const costFmt = formatCostReduction(data.dca.smart.costReductionPct)
+            const extraRoiPct = Number(data.dca.smart.extraRoiPct) || 0
+            const extraReturn = Number(data.dca.smart.extraReturn) || 0
+            const netProfitDiff =
+              (Number(data.dca.smart.totalReturn) || 0) -
+              (Number(data.dca.standard.totalReturn) || 0)
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
+                  <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.comparisonExtraValue}</p>
+                  <p className={`text-2xl font-bold font-mono ${extraReturn >= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {extraReturn >= 0 ? '+' : '-'}NT$ {Math.abs(extraReturn).toLocaleString()}
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                    淨獲利 {netProfitDiff >= 0 ? '+' : '-'}NT$ {Math.abs(netProfitDiff).toLocaleString()}（NT$ {data.dca.smart.finalValue.toLocaleString()} vs NT$ {data.dca.standard.finalValue.toLocaleString()}）
+                  </p>
+                </div>
 
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
-              <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.comparisonCostReduction}</p>
-              <p className="text-2xl font-bold text-emerald-400 font-mono">
-                -{data.dca.smart.costReductionPct.toFixed(1)}%
-              </p>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                每股均價降至 NT$ {data.dca.smart.avgCostPerShare.toFixed(2)} (原 NT${' '}
-                {data.dca.standard.avgCostPerShare.toFixed(2)})
-              </p>
-            </div>
+                <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
+                  <p className="text-xs text-[var(--text-secondary)] mb-1">
+                    {costFmt.isReduced ? ui.comparisonCostReduction : ui.comparisonCostIncrease}
+                  </p>
+                  <p className={`text-2xl font-bold font-mono ${costFmt.isReduced ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {costFmt.formattedPct}
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                    {costFmt.isReduced ? '每股均價降至' : '每股均價升至'} NT$ {data.dca.smart.avgCostPerShare.toFixed(2)} (原 NT${' '}
+                    {data.dca.standard.avgCostPerShare.toFixed(2)})
+                  </p>
+                </div>
 
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
-              <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.comparisonExtraRoi}</p>
-              <p className="text-2xl font-bold text-[var(--accent)] font-mono">
-                +{data.dca.smart.extraRoiPct.toFixed(1)}%
-              </p>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                累積 ROI：{data.dca.smart.roiPct.toFixed(1)}% (年化{' '}
-                {data.dca.smart.annualizedReturnPct.toFixed(1)}%)
-              </p>
-            </div>
+                <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
+                  <p className="text-xs text-[var(--text-secondary)] mb-1">
+                    {extraRoiPct >= 0 ? ui.comparisonExtraRoi : ui.comparisonRoiDiff}
+                  </p>
+                  <p className={`text-2xl font-bold font-mono ${extraRoiPct >= 0 ? 'text-[var(--accent)]' : 'text-amber-400'}`}>
+                    {formatSignedPct(extraRoiPct)}
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                    累積 ROI：{data.dca.smart.roiPct.toFixed(1)}% (年化{' '}
+                    {data.dca.smart.annualizedReturnPct.toFixed(1)}%)
+                  </p>
+                </div>
 
-            <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
-              <p className="text-xs text-[var(--text-secondary)] mb-1">{ui.comparisonTriggerCount}</p>
-              <p className="text-2xl font-bold text-[var(--text-primary)] font-mono">
-                {data.dca.smart.dipTriggerCount} 次
-              </p>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                平均每年僅需加碼約 {(data.dca.smart.dipTriggerCount / (data.dca.meta.monthsCount / 12)).toFixed(1)} 次
-              </p>
-            </div>
-          </div>
+                <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-5">
+                  <p className="text-xs text-[var(--text-secondary)] mb-1">
+                    {ui.comparisonTriggerCount.replace('{years}', String(years))}
+                  </p>
+                  <p className="text-2xl font-bold text-[var(--text-primary)] font-mono">
+                    {data.dca.smart.dipTriggerCount} 次
+                  </p>
+                  <p className="text-[11px] text-[var(--text-secondary)] mt-1">
+                    平均每年僅需加碼約 {(data.dca.smart.dipTriggerCount / (data.dca.meta.monthsCount / 12)).toFixed(1)} 次
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
 
           {/* 雙軌完整數據卡片對比 */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -509,7 +533,9 @@ export default function DcaLabPage() {
 
           {/* 資產累積與成長圖表 */}
           <div className="bg-[var(--bg-card)] rounded-2xl border border-white/5 p-6 mb-8">
-            <h3 className="text-base font-semibold mb-4">{ui.chartTitle}</h3>
+            <h3 className="text-base font-semibold mb-4">
+              {ui.chartTitle.replace('{years}', String(years))}
+            </h3>
             <div className="h-80 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>

@@ -577,8 +577,12 @@ export interface Dict {
     comparisonTitle: string
     comparisonExtraValue: string
     comparisonCostReduction: string
+    comparisonCostIncrease: string
     comparisonExtraRoi: string
+    comparisonRoiDiff: string
     comparisonTriggerCount: string
+    investDayHint: string
+    signalScopeHint: string
     chartTitle: string
     chartStdValue: string
     chartStdCost: string
