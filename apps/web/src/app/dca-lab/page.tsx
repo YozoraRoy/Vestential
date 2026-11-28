@@ -25,6 +25,7 @@ import {
   Layers,
   ArrowRight,
   Zap,
+  Search,
 } from 'lucide-react'
 import { WorkspaceBackLink } from '@/components/workspace-back-link'
 import { useI18n } from '@/i18n/LanguageProvider'
@@ -98,9 +99,21 @@ export default function DcaLabPage() {
   }, [symbol, monthlyAmount, investDay, thresholdPct, multiplier, years])
 
   const handleSelectSymbol = (s: string) => {
-    setSymbol(s)
-    setSymbolInput(s)
+    const clean = s.trim().toUpperCase().replace(/\.(TW|TWO)$/i, '')
+    if (!clean) return
+    setSymbol(clean)
+    setSymbolInput(clean)
     setCandidates([])
+  }
+
+  const handleSubmitSymbol = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!symbolInput.trim()) return
+    if (candidates.length > 0 && candidates[0]?.symbol) {
+      handleSelectSymbol(candidates[0].symbol)
+      return
+    }
+    handleSelectSymbol(symbolInput)
   }
 
   const handleSearchInput = async (val: string) => {
@@ -169,8 +182,40 @@ export default function DcaLabPage() {
           </div>
         </div>
 
+        {/* ETF 代號搜尋輸入欄 */}
+        <form onSubmit={handleSubmitSymbol} className="mt-4 flex flex-col sm:flex-row gap-2.5 max-w-xl">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-[var(--text-secondary)] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={symbolInput}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              placeholder={ui.symbolPlaceholder}
+              aria-label={ui.symbolPlaceholder}
+              className="w-full h-10 bg-[var(--bg-card)] border border-white/10 rounded-xl pl-10 pr-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/70 focus:outline-none focus:border-[var(--accent)]"
+            />
+            {(candidates.length > 0 || searching) && (
+              <div className="absolute left-0 right-0 top-full mt-1.5 z-30 rounded-xl bg-[var(--bg-card)] border border-white/10 shadow-2xl overflow-hidden">
+                <StockCandidateList
+                  candidates={candidates}
+                  loading={searching}
+                  onPick={(c) => handleSelectSymbol(c.symbol)}
+                  layout="stack"
+                />
+              </div>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={!symbolInput.trim()}
+            className="h-10 px-5 rounded-xl bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition shrink-0 whitespace-nowrap"
+          >
+            {ui.btnSelectSymbol}
+          </button>
+        </form>
+
         {/* 快速選取熱門 ETF */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-xs text-[var(--text-secondary)] mr-1">{ui.quickPicksTitle}：</span>
           {POPULAR_ETFS.map((item) => (
             <button

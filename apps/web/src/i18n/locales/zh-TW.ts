@@ -117,6 +117,8 @@ export const zhTW: Dict = {
     marketLevelDesc: '加權指數的歷史分位與五段燈號，先搞清楚現在是偏貴還是偏便宜。',
     backtestTitle: '回測實驗室',
     backtestDesc: '用季線乖離率進場、自訂停利停損，回測 5～15 年歷史，看策略勝率撐不撐得住。',
+    dcaLabTitle: '定期定額加碼',
+    dcaLabDesc: '輸入任意台股 ETF，對比純定期定額與季線負乖離逢低加碼的雙軌資產與成本差異。',
     portfolioTitle: '個人損益',
     portfolioDesc: '輸入持股與成本，試算損益、殖利率與風險集中度，順便取得 AI 買賣建議。',
     analyzeTitle: 'AI 個股分析',
@@ -640,6 +642,8 @@ export const zhTW: Dict = {
     colAmount: '加碼扣款金額',
     colShares: '買進股數',
     quickPicksTitle: '熱門核心存股原型 ETF 快速選取',
+    symbolPlaceholder: '輸入台股 ETF 代號或名稱，如 0050 / 00713',
+    btnSelectSymbol: '套用',
   },
   backtest: {
     pageTitle: '回測實驗室',

@@ -117,6 +117,8 @@ export const ja: Dict = {
     marketLevelDesc: '加権指数が過去と比べてどの水準にあるかを 5 段階で表示。割安か割高かを先に把握できます。',
     backtestTitle: 'バックテストラボ',
     backtestDesc: '四半期線の乖離率で入り、利確・損切りを自分で設定。5〜15 年の履歴で勝率が通用するか確かめられます。',
+    dcaLabTitle: '積立買い増し',
+    dcaLabDesc: '任意の台湾ETFで「通常積立」と「四半期線押し目買い増し」の資産推移と平均単価を比較します。',
     portfolioTitle: '保有損益',
     portfolioDesc: '保有銘柄と取得単価を入力すれば、損益・利回り・集中度を試算でき、AI の見解も確認できます。',
     analyzeTitle: 'AI 個別株分析',
@@ -640,6 +642,8 @@ export const ja: Dict = {
     colAmount: '買い増し金額',
     colShares: '買付株数',
     quickPicksTitle: '人気コアETF クイック選択',
+    symbolPlaceholder: '台湾ETFコードまたは名称を入力（例 0050 / 00713）',
+    btnSelectSymbol: '適用',
   },
   backtest: {
     pageTitle: 'バックテストラボ',

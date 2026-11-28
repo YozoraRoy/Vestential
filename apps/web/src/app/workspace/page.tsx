@@ -7,6 +7,7 @@ import {
   Gauge,
   Search,
   Sparkles,
+  Target,
   TrendingUp,
   Wallet,
 } from 'lucide-react'
@@ -87,6 +88,13 @@ export default async function WorkspacePage() {
           icon: Activity,
           title: w.backtestTitle,
           desc: w.backtestDesc,
+          accent: 'green',
+        },
+        {
+          href: '/dca-lab',
+          icon: Target,
+          title: w.dcaLabTitle,
+          desc: w.dcaLabDesc,
           accent: 'green',
         },
       ],

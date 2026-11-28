@@ -117,6 +117,8 @@ export const en: Dict = {
     marketLevelDesc: 'Where the TAIEX sits against its own history on a five-tier gauge. Know if the market is cheap or stretched first.',
     backtestTitle: 'Backtest Lab',
     backtestDesc: 'Enter on the quarterly bias with your own target and stop, then replay 5–15 years of history to see whether the win rate holds up.',
+    dcaLabTitle: 'Smart DCA',
+    dcaLabDesc: 'Compare standard DCA vs 60MA negative-bias dip buying across any Taiwan ETF with dual-track curves.',
     portfolioTitle: 'Portfolio P&L',
     portfolioDesc: 'Enter your holdings and cost basis to model P&L, yield and concentration, with an AI read on each position.',
     analyzeTitle: 'AI Stock Analysis',
@@ -640,6 +642,8 @@ export const en: Dict = {
     colAmount: 'Dip Amount',
     colShares: 'Shares Bought',
     quickPicksTitle: 'Popular Core ETFs Quick Pick',
+    symbolPlaceholder: 'Enter TW ETF code or name, e.g. 0050 / 00713',
+    btnSelectSymbol: 'Apply',
   },
   backtest: {
     pageTitle: 'Backtest Lab',

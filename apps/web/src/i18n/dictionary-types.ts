@@ -97,6 +97,8 @@ export interface Dict {
     marketLevelDesc: string
     backtestTitle: string
     backtestDesc: string
+    dcaLabTitle: string
+    dcaLabDesc: string
     portfolioTitle: string
     portfolioDesc: string
     analyzeTitle: string
@@ -596,6 +598,8 @@ export interface Dict {
     colAmount: string
     colShares: string
     quickPicksTitle: string
+    symbolPlaceholder: string
+    btnSelectSymbol: string
   }
   backtest: {
     pageTitle: string
